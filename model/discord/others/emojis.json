@@ -1,5 +1,5 @@
 {
-  "thumbnails":"https://sites.google.com/site/f4rm3r0nly/{0}?attredirects=0",
+  "thumbnail":"https://sites.google.com/site/f4rm3r0nly/{0}?attredirects=0",
   "level": "<:level:679995912151760920>",
   "trophies": "<:trophies:679995865255116820>",
   "noleague": "<:noleague:681872279377805336>",
@@ -64,7 +64,8 @@
     "Super Valkyrie": "<:supervalkyrie:725681045877555301>",
     "Super Witch": "<:superwitch:725681078198730882>",
     "Siege Barracks": "<:siegebarracks:679360647401832485>",
-    "Headhunter": "<:headhunter:725681104916316171>"
+    "Headhunter": "<:headhunter:725681104916316171>",
+    "Super Minion": "<:superminion:768447744909770752>"
   },
   "heroes": {
     "Barbarian King": "<:barbarianking:679329817593643027>",

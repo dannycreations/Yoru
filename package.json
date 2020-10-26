@@ -5,15 +5,17 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "debug": "nodemon --inspect index.js"
+    "debug": "nodemon index.js"
   },
   "author": "Danny Creations",
   "license": "MIT",
   "dependencies": {
     "chalk": "^4.1.0",
     "clash-of-clans-api": "^0.6.3",
-    "dateformat": "^3.0.3",
-    "discord.js": "^12.2.0",
-    "mongoose": "^5.9.19"
+    "discord.js": "^12.4.1",
+    "got": "^11.8.0",
+    "lodash": "^4.17.20",
+    "moment": "^2.29.1",
+    "mongoose": "^5.10.10"
   }
 }

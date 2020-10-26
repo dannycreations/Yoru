@@ -1,93 +1,77 @@
-const chalk = require('chalk');
-let mongoose = require('mongoose');
-const discord = require('discord.js');
-const dateformat = require('dateformat');
-let clash = require('clash-of-clans-api');
+const fs = require('fs')
+const _ = require('lodash')
+const path = require('path')
+const chalk = require('chalk')
+const moment = require('moment')
+const discord = require('discord.js')
+const clash = require('clash-of-clans-api')
 
-const emojis = require('./discord/others/emojis.json');
-const configs = require('./discord/others/configs.json');
+const mongo = require('./moduls/mongoose.js')
+const clashdev = require('./moduls/clashofclans.js')
+const demoji = require('./discord/others/emojis.json')
+const dconfig = require('./discord/others/configs.json')
 
-mongoose.connect('mongodb://localhost:27017/xfarmer2', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  useFindAndModify: false
-});
-const schemaDefault = new mongoose.Schema({
-  userid: String,
-  accounts: [{
-    playertag: String,
-    date: Number
-  }]
-});
+const dclient = new discord.Client()
+const cclient = clash({ token: dconfig.clash })
 
 class IndexModel {
   constructor() {
-    this.chalk = chalk;
-    this.cclient = clash({
-      token: configs.clash
-    });
-    this.dateformat = dateformat;
+    this._ = _
+    this.fs = fs
+    this.path = path
+    this.chalk = chalk
+    this.moment = moment
+    this.cclient = cclient
+    this.clashdev = clashdev
     
-    this.emoji = emojis;
-    this.config = configs;
-    this.discord = discord;
-    this.dclient = new discord.Client();
+    this.demoji = demoji
+    this.dconfig = dconfig
+    this.discord = discord
+    this.dclient = dclient
     
-    this.mongo = mongoose.model('users', schemaDefault);
-  }
-  
-  output(msg) {
-    console.log(`| ${this.dateformat(new Date(), 'HH:MM:ss')} | ${msg}`);
-  }
-  
-  numberWithCommas(number) {
-    return number.toString().replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',');
+    this.dbUsr = mongo.client.model('user', mongo.schemaUsr)
   }
   
   async errorHandle(message, err) {
-    if (err.statusCode === 404) {
-      return message.channel.send('Error, Tag not found')
+    if (err.statusCode === 403) {
+      return this.refreshKey(message)
+    } else if (err.statusCode === 404) {
+      const field = `> ${message.content}\nError, Tag not found.`
+      return message.channel.send(field)
     }
-    let field = '';
-    field += '```Name: ' + err.message + '```';
-    message.channel.send(field);
-    console.trace(err);
+    console.log(err)
+    const field = '```Name: ' + err.message + '```'
+    message.channel.send(field)
+  }
+  
+  output(msg = '') {
+    console.log(`| ${this.moment().format('HH:mm:ss')} | ${msg}`)
   }
   
   parseClanRole(role) {
-    if (role === 'leader') {
-      return 'Leader';
-    } else if (role === 'coLeader') {
-      return 'Co-Leader';
-    } else if (role === 'admin') {
-      return 'Elder';
-    } else {
-      return 'Member';
+    if (role === 'leader') return 'Leader'
+    else if (role === 'coLeader') return 'Co-Leader'
+    else if (role === 'admin') return 'Elder'
+    else return 'Member'
+  }
+  
+  async refreshKey(message) {
+    try {
+      await this.clashdev.login()
+      const list = await this.clashdev.list()
+      for (const key of list) {
+        await this.clashdev.revoke(key.id)
+      }
+      const create = await this.clashdev.create()
+      const filePath = this.path.join(`${process.cwd()}/model/discord/others/configs.json`)
+      let readfile = JSON.parse(this.fs.readFileSync(filePath))
+      readfile.clash = create.key
+      this.fs.writeFileSync(filePath, JSON.stringify(readfile, null, 2), { flag: 'w' })
+      this.clashdev.logout()
+    } catch(err) {
+      this.errorHandle(message, err)
     }
-  }
-  
-  deleteProtect(array, value) {
-    let i = 0;
-    while (i < array.length) {
-      if (array[i] === value) array.splice(i, 1);
-      else i++;
-    }
-    return array;
-  }
-  
-  mongoCreate(data) {
-    new this.mongo(data).save();
-  }
-  
-  mongoRead(query) {
-    return this.mongo.find(query, (err, data) => {
-      return data;
-    }).exec();
-  }
-  
-  mongoUpdate(query, data) {
-    this.mongo.findOneAndUpdate(query, data).exec();
   }
 }
 
-exports.IndexModel = IndexModel;
+exports.IndexModel = IndexModel

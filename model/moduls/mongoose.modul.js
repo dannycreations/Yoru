@@ -30,6 +30,5 @@ const schemaUsr = new mongoose.Schema({
 schemaUsr.index({ uid: 1, 'account.playertag': 1 }, customOptions.index)
 
 module.exports = {
-  client: mongoose,
-  schemaUsr: schemaUsr
+  dbUsr: mongoose.model('user', schemaUsr)
 }

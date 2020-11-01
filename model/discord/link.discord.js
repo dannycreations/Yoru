@@ -1,6 +1,8 @@
-const client = require('./../index.model.js')
+const _ = require('lodash')
+const moment = require('moment')
+const Client = require('./../client')
 
-class LinkModel extends client.IndexModel {
+class LinkDiscord extends Client {
   constructor() {
     super()
     this.protect = []
@@ -8,22 +10,24 @@ class LinkModel extends client.IndexModel {
   
   async run(message, args) {
     try {
-      if (message.member.roles.cache.some(role => role.name !== 'Manager')) return
-      if (args[0] && args[0].match(/^#[0289PYLQGRJCUV]+$/) && args[1]) {
-        if (this.protect.includes(message.author.id)) {
+      if (_.isNil(args[1])) return
+      if (!message.member.roles.cache.some(r => r.name === 'Manager')) return
+      const playerTag = args[0].toUpperCase()
+      if (playerTag.match(/^#[0289PYLQGRJCUV]+$/)) {
+        if (_.includes(this.protect, message.author.id)) {
           const field = `> ${message.content}\nYou must complete previous operation before create new one.`
           return message.channel.send(field)
         }
         this.protect.push(message.author.id)
         const mention = args[1].match(/^<@!?(\d+)>$/)
-        if (mention) {
-          await this.link(message, args[0], mention[1])
+        if (_.isArray(mention)) {
+          await this.link(message, playerTag, mention[1])
         } else {
           if (message.author.id === this.dconfig.authorid) {
-            await this.link(message, args[0], args[1])
+            await this.link(message, playerTag, args[1])
           }
         }
-        this._.pull(this.protect, message.author.id)
+        _.pull(this.protect, message.author.id)
       } else {
         this.errorHandle(message, { statusCode: 404 })
       }
@@ -35,28 +39,27 @@ class LinkModel extends client.IndexModel {
   async link(message, tag, user) {
     try {
       let thumbLeague, thumbClan
-      const res = await this.cclient.playerByTag(tag.toUpperCase())
+      const res = await this.cclient.playerByTag(tag)
       const embed = new this.discord.MessageEmbed()
       embed.setColor('#0099ff')
       if (res.league) thumbLeague = res.league.iconUrls.medium
-      else thumbLeague = this.demoji.thumbnail.replace('{0}', 'noleague.png')
+      else thumbLeague = _.replace(this.dconfig.emojis.thumbnail, '{0}', 'noleague.png')
       embed.setAuthor(`${res.name} (${res.tag})`, thumbLeague)
-      embed.setThumbnail(this.demoji.thumbnail.replace('{0}', `townhall-${res.townHallLevel}.png`))
-      const titlefield = `${this.demoji.level} ${res.expLevel} ${this.demoji.trophies} ${res.trophies.toLocaleString()} ${this.demoji.attackwin} ${res.attackWins.toLocaleString()}`
-      embed.addField(titlefield, 'Are you sure want to link this account?')
+      embed.setThumbnail(_.replace(this.dconfig.emojis.thumbnail, '{0}', `townhall-${res.townHallLevel}.png`))
+      const titleField = `${this.dconfig.emojis.level} ${res.expLevel} ${this.dconfig.emojis.trophies} ${res.trophies.toLocaleString()} ${this.dconfig.emojis.attackwin} ${res.attackWins.toLocaleString()}\n`
+      embed.setDescription(`${titleField}Are you sure want to link this account?`)
       if (res.clan) {
         thumbClan = res.clan.badgeUrls.medium
         const role = this.parseClanRole(res.role)
         embed.setFooter(`${role} of ${res.clan.name}\n(${res.clan.tag})`, thumbClan)
       } else {
-        thumbClan = this.demoji.thumbnail.replace('{0}', 'noclan.png')
+        thumbClan = _.replace(this.dconfig.emojis.thumbnail, '{0}', 'noclan.png')
         embed.setFooter('Player is clanless', thumbClan)
       }
       let dataUsr = await this.dbUsr.find({ 'account.playertag': tag }).select({ uid: 1 }).lean()
       const member = message.guild.members.cache.get(dataUsr.length > 0 ? dataUsr[0].uid : user)
       if (dataUsr.length > 0) {
-        embed.fields = []
-        embed.addField(titlefield, `Already linked to **${member.user.tag}**.`)
+        embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`)
         message.channel.send(embed)
       } else {
         const msg = await message.channel.send(embed)
@@ -64,59 +67,56 @@ class LinkModel extends client.IndexModel {
         await msg.react('❎')
         try {
           const filter = (reaction, user) => {
-            return ['✅', '❎'].includes(reaction.emoji.name) && user.id === message.author.id
+            return _.includes(['✅', '❎'], reaction.emoji.name) && user.id === message.author.id
           }
           let reaction = await msg.awaitReactions(filter, { max: 1, time: 60000, errors: ['time'] })
           reaction = reaction.first()
           await msg.reactions.removeAll()
           if (reaction.emoji.name === '❎') {
-            embed.fields = []
-            embed.addField(titlefield, 'Operation canceled.')
+            embed.setDescription(`${titleField}Operation canceled.`)
             await msg.edit(embed)
           } else {
-            let role = message.guild.roles.cache.find(role => role.name === 'Entry')
+            let role = message.guild.roles.cache.find(r => r.name === 'Entry')
             await member.roles.remove(role)
             dataUsr = await this.dbUsr.findOneAndUpdate({ uid: user }, {
               $push: {
                 account: {
                   playertag: tag,
-                  date: this.moment().unix()
+                  date: moment().unix()
                 }
               }
             }, { upsert: true, new: true })
             if (dataUsr.account.length === 1) {
               if (res.clan && res.clan.tag === this.dconfig.clantag) {
                 if (res.role === 'leader') {
-                  role = message.guild.roles.cache.find(role => role.name === 'Leader')
+                  role = message.guild.roles.cache.find(r => r.name === 'Leader')
                   await member.roles.add(role)
                   await member.setNickname(`Lead - ${res.name}`)
                 } else if (res.role === 'coLeader') {
-                  role = message.guild.roles.cache.find(role => role.name === 'Co-Leaders')
+                  role = message.guild.roles.cache.find(r => r.name === 'Co-Leaders')
                   await member.roles.add(role)
                   await member.setNickname(`Co - ${res.name}`)
                 } else if (res.role === 'admin') {
-                  role = message.guild.roles.cache.find(role => role.name === 'Elders')
+                  role = message.guild.roles.cache.find(r => r.name === 'Elders')
                   await member.roles.add(role)
                   await member.setNickname(`Eld - ${res.name}`)
                 } else {
-                  role = message.guild.roles.cache.find(role => role.name === 'Members')
+                  role = message.guild.roles.cache.find(r => r.name === 'Members')
                   await member.roles.add(role)
                   await member.setNickname(`Mem - ${res.name}`)
                 }
               } else {
-                role = message.guild.roles.cache.find(role => role.name === 'Approved')
+                role = message.guild.roles.cache.find(r => r.name === 'Approved')
                 await member.roles.add(role)
                 await member.setNickname(`TH ${res.townHallLevel} - ${res.name}`)
               }
             }
-            embed.fields = []
-            embed.addField(titlefield, `Linked to **${member.user.tag}**.`)
+            embed.setDescription(`${titleField}Linked to **${member.user.tag}**.`)
             msg.edit(embed)
           }
         } catch(err) {
           await msg.reactions.removeAll()
-          embed.fields = []
-          embed.addField(titlefield, 'No answer after 60 seconds, operation canceled.')
+          embed.setDescription(`${titleField}No answer after 60 seconds, operation canceled.`)
           msg.edit(embed)
         }
       }
@@ -126,4 +126,4 @@ class LinkModel extends client.IndexModel {
   }
 }
 
-module.exports = new LinkModel()
+module.exports = new LinkDiscord()

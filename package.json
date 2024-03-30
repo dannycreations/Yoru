@@ -1,23 +1,37 @@
 {
-  "name": "X-Farmer2",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "start": "clear && nodemon --ignore \"models/**/*.json\""
-  },
-  "author": "Danny Creations",
-  "license": "MIT",
-  "dependencies": {
-    "chalk": "^4.1.0",
-    "clash-of-clans-api": "^0.6.4",
-    "cron-job-manager": "^2.1.4",
-    "delay": "^4.4.0",
-    "discord-akairo": "^8.1.0",
-    "discord.js": "^12.5.1",
-    "got": "^11.8.1",
-    "lodash": "^4.17.20",
-    "moment": "^2.29.1",
-    "mongoose": "^5.11.9"
-  }
+	"name": "x-farmer2",
+	"version": "2.0.0",
+	"main": "dist/main.js",
+	"author": "Danny Creations",
+	"license": "GPL-3.0",
+	"private": true,
+	"scripts": {
+		"build": "rm -rf dist && tsc",
+		"start:pm2": "pm2 start . --stop-exit-codes 0",
+		"start:dev": "rm -rf dist && tsc-watch --onSuccess \"node .\"",
+		"update:dep": "npx npm-check-updates -u -x got,public-ip,discord.js,@types/node"
+	},
+	"dependencies": {
+		"@sapphire/decorators": "^6.1.0",
+		"@sapphire/framework": "^5.0.7",
+		"clashofclans.js": "^3.3.4",
+		"discord.js": "14.14.1",
+		"dotenv": "^16.4.5",
+		"got": "11.8.6",
+		"lodash": "^4.17.21",
+		"lokijs": "^1.5.12",
+		"moment-timezone": "^0.5.45",
+		"pino": "^8.19.0",
+		"pino-pretty": "^11.0.0",
+		"public-ip": "4.0.4",
+		"reflect-metadata": "^0.2.1"
+	},
+	"devDependencies": {
+		"@types/lodash": "^4.17.0",
+		"@types/lokijs": "^1.5.14",
+		"@types/node": "20.11.30",
+		"ts-node": "^10.9.2",
+		"tsc-watch": "^6.0.4",
+		"typescript": "^5.4.3"
+	}
 }

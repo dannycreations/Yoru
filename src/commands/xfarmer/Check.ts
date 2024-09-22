@@ -1,24 +1,27 @@
-import { ApplyOptions } from '@sapphire/decorators'
-import { Args, Command, CommandOptions, Result } from '@sapphire/framework'
-import { HTTPError } from 'clashofclans.js'
+import { Args, Command, Result } from '@sapphire/framework'
+import { getTimezoneDate } from '@vegapunk/logger'
+import { HTTPError, Util } from 'clashofclans.js'
 import { EmbedBuilder, Message } from 'discord.js'
-import moment from 'moment-timezone'
 import { ClashAPI } from '../../lib/api/ClashAPI'
-import { AccountSchema, DBAccount, DBUser } from '../../lib/database/loki'
+import { emoji } from '../../lib/contants/emoji'
+import { Events } from '../../lib/contants/enum'
+import { AccountSchema, DBAccount, DBUser } from '../../lib/database/LokiDB'
 import { parseClan } from '../../lib/helpers/clan.helper'
-import { errorResponse } from '../../lib/helpers/error.helper'
-import { isValidTag } from '../../lib/helpers/player.helper'
-import { config } from '../../lib/shared/config'
 
-@ApplyOptions<CommandOptions>({ aliases: ['c'] })
 export class UserCommand extends Command {
-	public async messageRun(message: Message, args: Args) {
+	public constructor(context: Command.LoaderContext) {
+		super(context, { aliases: ['c'] })
+	}
+
+	public override async messageRun(message: Message, args: Args) {
+		const { sessions } = this.container.client
+
 		const result = await Result.fromAsync(async () => {
 			const tag = await args.pick('string')
 			const page = await args.pick('number').catch(() => 0)
 
 			if (/member/i.test(tag)) return this.checkMembers(message, page)
-			if (isValidTag(tag)) return this.checkPlayer(message, tag)
+			if (Util.isValidTag(tag)) return this.checkPlayer(message, tag)
 
 			const hasLinkedTag = async (owner_id: string) => {
 				const dataUser = DBUser.findOne({ owner_id })
@@ -37,58 +40,63 @@ export class UserCommand extends Command {
 			if (mention?.length) {
 				await hasLinkedTag(mention[1])
 			} else if (/^\d+$/.test(tag)) {
-				if (!config.ownerId.includes(message.author.id)) return
+				if (!sessions.cache.ownerIds.includes(message.author.id)) return
 				await hasLinkedTag(tag)
 			} else {
 				const field = `> ${message.content}\nError, Player tag not valid!`
 				await message.channel.send(field)
 			}
 		})
-		result.inspectErr((error) => errorResponse(message, error))
+		result.inspectErr((error) => ClashAPI.Instance.emit(Events.apiError, message, error))
 	}
 
 	private async checkProfile(message: Message, dataAccount: AccountSchema[]) {
-		const dataUser = DBUser.findOne({ $loki: dataAccount.at(0).user_id })
+		const dataUser = DBUser.findOne({ $loki: dataAccount[0].user_id })
 		const member = message.guild.members.cache.get(dataUser.owner_id)
 		if (!member) {
 			const field = `> ${message.content}\nUser leaving discord server!`
-			return message.channel.send(field)
+			await message.channel.send(field)
+			return
 		}
 
 		let count = 1
 		const embed = new EmbedBuilder()
 			.setColor('#0099ff')
 			.setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
-			.setDescription(`Joined ${moment.utc(member.joinedAt).fromNow()}`)
+			.setDescription(`Joined ${getTimezoneDate(member.joinedAt).utc(false).fromNow()}`)
 			.setThumbnail(member.user.displayAvatarURL())
 
 		for (const account of dataAccount) {
-			let field = ''
-
 			try {
-				const player = await ClashAPI.Instance.getPlayer(account.tag)
-				field += `${config.emojis.hashtag} ${player.tag}\n`
+				if (account.is_banned) continue
 
-				const level = `${config.emojis.level} ${player.expLevel}`
-				const trophies = `${config.emojis.trophies} ${player.trophies.toLocaleString()}`
-				const attacks = `${config.emojis.attackwin} ${player.attackWins.toLocaleString()}`
+				let field = ''
+				const player = await ClashAPI.Instance.getPlayer(account.tag)
+				field += `${emoji.hashtag} ${player.tag}\n`
+
+				const level = `${emoji.level} ${player.expLevel}`
+				const trophies = `${emoji.trophies} ${player.trophies.toLocaleString()}`
+				const attacks = `${emoji.attackwin} ${player.attackWins.toLocaleString()}`
 				field += `${level} ${trophies} ${attacks}\n`
 
-				if (player.clan) field += `${config.emojis.isclan.true} ${player.clan.name}`
-				else field += `${config.emojis.isclan.false} Player is clanless`
+				if (player.clan) field += `${emoji.isclan.true} ${player.clan.name}`
+				else field += `${emoji.isclan.false} Player is clanless`
 
 				embed.addFields({
-					name: `${count++}. ${config.emojis.townhalls[player.townHallLevel - 1]} ${player.name}`,
+					name: `${count++}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
 					value: field,
 				})
 			} catch (error) {
-				if (error instanceof HTTPError) {
-					if (error.reason === 'notFound') {
-						embed.addFields({
-							name: `${count++}. ${config.emojis.townhalls[0]} ${account.tag}`,
-							value: '⛔ Has been banned!',
-						})
-					}
+				if (error instanceof HTTPError && error.reason === 'notFound') {
+					account.is_banned = true
+					DBAccount.updateOneAndSave(account)
+				}
+			} finally {
+				if (account.is_banned) {
+					embed.addFields({
+						name: `${count++}. ${emoji.townhalls[0]} ${account.tag}`,
+						value: '⛔ Has been banned!',
+					})
 				}
 			}
 		}
@@ -108,9 +116,9 @@ export class UserCommand extends Command {
 		embed.setTitle('Open in Clash of Clans ↗')
 		embed.setURL(`https://link.clashofclans.com/en?action=OpenPlayerProfile&tag=${tag}`)
 		if (player.league) thumbLeague = player.league.icon.medium
-		else thumbLeague = config.emojis.thumbnail.replace('{0}', 'noleague.png')
+		else thumbLeague = emoji.thumbnail.replace('{0}', 'noleague.png')
 		embed.setAuthor({ name: `${player.name} (${player.tag})`, iconURL: thumbLeague })
-		embed.setThumbnail(config.emojis.thumbnail.replace('{0}', `townhall-${player.townHallLevel}.png`))
+		embed.setThumbnail(emoji.thumbnail.replace('{0}', `townhall-${player.townHallLevel}.png`))
 
 		const dataAccount = DBAccount.findOne({ tag })
 		if (dataAccount) {
@@ -119,9 +127,9 @@ export class UserCommand extends Command {
 			isOwned = `👤 ${member ? member.user.tag : dataUser.owner_id}\n`
 		}
 
-		const level = `${config.emojis.level} ${player.expLevel}`
-		const trophies = `${config.emojis.trophies} ${player.trophies.toLocaleString()}`
-		const attacks = `${config.emojis.attackwin} ${player.attackWins.toLocaleString()}`
+		const level = `${emoji.level} ${player.expLevel}`
+		const trophies = `${emoji.trophies} ${player.trophies.toLocaleString()}`
+		const attacks = `${emoji.attackwin} ${player.attackWins.toLocaleString()}`
 		embed.addFields({ name: 'Profiles', value: `${isOwned}${level} ${trophies} ${attacks}` })
 
 		const troops = [],
@@ -136,11 +144,11 @@ export class UserCommand extends Command {
 			unknowns = []
 
 		for (const troop of player.troops.filter((r) => r.village === 'home')) {
-			const troopNormal = config.emojis.troops.normal
-			const troopDark = config.emojis.troops.dark
-			const troopSuper = config.emojis.troops.super
-			const troopSiege = config.emojis.troops.siege
-			const troopPet = config.emojis.troops.pets
+			const troopNormal = emoji.troops.normal
+			const troopDark = emoji.troops.dark
+			const troopSuper = emoji.troops.super
+			const troopSiege = emoji.troops.siege
+			const troopPet = emoji.troops.pets
 			const field = '**' + troop.level + '**/' + troop.maxLevel
 			if (Object.keys(troopNormal).includes(troop.name)) {
 				troops.push(troopNormal[troop.name] + field)
@@ -164,8 +172,8 @@ export class UserCommand extends Command {
 		if (petTroops.length) embed.addFields({ name: 'Pets', value: petTroops.join(' ') })
 
 		for (const spell of player.spells.filter((r) => r.village === 'home')) {
-			const spellNormal = config.emojis.spells.normal
-			const spellDark = config.emojis.spells.dark
+			const spellNormal = emoji.spells.normal
+			const spellDark = emoji.spells.dark
 			const field = '**' + spell.level + '**/' + spell.maxLevel
 			if (Object.keys(spellNormal).includes(spell.name)) {
 				spells.push(spellNormal[spell.name] + field)
@@ -180,7 +188,7 @@ export class UserCommand extends Command {
 		if (darkSpells.length) embed.addFields({ name: 'Dark Spells', value: darkSpells.join(' ') })
 
 		for (const hero of player.heroes.filter((r) => r.village === 'home')) {
-			const heroNormal = config.emojis.heroes
+			const heroNormal = emoji.heroes
 			const field = '**' + hero.level + '**/' + hero.maxLevel
 			if (Object.keys(heroNormal).includes(hero.name)) {
 				heroes.push(heroNormal[hero.name] + field)
@@ -193,7 +201,7 @@ export class UserCommand extends Command {
 
 		const achievementsName = ['Friend in Need', 'Games Champion']
 		for (const achievement of player.achievements.filter((r) => achievementsName.includes(r.name))) {
-			achievements.push(config.emojis.stars[achievement.stars] + ' **' + achievement.name + '** ' + achievement.value.toLocaleString() + '\n')
+			achievements.push(emoji.stars[achievement.stars] + ' **' + achievement.name + '** ' + achievement.value.toLocaleString() + '\n')
 		}
 
 		if (achievements.length) embed.addFields({ name: 'Achievements', value: achievements.join('') })
@@ -204,7 +212,9 @@ export class UserCommand extends Command {
 	}
 
 	private async checkMembers(message: Message, page: number = 1) {
-		if (page < 1 || page > config.clanTag.length) page = 1
+		const { sessions } = this.container.client
+
+		if (page < 1 || page > sessions.cache.clanTags.length) page = 1
 
 		let field = '',
 			leaveCount = 0,
@@ -214,7 +224,7 @@ export class UserCommand extends Command {
 			notInCount = 0,
 			notInStr = ''
 
-		const clan = await ClashAPI.Instance.getClan(config.clanTag[page - 1])
+		const clan = await ClashAPI.Instance.getClan(sessions.cache.clanTags[page - 1])
 		for (const member of clan.members) {
 			const field = `**${member.name}** ${member.tag}\n`
 			const dataAccount = DBAccount.findOne({ tag: member.tag })

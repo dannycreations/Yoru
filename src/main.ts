@@ -1,12 +1,18 @@
 import 'dotenv/config'
-import './lib/database/loki'
+import './lib/database/LokiDB'
 
-import { LogLevel, Logger, container } from '@sapphire/framework'
-import { XFarmerClient } from './lib/XFarmerClient'
+import { container } from '@sapphire/framework'
+import { YoruClient } from './lib/YoruClient'
 
-async function bootstrap() {
-	container.logger = new Logger(LogLevel.Debug)
+const client = new YoruClient()
 
-	new XFarmerClient().login(process.env.DISCORD_TOKEN)
+async function main() {
+	try {
+		await client.start()
+	} catch (error) {
+		container.logger.error(error)
+		await client.destroy()
+		process.exit(1)
+	}
 }
-bootstrap()
+main().catch(container.logger.error.bind(container.logger))

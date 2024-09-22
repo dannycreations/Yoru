@@ -1,9 +1,9 @@
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from 'node:crypto'
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 
-export class Adapter {
+export class LokiAdapter {
 	public constructor(private secret: string) {
-		if (!secret) throw new Error("A 'secret' is required to decrypt")
+		if (!secret) throw new Error('A "secret" is required to decrypt')
 	}
 
 	public loadDatabase(dbName: string, callback: (v?: any) => void) {
@@ -36,38 +36,36 @@ export class Adapter {
 	private encrypt(input: string) {
 		if (!input) throw new Error('You must provide a value to decrypt')
 
-		const salt = randomBytes(this.KEYLEN),
-			iv = randomBytes(16)
-
 		try {
+			const salt = randomBytes(this.KEYLEN),
+				iv = randomBytes(16)
 			const key = pbkdf2Sync(this.secret, salt, this.ITERATIONS, this.KEYLEN, 'sha1'),
 				cipher = createCipheriv(this.CIPHER, key, iv)
 
 			let encrypted = cipher.update(input)
 			encrypted = Buffer.concat([encrypted, cipher.final()])
-
 			return Buffer.concat([salt, iv, encrypted])
 		} catch (error) {
-			throw new Error('Unable to encrypt value due to: ' + error)
+			error['message'] = `Unable to encrypt value due to: ${error['message']}`
+			throw error
 		}
 	}
 
 	private decrypt(input: Buffer) {
 		if (!input) throw new Error('You must provide a value to decrypt')
 
-		const salt = input.subarray(0, this.KEYLEN),
-			iv = input.subarray(this.KEYLEN, 48)
-
 		try {
+			const salt = input.subarray(0, this.KEYLEN),
+				iv = input.subarray(this.KEYLEN, 48)
 			const key = pbkdf2Sync(this.secret, salt, this.ITERATIONS, this.KEYLEN, 'sha1'),
 				decipher = createDecipheriv(this.CIPHER, key, iv)
 
 			let decrypted = decipher.update(input.subarray(48))
 			decrypted = Buffer.concat([decrypted, decipher.final()])
-
 			return decrypted
 		} catch (error) {
-			throw new Error('Unable to decrypt value due to: ' + error)
+			error['message'] = `Unable to decrypt value due to: ${error['message']}`
+			throw error
 		}
 	}
 

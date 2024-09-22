@@ -1,23 +1,17 @@
 import { container } from '@sapphire/framework'
-import { Client, HTTPError, RequestOptions, Result } from 'clashofclans.js'
+import { IPv4Regex } from '@vegapunk/utilities'
+import { HTTPError, PollingClient, RequestOptions, Result } from 'clashofclans.js'
+import { YoruClient } from '../YoruClient'
 
-const IP_REGEX = /\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}/g
-
-export class ClashAPI extends Client {
+export class ClashAPI extends PollingClient {
 	public static readonly Instance = new ClashAPI()
 
-	/**
-	 * !TODO: this is realy bad solution
-	 * ! but this solve the problem
-	 * ! so i'm good for now :)
-	 */
 	public constructor() {
 		super()
+		Object.assign(this, { _pollingInterval: 60_000 })
 
-		// @ts-expect-error
-		this.getIpOrig = this.rest.requestHandler.getIp.bind(this.rest.requestHandler)
-		// @ts-expect-error
-		this.rest.requestHandler.getIp = (token: string) => {
+		this.getIpOrig = this.rest.requestHandler['getIp'].bind(this.rest.requestHandler)
+		this.rest.requestHandler['getIp'] = (token: string) => {
 			const _ipFromError = this.ipFromError
 			if (_ipFromError) {
 				this.ipFromError = null
@@ -41,22 +35,20 @@ export class ClashAPI extends Client {
 				}
 
 				error.stack = null
-				container.logger.warn(error, `${ClashAPI.name} ${error.message}`)
+				error.message = `${ClashAPI.name}: ${error.message}`
+				container.logger.warn(error)
 
 				if (error instanceof HTTPError) {
 					if (error.status === 403) {
 						if (error.reason === 'accessDenied.invalidIp') {
-							// @ts-expect-error
-							this.rest.requestHandler.keys.shift()
-
-							const getIp = error.message.match(IP_REGEX)[0]
-							if (getIp) this.ipFromError = getIp
+							this.rest.requestHandler['keys'].shift()
+							this.ipFromError = error.message.match(IPv4Regex)[0]
 						}
 
 						await this.rest.login({
-							email: process.env.CLASH_EMAIL as string,
-							password: process.env.CLASH_PASSWORD as string,
-							keyName: 'X-Farmer 2',
+							email: process.env.CLASH_EMAIL,
+							password: process.env.CLASH_PASSWORD,
+							keyName: YoruClient.name,
 							keyCount: 1,
 						})
 

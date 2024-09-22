@@ -1,19 +1,24 @@
 import { Player } from 'clashofclans.js'
-import { config } from '../shared/config'
+import { emoji } from '../contants/emoji'
+import { MemberRoles } from '../contants/enum'
 
-export function parseClan(player: Player, cb: (text: string, badge: string) => void) {
+export function parseClan(player: Player, callback: (text: string, badge: string) => void) {
+	let text = 'Player is clanless',
+		badge = emoji.thumbnail.replace('{0}', 'noclan.png')
+
 	if (player.clan) {
 		// @ts-expect-error
 		player.role = parseClanRole(player.role)
-		cb(`${player.role} of ${player.clan.name}\n(${player.clan.tag})`, player.clan.badge.url)
-	} else {
-		cb('Player is clanless', config.emojis.thumbnail.replace('{0}', 'noclan.png'))
+		text = `${player.role} of ${player.clan.name}\n(${player.clan.tag})`
+		badge = player.clan.badge.url
 	}
+
+	callback(text, badge)
 }
 
 export function parseClanRole(role: Player['role']) {
-	if (role === 'leader') return 'Leader'
-	if (role === 'coLeader') return 'Co-Leader'
-	if (role === 'elder') return 'Elder'
-	return 'Member'
+	if (role === 'leader') return MemberRoles.Leader
+	if (role === 'coLeader') return MemberRoles.CoLeader
+	if (role === 'elder') return MemberRoles.Elder
+	return MemberRoles.Member
 }

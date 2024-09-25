@@ -4,7 +4,7 @@ import { MemberRoles } from '../contants/enum'
 
 export function parseClan(player: Player, callback: (text: string, badge: string) => void) {
 	let text = 'Player is clanless',
-		badge = emoji.thumbnail.replace('{0}', 'noclan.png')
+		badge = emoji.thumbnail.replace('{0}', 'badges/noclan.png')
 
 	if (player.clan) {
 		// @ts-expect-error

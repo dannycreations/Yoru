@@ -1,4 +1,6 @@
+import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities'
 import { Args, Command, Result } from '@sapphire/framework'
+import { free, send } from '@sapphire/plugin-editable-commands'
 import { getTimezoneDate } from '@vegapunk/logger'
 import { HTTPError, Util } from 'clashofclans.js'
 import { EmbedBuilder, Message } from 'discord.js'
@@ -21,14 +23,14 @@ export class UserCommand extends Command {
 			const page = await args.pick('number').catch(() => 0)
 
 			if (/member/i.test(tag)) return this.checkMembers(message, page)
-			if (Util.isValidTag(tag)) return this.checkPlayer(message, tag)
+			else if (Util.isValidTag(tag)) return this.checkPlayer(message, tag)
 
 			const hasLinkedTag = async (owner_id: string) => {
 				const dataUser = DBUser.findOne({ owner_id })
 				const dataAccount = DBAccount.find({ user_id: dataUser?.$loki })
 				if (!dataAccount.length) {
 					const field = `> ${message.content}\nThere is no tag linked to this user!`
-					await message.channel.send(field)
+					await send(message, field)
 				} else if (page >= 1 && page <= dataAccount.length) {
 					await this.checkPlayer(message, dataAccount[page - 1].tag)
 				} else {
@@ -36,18 +38,20 @@ export class UserCommand extends Command {
 				}
 			}
 
-			const mention = tag.match(/^<@!?(\d+)>$/)
-			if (mention?.length) {
-				await hasLinkedTag(mention[1])
-			} else if (/^\d+$/.test(tag)) {
-				if (!sessions.cache.ownerIds.includes(message.author.id)) return
+			const mentionId = tag.match(UserOrMemberMentionRegex)?.[1]
+			if (mentionId) {
+				await hasLinkedTag(mentionId)
+			} else if (SnowflakeRegex.test(tag)) {
+				if (!sessions.data.ownerIds.includes(message.author.id)) return
 				await hasLinkedTag(tag)
 			} else {
 				const field = `> ${message.content}\nError, Player tag not valid!`
-				await message.channel.send(field)
+				await send(message, field)
 			}
 		})
 		result.inspectErr((error) => ClashAPI.Instance.emit(Events.apiError, message, error))
+
+		free(message)
 	}
 
 	private async checkProfile(message: Message, dataAccount: AccountSchema[]) {
@@ -55,7 +59,7 @@ export class UserCommand extends Command {
 		const member = message.guild.members.cache.get(dataUser.owner_id)
 		if (!member) {
 			const field = `> ${message.content}\nUser leaving discord server!`
-			await message.channel.send(field)
+			await send(message, field)
 			return
 		}
 
@@ -103,7 +107,7 @@ export class UserCommand extends Command {
 
 		embed.setFooter({ text: message.author.username, iconURL: message.author.displayAvatarURL() })
 		embed.setTimestamp()
-		await message.channel.send({ embeds: [embed] })
+		await send(message, { embeds: [embed] })
 	}
 
 	private async checkPlayer(message: Message, tag: string) {
@@ -116,9 +120,9 @@ export class UserCommand extends Command {
 		embed.setTitle('Open in Clash of Clans ↗')
 		embed.setURL(`https://link.clashofclans.com/en?action=OpenPlayerProfile&tag=${tag}`)
 		if (player.league) thumbLeague = player.league.icon.medium
-		else thumbLeague = emoji.thumbnail.replace('{0}', 'noleague.png')
+		else thumbLeague = emoji.thumbnail.replace('{0}', 'badges/noleague.png')
 		embed.setAuthor({ name: `${player.name} (${player.tag})`, iconURL: thumbLeague })
-		embed.setThumbnail(emoji.thumbnail.replace('{0}', `townhall-${player.townHallLevel}.png`))
+		embed.setThumbnail(emoji.thumbnail.replace('{0}', `townhalls/townhall-${player.townHallLevel}.png`))
 
 		const dataAccount = DBAccount.findOne({ tag })
 		if (dataAccount) {
@@ -208,13 +212,13 @@ export class UserCommand extends Command {
 		if (unknowns.length) this.container.logger.warn(unknowns)
 
 		parseClan(player, (text: string, iconURL: string) => embed.setFooter({ text, iconURL }))
-		await message.channel.send({ embeds: [embed] })
+		await send(message, { embeds: [embed] })
 	}
 
 	private async checkMembers(message: Message, page: number = 1) {
 		const { sessions } = this.container.client
 
-		if (page < 1 || page > sessions.cache.clanTags.length) page = 1
+		if (page < 1 || page > sessions.data.clanTags.length) page = 1
 
 		let field = '',
 			leaveCount = 0,
@@ -224,7 +228,7 @@ export class UserCommand extends Command {
 			notInCount = 0,
 			notInStr = ''
 
-		const clan = await ClashAPI.Instance.getClan(sessions.cache.clanTags[page - 1])
+		const clan = await ClashAPI.Instance.getClan(sessions.data.clanTags[page - 1])
 		for (const member of clan.members) {
 			const field = `**${member.name}** ${member.tag}\n`
 			const dataAccount = DBAccount.findOne({ tag: member.tag })
@@ -241,6 +245,6 @@ export class UserCommand extends Command {
 		if (inStr) field += `👍 **Members in Discord:** ${inCount}\n${inStr}\n`
 		if (notInStr) field += `👎 **Members not in Discord:** ${notInCount}\n${notInStr}\n`
 
-		await message.channel.send(field)
+		await send(message, field)
 	}
 }

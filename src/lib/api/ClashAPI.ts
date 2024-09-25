@@ -1,7 +1,10 @@
 import { container } from '@sapphire/framework'
-import { IPv4Regex } from '@vegapunk/utilities'
+import { ErrorCodes } from '@vegapunk/request'
+import { IPv4Regex, sleep } from '@vegapunk/utilities'
 import { HTTPError, PollingClient, RequestOptions, Result } from 'clashofclans.js'
 import { YoruClient } from '../YoruClient'
+
+const errorCodes = [...ErrorCodes, 'UND_ERR_CONNECT_TIMEOUT']
 
 export class ClashAPI extends PollingClient {
 	public static readonly Instance = new ClashAPI()
@@ -34,11 +37,12 @@ export class ClashAPI extends PollingClient {
 					throw error
 				}
 
-				error.stack = null
-				error.message = `${ClashAPI.name}: ${error.message}`
-				container.logger.warn(error)
-
-				if (error instanceof HTTPError) {
+				if (errorCodes.includes(error.code)) {
+					this.ipFromError = error.message
+					await sleep(10_000)
+					this.requestState = 0
+					return this.rest.requestHandler.request(path, options)
+				} else if (error instanceof HTTPError) {
 					if (error.status === 403) {
 						if (error.reason === 'accessDenied.invalidIp') {
 							this.rest.requestHandler['keys'].shift()
@@ -56,6 +60,10 @@ export class ClashAPI extends PollingClient {
 						return this.rest.requestHandler.request(path, options)
 					}
 				}
+
+				error.stack = null
+				error.message = `${ClashAPI.name}: ${error.message}`
+				container.logger.warn(error)
 
 				throw error
 			}

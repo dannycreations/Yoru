@@ -1,5 +1,5 @@
 const _emojis = {
-	thumbnail: 'https://raw.githubusercontent.com/dannycreations/yoru/main/discord/emojis/townhalls/{0}',
+	thumbnail: 'https://raw.githubusercontent.com/dannycreations/yoru/main/discord/emojis/{0}',
 	level: '<:level:679995912151760920>',
 	hashtag: '<:hashtag:1216000497975037994>',
 	trophies: '<:trophies:679995865255116820>',
@@ -128,4 +128,30 @@ const _emojis = {
 	},
 }
 
-export const emoji: Readonly<typeof _emojis> = _emojis
+export const emoji: Readonly<EmojiContext> = _emojis
+
+export interface EmojiContext {
+	thumbnail: string
+	level: string
+	hashtag: string
+	trophies: string
+	attackwin: string
+	noleague: string
+	isclan: StringObject
+	stars: string[]
+	townhalls: string[]
+	troops: {
+		normal: StringObject
+		dark: StringObject
+		super: StringObject
+		siege: StringObject
+		pets: StringObject
+	}
+	spells: {
+		normal: StringObject
+		dark: StringObject
+	}
+	heroes: StringObject
+}
+
+export type StringObject = { [key: string]: string }

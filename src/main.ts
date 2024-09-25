@@ -1,5 +1,4 @@
-import 'dotenv/config'
-import './lib/database/LokiDB'
+import './lib/setup'
 
 import { container } from '@sapphire/framework'
 import { YoruClient } from './lib/YoruClient'

@@ -1,4 +1,5 @@
 import { Listener } from '@sapphire/framework'
+import { send } from '@sapphire/plugin-editable-commands'
 import { Message } from 'discord.js'
 
 export class UserListener extends Listener {
@@ -8,8 +9,8 @@ export class UserListener extends Listener {
 		const { sessions } = this.container.client
 
 		this.container.logger.info(`${message.author.tag}: ${message.content}`)
-		if (this.container.client.isMaintenance && !sessions.cache.ownerIds.includes(message.author.id)) {
-			await message.channel.send('⚠️ Under Maintenance')
+		if (this.container.client.isMaintenance && !sessions.data.ownerIds.includes(message.author.id)) {
+			await send(message, '⚠️ Under Maintenance')
 		}
 	}
 }

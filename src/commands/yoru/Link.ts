@@ -1,4 +1,6 @@
+import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities'
 import { Args, Command, Result } from '@sapphire/framework'
+import { free, send } from '@sapphire/plugin-editable-commands'
 import { _ } from '@vegapunk/utilities'
 import { Player, Util } from 'clashofclans.js'
 import { EmbedBuilder, GuildMember, Message, MessageReaction, Role, User } from 'discord.js'
@@ -25,27 +27,27 @@ export class UserCommand extends Command {
 			if (Util.isValidTag(tag)) {
 				if (this.queueProtect.includes(message.author.id)) {
 					const field = `> ${message.content}\nYou must complete previous operation before create new one.`
-					await message.channel.send(field)
+					await send(message, field)
 					return
 				}
 				this.queueProtect.push(message.author.id)
 
 				const mention = await args.pick('string')
-				const mMatch = mention.match(/^<@!?(\d+)>$/)
-				if (mMatch?.length) {
-					await this.link(message, tag, mMatch[1])
-				} else {
-					if (sessions.cache.ownerIds.includes(message.author.id)) {
-						await this.link(message, tag, mention)
-					}
+				const mentionId = mention.match(UserOrMemberMentionRegex)?.[1]
+				if (mentionId) {
+					await this.link(message, tag, mentionId)
+				} else if (SnowflakeRegex.test(mention)) {
+					if (!sessions.data.ownerIds.includes(message.author.id)) return
+					await this.link(message, tag, mention)
 				}
 			} else {
 				const field = `> ${message.content}\nError, Player tag not valid!`
-				await message.channel.send(field)
+				await send(message, field)
 			}
 		})
 		result.inspectErr((error) => ClashAPI.Instance.emit(Events.apiError, message, error))
 
+		free(message)
 		_.pull(this.queueProtect, message.author.id)
 	}
 
@@ -54,12 +56,12 @@ export class UserCommand extends Command {
 
 		const player = await ClashAPI.Instance.getPlayer(tag)
 		if (player.league) thumbLeague = player.league.icon.medium
-		else thumbLeague = emoji.thumbnail.replace('{0}', 'noleague.png')
+		else thumbLeague = emoji.thumbnail.replace('{0}', 'badges/noleague.png')
 
 		const embed = new EmbedBuilder()
 		embed.setColor('#0099ff')
 		embed.setAuthor({ name: `${player.name} (${player.tag})`, iconURL: thumbLeague })
-		embed.setThumbnail(emoji.thumbnail.replace('{0}', `townhall-${player.townHallLevel}.png`))
+		embed.setThumbnail(emoji.thumbnail.replace('{0}', `townhalls/townhall-${player.townHallLevel}.png`))
 		const titleField = `${emoji.level} ${player.expLevel} ${emoji.trophies} ${player.trophies.toLocaleString()} ${
 			emoji.attackwin
 		} ${player.attackWins.toLocaleString()}\n`
@@ -87,19 +89,20 @@ export class UserCommand extends Command {
 				embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`)
 			}
 
-			await message.channel.send({ embeds: [embed] })
+			await send(message, { embeds: [embed] })
 			return
 		}
 
-		const msg = await message.channel.send({ embeds: [embed] })
-		await Promise.all([msg.react('✅'), msg.react('❎')])
+		const msg = await send(message, { embeds: [embed] })
+		const confirmEmojis = Object.values<string>(ConfirmEmojis)
+		await Promise.all(confirmEmojis.map((r) => msg.react(r)))
 
 		const result = await Result.fromAsync(async () => {
-			const filter = (r: MessageReaction, u: User) => ['✅', '❎'].includes(r.emoji.name) && u.id === message.author.id
+			const filter = (r: MessageReaction, u: User) => confirmEmojis.includes(r.emoji.name) && u.id === message.author.id
 			const reaction = (await msg.awaitReactions({ filter, max: 1, time: 60_000 })).first()
 			await msg.reactions.removeAll()
 
-			if (reaction.emoji.name === '❎') {
+			if (reaction.emoji.name === ConfirmEmojis.No) {
 				embed.setDescription(`${titleField}Operation canceled.`)
 				await msg.edit({ embeds: [embed] })
 				return
@@ -109,8 +112,9 @@ export class UserCommand extends Command {
 			if (!dataUser) dataUser = DBUser.insertOneAndSave({ owner_id: user })
 
 			if (DBAccount.findOne({ user_id: dataUser.$loki })) {
-				const roles = message.guild.roles.cache.filter(isRegisterRole)
-				await member.roles.remove(roles)
+				if (member.roles.cache.some(isRegisterRole)) {
+					await this.linkedTag(message, member, player)
+				}
 			} else {
 				await this.linkedTag(message, member, player)
 			}
@@ -134,9 +138,9 @@ export class UserCommand extends Command {
 		const roles = message.guild.roles.cache.filter(isRegisterRole)
 		await member.roles.remove(roles)
 
-		if (player.clan && sessions.cache.clanTags.includes(player.clan.tag)) {
-			const isMemberRole = (r: Role) => r.name === player.clan.name || r.name === MemberRoles.Elder
-			const roles = message.guild.roles.cache.filter(isMemberRole)
+		if (player.clan && sessions.data.clanTags.includes(player.clan.tag)) {
+			const _isMemberRole = (r: Role) => r.name === player.clan.name || r.name === MemberRoles.Elder
+			const roles = message.guild.roles.cache.filter(_isMemberRole)
 			await member.roles.remove(roles)
 
 			let nickname = player.name
@@ -146,8 +150,8 @@ export class UserCommand extends Command {
 
 			await member.setNickname(nickname)
 		} else {
-			const isRegisterRole = (r: Role) => r.name === RegisterRoles.Approved
-			const role = message.guild.roles.cache.find(isRegisterRole)
+			const _isRegisterRole = (r: Role) => r.name === RegisterRoles.Approved
+			const role = message.guild.roles.cache.find(_isRegisterRole)
 			await member.roles.add(role)
 
 			await member.setNickname(`TH ${player.townHallLevel} - ${player.name}`)
@@ -157,10 +161,15 @@ export class UserCommand extends Command {
 	private userPermissions(message: Message) {
 		const { sessions } = this.container.client
 
-		if (sessions.cache.ownerIds.includes(message.author.id)) return true
-		if (message.member.roles.cache.some(isModeratorRole)) return true
+		if (sessions.data.ownerIds.includes(message.author.id)) return true
+		else if (message.member.roles.cache.some(isModeratorRole)) return true
 		return false
 	}
 
 	private queueProtect: string[] = []
+}
+
+enum ConfirmEmojis {
+	Yes = '✅',
+	No = '❎',
 }

@@ -1,4 +1,5 @@
 import { Listener } from '@sapphire/framework'
+import { send } from '@sapphire/plugin-editable-commands'
 import { HTTPError } from 'clashofclans.js'
 import { Message } from 'discord.js'
 import { ClashAPI } from '../lib/api/ClashAPI'
@@ -21,6 +22,6 @@ export class UserListener extends Listener {
 			this.container.logger.error(error)
 		}
 
-		await message.channel.send(field)
+		await send(message, field)
 	}
 }

@@ -5,9 +5,9 @@ import { Role } from 'discord.js'
 import { join } from 'node:path'
 import { ClashAPI } from '../lib/api/ClashAPI'
 import { Events, RegisterRoles } from '../lib/contants/enum'
-import { OfflineCache } from '../lib/core/OfflineCache'
 import { DBAccount, DBUser } from '../lib/database/LokiDB'
-import { isClanRole, isModeratorRole } from '../lib/helpers/core.helper'
+import { isClanRole, isMemberRole, isModeratorRole } from '../lib/helpers/core.helper'
+import { OfflineStore } from '../lib/stores/OfflineStore'
 
 export class UserListener extends Listener {
 	public constructor(context: Listener.LoaderContext) {
@@ -19,26 +19,26 @@ export class UserListener extends Listener {
 
 		let clan = this.clan.get(oldClan.tag)
 		if (!clan) {
-			const cache = new OfflineCache<Clan>({
-				file: join(this.container.client.sessions.dir, 'clan', `${oldClan.tag}.json`),
-				interval: 60 * 1000,
+			const cache = new OfflineStore<Clan>({
+				path: join(this.container.client.sessions.dir, 'clan', `${oldClan.tag}.json`),
+				delay: 60 * 1000,
 				init: oldClan,
 			})
-			await cache.readCache()
+			await cache.readFile()
 
 			this.clan.set(oldClan.tag, cache)
 			clan = this.clan.get(oldClan.tag)
 		}
 
-		if (typeof clan.cache !== 'undefined') {
-			oldClan = clan.cache
-			clan.clearCache()
+		if (typeof clan.data !== 'undefined') {
+			oldClan = clan.data
+			clan.clearData()
 		}
 
-		await clan.writeCache(oldClan)
+		await clan.writeFile(oldClan)
 
-		if (sessions.cache.clans.some((r) => r.tag !== oldClan.tag)) {
-			sessions.cache.clans.push({ name: oldClan.name, tag: oldClan.tag })
+		if (sessions.data.clans.some((r) => r.tag !== oldClan.tag)) {
+			sessions.data.clans.push({ name: oldClan.name, tag: oldClan.tag })
 		}
 
 		for (const player of oldClan.members) {
@@ -78,7 +78,7 @@ export class UserListener extends Listener {
 
 				try {
 					const playerData = await ClashAPI.Instance.getPlayer(account.tag)
-					if (playerData.clan && sessions.cache.clanTags.includes(playerData.clan.tag)) {
+					if (playerData.clan && sessions.data.clanTags.includes(playerData.clan.tag)) {
 						playerAccount = playerData
 						break
 					}
@@ -106,12 +106,12 @@ export class UserListener extends Listener {
 					await member.setNickname(nickname)
 					this.container.logger.info(`${player.tag}: Change nickname ${member.user.username} to ${nickname}`)
 				} else {
-					const isMemberRole = (r: Role) => isMemberRole(r) || isClanRole(r)
-					const roles = guild.roles.cache.filter(isMemberRole)
+					const _isMemberRole = (r: Role) => isMemberRole(r) || isClanRole(r)
+					const roles = guild.roles.cache.filter(_isMemberRole)
 					await member.roles.remove(roles)
 
-					const isRegisterRole = (r: Role) => r.name === RegisterRoles.Reapply
-					const role = guild.roles.cache.find(isRegisterRole)
+					const _isRegisterRole = (r: Role) => r.name === RegisterRoles.Reapply
+					const role = guild.roles.cache.find(_isRegisterRole)
 					await member.roles.add(role)
 
 					this.container.logger.info(`${player.tag}: Register role ${RegisterRoles.Reapply}`)
@@ -127,5 +127,5 @@ export class UserListener extends Listener {
 	private queueLeaving: ClanMember[] = []
 	private queueProtect = new Set<string | number>()
 
-	private clan = new Map<string, OfflineCache<Clan>>()
+	private clan = new Map<string, OfflineStore<Clan>>()
 }

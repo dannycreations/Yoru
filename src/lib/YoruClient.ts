@@ -5,11 +5,11 @@ import { GatewayIntentBits, Partials } from 'discord.js'
 import { join } from 'path'
 import { ClashAPI } from './api/ClashAPI'
 import { Events } from './contants/enum'
-import { OfflineCache } from './core/OfflineCache'
+import { OfflineStore } from './stores/OfflineStore'
 
 export class YoruClient extends SapphireClient {
-	public override sessions: OfflineCache<SessionContext>
 	public override isMaintenance: boolean = false
+	public override sessions: OfflineStore<SessionContext>
 	public override loginTimeout = setTimeout(() => process.exit(1), 60_000)
 
 	public constructor() {
@@ -22,11 +22,12 @@ export class YoruClient extends SapphireClient {
 			loadDefaultErrorListeners: false,
 			loadMessageCommandListeners: true,
 			logger: new Logger(LogLevel.Debug),
-			partials: Object.keys(Partials).map((r) => Partials[r]),
-			intents: Object.keys(GatewayIntentBits).map((r) => GatewayIntentBits[r]),
+			partials: [...Object.values(Partials)] as Partials[],
+			intents: [...Object.values(GatewayIntentBits)] as GatewayIntentBits[],
 		})
 
 		const _logger = logger({
+			// @ts-expect-error
 			level: this.logger['level'],
 			exceptionHandler: false,
 			rejectionHandler: false,
@@ -38,9 +39,9 @@ export class YoruClient extends SapphireClient {
 		this.logger.error = _logger.error.bind(_logger)
 		this.logger.fatal = _logger.fatal.bind(_logger)
 
-		this.sessions = new OfflineCache<SessionContext>({
-			file: join(process.cwd(), 'sessions', 'session.json'),
-			interval: 10_000,
+		this.sessions = new OfflineStore<SessionContext>({
+			path: join(process.cwd(), 'sessions', 'session.json'),
+			delay: 10_000,
 			init: {
 				prefix: '?',
 				ownerIds: [],
@@ -51,15 +52,15 @@ export class YoruClient extends SapphireClient {
 	}
 
 	public async start() {
-		await this.sessions.readCache()
+		await this.sessions.readFile()
 		await this.pollingEvent()
 
-		this.options.defaultPrefix = this.sessions.cache.prefix
+		this.options.defaultPrefix = this.sessions.data.prefix
 		await super.login(process.env.DISCORD_TOKEN)
 	}
 
 	private async pollingEvent() {
-		ClashAPI.Instance.addClans(this.sessions.cache.clanTags)
+		ClashAPI.Instance.addClans(this.sessions.data.clanTags)
 		ClashAPI.Instance.setClanEvent({
 			name: Events.clanMember,
 			filter: (oldClan, newClan) => {
@@ -77,7 +78,7 @@ export class YoruClient extends SapphireClient {
 declare module 'discord.js' {
 	interface Client {
 		readonly isMaintenance: boolean
-		readonly sessions: OfflineCache<SessionContext>
+		readonly sessions: OfflineStore<SessionContext>
 		readonly sessionsDir: string
 		loginTimeout: NodeJS.Timeout
 	}

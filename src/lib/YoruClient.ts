@@ -1,6 +1,5 @@
 import { Logger, LogLevel, SapphireClient } from '@sapphire/framework'
 import { logger } from '@vegapunk/logger'
-import { _ } from '@vegapunk/utilities'
 import { GatewayIntentBits, Partials } from 'discord.js'
 import { join } from 'path'
 import { ClashAPI } from './api/ClashAPI'
@@ -10,7 +9,7 @@ import { OfflineStore } from './stores/OfflineStore'
 export class YoruClient extends SapphireClient {
 	public override isMaintenance: boolean = false
 	public override sessions: OfflineStore<SessionContext>
-	public override loginTimeout = setTimeout(() => process.exit(1), 60_000)
+	public override loginTimeout = setTimeout(() => process.exit(1), 60_000).unref()
 
 	public constructor() {
 		super({
@@ -41,7 +40,6 @@ export class YoruClient extends SapphireClient {
 
 		this.sessions = new OfflineStore<SessionContext>({
 			path: join(process.cwd(), 'sessions', 'session.json'),
-			delay: 10_000,
 			init: {
 				prefix: '?',
 				ownerIds: [],
@@ -61,15 +59,7 @@ export class YoruClient extends SapphireClient {
 
 	private async pollingEvent() {
 		ClashAPI.Instance.addClans(this.sessions.data.clanTags)
-		ClashAPI.Instance.setClanEvent({
-			name: Events.clanMember,
-			filter: (oldClan, newClan) => {
-				const oldMembers = oldClan.members
-				const newMembers = newClan.members
-				const diff = _.differenceBy(oldMembers, newMembers, 'tag')
-				return diff.length !== 0
-			},
-		})
+		ClashAPI.Instance.setClanEvent({ name: Events.clanMember, filter: () => true })
 
 		await ClashAPI.Instance.init()
 	}

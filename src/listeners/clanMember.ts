@@ -30,26 +30,23 @@ export class UserListener extends Listener {
 			clan = this.clan.get(oldClan.tag)
 		}
 
-		if (typeof clan.data !== 'undefined') {
-			oldClan = clan.data
-			clan.clearData()
-		}
-
 		await clan.writeFile(oldClan)
 
-		if (sessions.data.clans.some((r) => r.tag !== oldClan.tag)) {
-			sessions.data.clans.push({ name: oldClan.name, tag: oldClan.tag })
+		if (sessions.data.clans.some((r) => r.tag !== clan.data.tag)) {
+			sessions.data.clans.push({ name: clan.data.name, tag: clan.data.tag })
 		}
 
-		for (const player of oldClan.members) {
+		for (const player of clan.data.members) {
 			if (newClan.members.some((member) => member.tag === player.tag)) continue
 			this.queueLeaving.push(player)
 		}
 
 		if (!this.lockLeavingClan && this.queueLeaving.length) {
 			this.lockLeavingClan = true
-			await this.leavingClan()
-			this.lockLeavingClan = false
+			setTimeout(async () => {
+				await this.leavingClan()
+				this.lockLeavingClan = false
+			}, 20).unref()
 		}
 	}
 

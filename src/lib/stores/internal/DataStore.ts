@@ -39,8 +39,9 @@ export abstract class DataStore<T extends DataStoreContext> {
 		Object.assign(this.data, _.defaultsDeep({}, json, this.data))
 
 		const newData = JSON.stringify(this.data)
-		if (Buffer.from(newData).equals(Buffer.from(this.oldData))) return false
-		if (this.data.__updatedAt + this.options.delay > Date.now() && !force) return false
+		const wait = this.data.__updatedAt + this.options.delay > Date.now()
+		if (wait && !force) return false
+		if (wait && Buffer.from(newData).equals(Buffer.from(this.oldData))) return false
 		this.data.__updatedAt = Date.now()
 
 		await this._writeFile()

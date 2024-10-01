@@ -1,4 +1,3 @@
-import { container } from '@sapphire/framework'
 import { ErrorCodes } from '@vegapunk/request'
 import { IPv4Regex, sleep } from '@vegapunk/utilities'
 import { HTTPError, PollingClient, RequestOptions, Result } from 'clashofclans.js'
@@ -10,17 +9,15 @@ export class ClashAPI extends PollingClient {
 	public static readonly Instance = new ClashAPI()
 
 	public constructor() {
-		super()
-		Object.assign(this, { _pollingInterval: 60_000 })
+		super({ pollingInterval: 60_000 })
 
 		this.getIpOrig = this.rest.requestHandler['getIp'].bind(this.rest.requestHandler)
 		this.rest.requestHandler['getIp'] = (token: string) => {
 			const _ipFromError = this.ipFromError
-			if (_ipFromError) {
-				this.ipFromError = null
+			if (typeof _ipFromError === 'string') {
+				this.ipFromError = undefined
 				return _ipFromError
 			}
-
 			return this.getIpOrig(token)
 		}
 
@@ -38,7 +35,6 @@ export class ClashAPI extends PollingClient {
 				}
 
 				if (errorCodes.includes(error.code)) {
-					this.ipFromError = error.message
 					await sleep(10_000)
 					this.requestState = 0
 					return this.rest.requestHandler.request(path, options)
@@ -59,12 +55,15 @@ export class ClashAPI extends PollingClient {
 						this.requestState++
 						return this.rest.requestHandler.request(path, options)
 					}
+				} else if (error instanceof SyntaxError) {
+					if (!!~error.message.indexOf('not valid JSON')) {
+						await sleep(10_000)
+						return this.rest.requestHandler.request(path, options)
+					}
 				}
 
 				error.stack = null
 				error.message = `${ClashAPI.name}: ${error.message}`
-				container.logger.warn(error)
-
 				throw error
 			}
 		}

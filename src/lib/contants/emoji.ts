@@ -1,4 +1,4 @@
-const _emojis = {
+const _emojis: EmojiContext = {
 	thumbnail: 'https://raw.githubusercontent.com/dannycreations/yoru/main/discord/emojis/{0}',
 	level: '<:level:679995912151760920>',
 	hashtag: '<:hashtag:1216000497975037994>',

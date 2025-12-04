@@ -1,7 +1,7 @@
 import { join } from 'path';
 import { container, Logger, LogLevel, SapphireClient } from '@sapphire/framework';
 import { logger } from '@vegapunk/logger';
-import { chalk, restartApp } from '@vegapunk/utilities';
+import { chalk, killApp } from '@vegapunk/utilities';
 import { v } from '@vegapunk/utilities/strict';
 import { GatewayIntentBits, Partials } from 'discord.js';
 
@@ -9,16 +9,17 @@ import { ClashAPI } from './api/ClashAPI';
 import { ClientEvents } from './contants/enum';
 import { OfflineStore } from './stores/OfflineStore';
 
-const EnvSchema = v.pipe(
-  v.object({
-    DISCORD_TOKEN: v.pipe(v.string(), v.minLength(1)),
-    CLASH_EMAIL: v.pipe(v.string(), v.email()),
-    CLASH_PASSWORD: v.pipe(v.string(), v.minLength(1)),
-  }),
-  v.readonly(),
+export const env = v.parse(
+  v.pipe(
+    v.object({
+      DISCORD_TOKEN: v.pipe(v.string(), v.minLength(1)),
+      CLASH_EMAIL: v.pipe(v.string(), v.email()),
+      CLASH_PASSWORD: v.pipe(v.string(), v.minLength(1)),
+    }),
+    v.readonly(),
+  ),
+  process.env,
 );
-
-export const env = v.parse(EnvSchema, process.env);
 
 export class YoruClient extends SapphireClient {
   public static readonly isMaintenance: boolean = false;
@@ -81,7 +82,7 @@ export class YoruClient extends SapphireClient {
   public override async destroy(): Promise<void> {
     container.logger.info(chalk`{bold.red YoruClient is destroyed.}`);
     super.destroy();
-    restartApp();
+    killApp();
   }
 
   private async pollingEvent() {

@@ -1,13 +1,13 @@
-import { Listener } from '@sapphire/framework';
+import { Events, Listener } from '@sapphire/framework';
 import { send } from '@sapphire/plugin-editable-commands';
 
 import { YoruClient } from '../../lib/YoruClient';
 
 import type { Message } from 'discord.js';
 
-export class UserListener extends Listener<'messageCreate'> {
+export class UserListener extends Listener<typeof Events.MessageCreate> {
   public constructor(context: Listener.LoaderContext) {
-    super(context, { event: 'messageCreate' });
+    super(context, { event: Events.MessageCreate });
   }
 
   public async run(message: Message<true>): Promise<void> {

@@ -1,33 +1,6 @@
-import { z } from '@vegapunk/utilities/strict';
+import { v } from '@vegapunk/utilities/strict';
 
-const EmojiSchema = z.object({
-  thumbnail: z.string(),
-  level: z.string(),
-  hashtag: z.string(),
-  trophies: z.string(),
-  attackwin: z.string(),
-  noleague: z.string(),
-  isclan: z.object({
-    true: z.string(),
-    false: z.string(),
-  }),
-  stars: z.array(z.string()),
-  townhalls: z.array(z.string()),
-  troops: z.object({
-    normal: z.record(z.string()),
-    dark: z.record(z.string()),
-    super: z.record(z.string()),
-    siege: z.record(z.string()),
-    pets: z.record(z.string()),
-  }),
-  spells: z.object({
-    normal: z.record(z.string()),
-    dark: z.record(z.string()),
-  }),
-  heroes: z.record(z.string()),
-});
-
-export const Emoji = EmojiSchema.readonly().parse({
+const emojiData = {
   thumbnail: 'https://raw.githubusercontent.com/dannycreations/yoru/main/discord/emojis/{0}',
   level: '<:level:679995912151760920>',
   hashtag: '<:hashtag:1216000497975037994>',
@@ -160,4 +133,36 @@ export const Emoji = EmojiSchema.readonly().parse({
     'Royal Champion': '<:royalchampion:1333151008326684702>',
     'Minion Prince': '<:minionprince:1333152496620667031>',
   },
-});
+};
+
+const EmojiSchema = v.pipe(
+  v.object({
+    thumbnail: v.string(),
+    level: v.string(),
+    hashtag: v.string(),
+    trophies: v.string(),
+    attackwin: v.string(),
+    noleague: v.string(),
+    isclan: v.object({
+      true: v.string(),
+      false: v.string(),
+    }),
+    stars: v.array(v.string()),
+    townhalls: v.array(v.string()),
+    troops: v.object({
+      normal: v.record(v.string(), v.string()),
+      dark: v.record(v.string(), v.string()),
+      super: v.record(v.string(), v.string()),
+      siege: v.record(v.string(), v.string()),
+      pets: v.record(v.string(), v.string()),
+    }),
+    spells: v.object({
+      normal: v.record(v.string(), v.string()),
+      dark: v.record(v.string(), v.string()),
+    }),
+    heroes: v.record(v.string(), v.string()),
+  }),
+  v.readonly(),
+);
+
+export const emoji = v.parse(EmojiSchema, emojiData);

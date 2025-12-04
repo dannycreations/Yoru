@@ -1,10 +1,11 @@
 import { Listener } from '@sapphire/framework';
 import { send } from '@sapphire/plugin-editable-commands';
 import { HTTPError } from 'clashofclans.js';
-import { Message } from 'discord.js';
 
 import { ClashAPI } from '../lib/api/ClashAPI';
 import { ClientEvents } from '../lib/contants/enum';
+
+import type { Message } from 'discord.js';
 
 export class UserListener extends Listener {
   public constructor(context: Listener.LoaderContext) {

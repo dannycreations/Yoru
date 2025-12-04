@@ -1,5 +1,6 @@
 import { Command } from '@sapphire/framework';
-import { Message } from 'discord.js';
+
+import type { Message } from 'discord.js';
 
 export class UserCommand extends Command {
   public constructor(context: Command.LoaderContext) {

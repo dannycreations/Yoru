@@ -1,9 +1,11 @@
 import { Listener } from '@sapphire/framework';
-import { ActivityType, Client } from 'discord.js';
+import { ActivityType } from 'discord.js';
 
-export class UserListener extends Listener<'ready'> {
+import type { Client } from 'discord.js';
+
+export class UserListener extends Listener<'clientReady'> {
   public constructor(context: Listener.LoaderContext) {
-    super(context, { event: 'ready' });
+    super(context, { event: 'clientReady' });
   }
 
   public run(client: Client<true>): void {

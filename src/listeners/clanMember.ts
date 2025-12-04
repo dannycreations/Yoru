@@ -4,7 +4,6 @@ import { Mutex, Queue } from '@vegapunk/struct';
 import { attemptAsync, isObjectLike, remove } from '@vegapunk/utilities/common';
 import { isErrorLike, Result } from '@vegapunk/utilities/result';
 import { waitForEach } from '@vegapunk/utilities/sleep';
-import { Clan, ClanMember, Player } from 'clashofclans.js';
 import { GuildMember, Role } from 'discord.js';
 
 import { ClashAPI } from '../lib/api/ClashAPI';
@@ -13,6 +12,8 @@ import { DBAccount } from '../lib/database/drizzle';
 import { userTable } from '../lib/database/schema';
 import { getGuildMember, isClanRole, isMemberRole, isModeratorRole } from '../lib/helpers/core.helper';
 import { OfflineStore } from '../lib/stores/OfflineStore';
+
+import type { Clan, ClanMember, Player } from 'clashofclans.js';
 
 export class UserListener extends Listener {
   public constructor(context: Listener.LoaderContext) {
@@ -34,7 +35,7 @@ export class UserListener extends Listener {
         }
 
         const offlineStore = new OfflineStore<Clan>({
-          path: join(config.dir, 'clan', `${oldClan.tag}.json`),
+          filePath: join(config.dirPath, 'clan', `${oldClan.tag}.json`),
           delay: 60_000,
           init: oldClan,
         });
@@ -47,7 +48,9 @@ export class UserListener extends Listener {
       }
 
       await waitForEach(oldClan.members, (player) => {
-        if (newClan.members.some((member) => member.tag === player.tag)) return;
+        if (newClan.members.some((member) => member.tag === player.tag)) {
+          return;
+        }
 
         this.leavingQueue.enqueue(player);
         remove(oldClan.members, (r) => r.tag === player.tag);
@@ -71,7 +74,9 @@ export class UserListener extends Listener {
 
       const result = await Result.fromAsync(async () => {
         const player = this.leavingQueue.dequeue();
-        if (!player) return;
+        if (!player) {
+          return;
+        }
 
         const getAccount = DBAccount.findOne({ tag: player.tag });
         Result.assert(getAccount.isOk(), `Account not found ${player.tag}`, { ...getAccount, tag: player.tag });

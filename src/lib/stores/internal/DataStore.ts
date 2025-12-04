@@ -1,64 +1,82 @@
-import { RequiredExcept } from '@vegapunk/utilities';
+import { dirname } from 'node:path';
 import { defaultsDeep } from '@vegapunk/utilities/common';
 
-export abstract class DataStore<T extends object> {
+import type { RequiredExcept } from '@vegapunk/utilities';
+
+export abstract class DataStore<T extends object, O extends object = object> {
   public static readonly MIN_DELAY: number = 1000;
   public static readonly MAX_DELAY: number = 2147483647;
 
-  public readonly options: RequiredExcept<DataStoreOptions<T>, 'watch'>;
-  public readonly data: DataStoreInternalData<T>;
+  public readonly options: RequiredExcept<DataStoreOptions<T>, 'filePath' | 'watch'> & O;
+  public readonly data: T & { __updatedAt: number };
+  public readonly filePath: string;
+  public readonly dirPath: string;
 
-  public constructor(options: DataStoreOptions<T>) {
+  public constructor(options: Partial<DataStoreOptions<T> & O>) {
     this.options = {
-      ...options,
+      ...(options as O),
       init: options.init ?? ({} as T),
       delay: options.delay ?? DataStore.MIN_DELAY,
-      watch: options.watch ?? undefined,
       readonly: options.readonly ?? false,
+      watch: options.watch ?? undefined,
     };
+
+    this.filePath = options.filePath || '';
+    this.dirPath = dirname(this.filePath);
 
     this.data = { ...(this.options.init as T), __updatedAt: 0 };
     this.previousData = JSON.stringify(this.data);
+    this.isDisposed = false;
 
+    this.delayMs = DataStore.MIN_DELAY;
     this.setDelay(this.options.delay);
-    if (this.options.watch) {
+    if (typeof this.options.watch === 'function') {
       this.watch();
     }
   }
 
-  public abstract readonly dir: string;
   protected abstract _init(): Promise<void>;
   protected abstract _readFile(): Promise<T | null>;
   protected abstract _writeFile(): Promise<void>;
 
   public setDelay(delayMs: number = DataStore.MIN_DELAY): void {
+    if (this.isDisposed) {
+      return;
+    }
     this.delayMs = Math.min(Math.max(Math.trunc(delayMs), DataStore.MIN_DELAY), DataStore.MAX_DELAY);
   }
 
   public async readFile(): Promise<void> {
+    if (this.isDisposed) {
+      return;
+    }
     await this.ensureInit();
 
     const fileData = (await this._readFile()) ?? ({} as T);
-    Object.assign(this.data, defaultsDeep({}, fileData, this.data, this.options.init));
+    const mergeData = defaultsDeep<{ __updatedAt: number }>({}, fileData, this.data, this.options.init);
+    Object.assign(this.data, { ...mergeData, __updatedAt: mergeData.__updatedAt });
   }
 
   public async writeFile(data: Partial<T> = this.data, force: boolean = false): Promise<void> {
+    if (this.isDisposed) {
+      return;
+    }
     await this.ensureInit();
 
     Object.assign(this.data, defaultsDeep({}, data, this.data));
-    if (this.options.readonly && !force) {
+    if (!force && this.options.readonly) {
       return;
     }
 
     const currentTimeMs = Date.now();
-    const delayNotElapsed = this.data.__updatedAt + this.delayMs > currentTimeMs;
-    if (!force && delayNotElapsed) {
+    const isWaiting = this.data.__updatedAt + this.delayMs > currentTimeMs;
+    if (!force && isWaiting) {
       return;
     }
 
     const currentData = JSON.stringify(this.data);
-    const isDataUnchanged = currentData === this.previousData;
-    if (!force && isDataUnchanged) {
+    const isUnchanged = currentData === this.previousData;
+    if (!force && isWaiting && isUnchanged) {
       return;
     }
 
@@ -68,7 +86,7 @@ export abstract class DataStore<T extends object> {
   }
 
   public clear(force: boolean = false): void {
-    if (this.options.readonly && !force) {
+    if (this.isDisposed || (!force && this.options.readonly)) {
       return;
     }
 
@@ -81,28 +99,36 @@ export abstract class DataStore<T extends object> {
     this.previousData = JSON.stringify(this.data);
   }
 
+  public dispose(): void {
+    if (this.isDisposed) {
+      return;
+    }
+
+    this.isDisposed = true;
+    clearTimeout(this.watchTimeoutId);
+    this.watchTimeoutId = undefined;
+  }
+
   private watchTimeoutId?: NodeJS.Timeout;
   private watch(): void {
-    if (this.watchTimeoutId) {
-      clearTimeout(this.watchTimeoutId);
-      this.watchTimeoutId = undefined;
-    }
-    if (!this.options.watch) {
+    clearTimeout(this.watchTimeoutId);
+    this.watchTimeoutId = undefined;
+    if (this.isDisposed || this.options.readonly || typeof this.options.watch !== 'function') {
       return;
     }
 
     this.watchTimeoutId = setTimeout(async () => {
-      if (!this.options.watch) {
-        return;
-      }
-
       try {
-        const watchData = await this.options.watch();
-        await this.writeFile(watchData);
+        if (typeof this.options.watch !== 'function') {
+          return;
+        }
+
+        const promises = Promise.resolve(this.options.watch());
+        await this.writeFile(await promises);
       } finally {
         this.watch();
       }
-    }, this.delayMs).unref();
+    }, this.delayMs);
   }
 
   private initPromise?: Promise<void>;
@@ -120,17 +146,14 @@ export abstract class DataStore<T extends object> {
     return this.initPromise;
   }
 
+  private delayMs: number;
+  private isDisposed: boolean;
   private previousData: string;
-  private delayMs: number = DataStore.MIN_DELAY;
 }
-
-type DataStoreInternalData<T extends object> = T & {
-  __updatedAt: number;
-};
-
 export interface DataStoreOptions<T extends object> {
-  readonly init?: T;
-  readonly delay?: number;
-  readonly readonly?: boolean;
-  readonly watch?: () => Promise<T>;
+  readonly init: Partial<T>;
+  readonly filePath: string;
+  readonly delay: number;
+  readonly readonly: boolean;
+  readonly watch?: () => T | Promise<T>;
 }

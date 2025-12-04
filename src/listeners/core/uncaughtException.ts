@@ -8,7 +8,9 @@ export class UserListener extends Listener {
   public run(error: Error): void {
     if ('context' in error && typeof error.context === 'object') {
       const { context } = error as ErrorContext;
-      if (context.error.code === 'ENOTFOUND') return;
+      if (context.error.code === 'ENOTFOUND') {
+        return;
+      }
     }
     this.container.logger.fatal(error, 'UncaughtException.');
   }

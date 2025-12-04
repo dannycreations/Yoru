@@ -1,17 +1,21 @@
 import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
-import { Args, Command } from '@sapphire/framework';
+import { Command } from '@sapphire/framework';
 import { free, send } from '@sapphire/plugin-editable-commands';
 import { isErrorLike, Result } from '@vegapunk/utilities/result';
-import { Player, Util } from 'clashofclans.js';
-import { EmbedBuilder, GuildMember, Message, MessageReaction, Role, User } from 'discord.js';
+import { Util } from 'clashofclans.js';
+import { EmbedBuilder } from 'discord.js';
 
 import { ClashAPI } from '../../lib/api/ClashAPI';
-import { Emoji } from '../../lib/contants/emoji';
+import { emoji } from '../../lib/contants/emoji';
 import { ClientEvents, MemberRoles, RegisterRoles } from '../../lib/contants/enum';
 import { DBAccount, DBUser } from '../../lib/database/drizzle';
 import { userTable } from '../../lib/database/schema';
 import { parseClan } from '../../lib/helpers/clan.helper';
 import { isModeratorRole, isRegisterRole } from '../../lib/helpers/core.helper';
+
+import type { Args } from '@sapphire/framework';
+import type { Player } from 'clashofclans.js';
+import type { GuildMember, Message, MessageReaction, Role, User } from 'discord.js';
 
 export class UserCommand extends Command {
   public constructor(context: Command.LoaderContext) {
@@ -19,7 +23,9 @@ export class UserCommand extends Command {
   }
 
   public override async messageRun(message: Message<true>, args: Args): Promise<void> {
-    if (!this.hasPermissions(message)) return;
+    if (!this.hasPermissions(message)) {
+      return;
+    }
 
     const { config } = this.container.client;
 
@@ -39,7 +45,9 @@ export class UserCommand extends Command {
         if (mentionId) {
           await this.link(message, tag, mentionId);
         } else if (SnowflakeRegex.test(mention)) {
-          if (!config.data.ownerIds.includes(message.author.id)) return;
+          if (!config.data.ownerIds.includes(message.author.id)) {
+            return;
+          }
           await this.link(message, tag, mention);
         }
       } else {
@@ -57,15 +65,18 @@ export class UserCommand extends Command {
     let thumbLeague: string;
 
     const player = await ClashAPI.Instance.getPlayer(tag);
-    if (player.league) thumbLeague = player.league.icon.medium;
-    else thumbLeague = Emoji.thumbnail.replace('{0}', 'badges/noleague.png');
+    if (player.leagueTier) {
+      thumbLeague = player.leagueTier.icon.medium;
+    } else {
+      thumbLeague = emoji.thumbnail.replace('{0}', 'badges/noleague.png');
+    }
 
     const embed = new EmbedBuilder();
     embed.setColor('#0099ff');
     embed.setAuthor({ name: `${player.name} (${player.tag})`, iconURL: thumbLeague });
-    embed.setThumbnail(Emoji.thumbnail.replace('{0}', `townhalls/townhall-${player.townHallLevel}.png`));
-    const titleField = `${Emoji.level} ${player.expLevel} ${Emoji.trophies} ${player.trophies.toLocaleString()} ${
-      Emoji.attackwin
+    embed.setThumbnail(emoji.thumbnail.replace('{0}', `townhalls/townhall-${player.townHallLevel}.png`));
+    const titleField = `${emoji.level} ${player.expLevel} ${emoji.trophies} ${player.trophies.toLocaleString()} ${
+      emoji.attackwin
     } ${player.attackWins.toLocaleString()}\n`;
     embed.setDescription(`${titleField}Are you sure want to link this account?`);
     parseClan(player, (text, iconURL) => embed.setFooter({ text, iconURL }));
@@ -74,7 +85,7 @@ export class UserCommand extends Command {
     Result.assert(getAccount.isOk(), '', { ...getAccount, tag });
 
     const dataUser = getAccount.unwrap();
-    const member = message.guild.members.cache.get(dataUser ? dataUser.user.ownerId : user)!;
+    const member = message.guild.members.cache.get(dataUser ? dataUser.user.ownerId : user);
 
     if (dataUser) {
       if (member && user === dataUser.user.ownerId) {
@@ -85,11 +96,13 @@ export class UserCommand extends Command {
         dataUser.user.ownerId = user;
         DBUser.update(dataUser.user);
 
-        const member = message.guild.members.cache.get(user)!;
-        await this.linkedTag(message, member, player);
+        const newMember = message.guild.members.cache.get(user);
+        if (newMember) {
+          await this.linkedTag(message, newMember, player);
+        }
 
-        embed.setDescription(`${titleField}Owner changed to **${member.user.tag}**.`);
-      } else {
+        embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag ?? user}**.`);
+      } else if (member) {
         embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`);
       }
 
@@ -102,11 +115,11 @@ export class UserCommand extends Command {
     await Promise.all(confirmEmojis.map((r) => msg.react(r)));
 
     const result = await Result.fromAsync(async () => {
-      const filter = (r: MessageReaction, u: User) => confirmEmojis.includes(r.emoji.name!) && u.id === message.author.id;
-      const reaction = (await msg.awaitReactions({ filter, max: 1, time: 60_000 })).first()!;
+      const filter = (r: MessageReaction, u: User) => confirmEmojis.includes(r.emoji.name ?? '') && u.id === message.author.id;
+      const reaction = (await msg.awaitReactions({ filter, max: 1, time: 60_000 })).first();
       await msg.reactions.removeAll();
 
-      if (reaction.emoji.name === ConfirmEmojis.No) {
+      if (reaction?.emoji.name === ConfirmEmojis.No) {
         embed.setDescription(`${titleField}Operation canceled.`);
         await msg.edit({ embeds: [embed] });
         return;
@@ -116,22 +129,26 @@ export class UserCommand extends Command {
       Result.assert(getUser.isOk(), '', getUser);
 
       const userId = getUser.unwrap()!.id;
-      if (DBAccount.count({ userId })) {
-        if (member.roles.cache.some(isRegisterRole)) {
+      if (member) {
+        if (DBAccount.count({ userId })) {
+          if (member.roles.cache.some(isRegisterRole)) {
+            await this.linkedTag(message, member, player);
+          }
+        } else {
           await this.linkedTag(message, member, player);
         }
-      } else {
-        await this.linkedTag(message, member, player);
       }
 
       const getAccount = DBAccount.findOneAndUpdate({ tag }, { tag, userId }, { upsert: true });
       Result.assert(getAccount.isOk(), '', getAccount);
 
-      embed.setDescription(`${titleField}Linked to **${member.user.tag}**.`);
+      embed.setDescription(`${titleField}Linked to **${member?.user.tag ?? user}**.`);
       await msg.edit({ embeds: [embed] });
     });
     result.inspectErr(async (error) => {
-      if (isErrorLike(error)) this.container.logger.error(error);
+      if (isErrorLike(error)) {
+        this.container.logger.error(error);
+      }
 
       await msg.reactions.removeAll();
       embed.setDescription(`${titleField}No answer after 60 seconds, operation canceled.`);
@@ -164,13 +181,18 @@ export class UserCommand extends Command {
     }
   }
 
-  private hasPermissions(message: Message<true>) {
-    Result.assert(message.member, '');
+  private hasPermissions(message: Message<true>): boolean {
+    if (!message.member) {
+      return false;
+    }
 
     const { config } = this.container.client;
 
-    if (config.data.ownerIds.includes(message.author.id)) return true;
-    else if (message.member!.roles.cache.some(isModeratorRole)) return true;
+    if (config.data.ownerIds.includes(message.author.id)) {
+      return true;
+    } else if (message.member.roles.cache.some(isModeratorRole)) {
+      return true;
+    }
     return false;
   }
 

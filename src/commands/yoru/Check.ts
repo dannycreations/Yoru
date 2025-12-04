@@ -1,19 +1,22 @@
 import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
-import { Args, Command } from '@sapphire/framework';
+import { Command } from '@sapphire/framework';
 import { free, send } from '@sapphire/plugin-editable-commands';
 import { isErrorLike, Result } from '@vegapunk/utilities/result';
 import { waitForEach } from '@vegapunk/utilities/sleep';
 import { dayjs } from '@vegapunk/utilities/time';
 import { Util } from 'clashofclans.js';
-import { EmbedBuilder, Message } from 'discord.js';
+import { EmbedBuilder } from 'discord.js';
 
 import { ClashAPI } from '../../lib/api/ClashAPI';
-import { Emoji } from '../../lib/contants/emoji';
+import { emoji } from '../../lib/contants/emoji';
 import { ClientEvents } from '../../lib/contants/enum';
 import { DBAccount, DBUser } from '../../lib/database/drizzle';
 import { accountTable, accountTableType, userTable } from '../../lib/database/schema';
 import { parseClan } from '../../lib/helpers/clan.helper';
 import { getGuild } from '../../lib/helpers/core.helper';
+
+import type { Args } from '@sapphire/framework';
+import type { Message } from 'discord.js';
 
 export class UserCommand extends Command {
   public constructor(context: Command.LoaderContext) {
@@ -27,14 +30,20 @@ export class UserCommand extends Command {
       const tag = await args.pick('string');
       const page = await args.pick('number').catch(() => 0);
 
-      if (/member/i.test(tag)) return this.checkMembers(message, page);
-      if (Util.isValidTag(tag)) return this.checkPlayer(message, tag);
+      if (/member/i.test(tag)) {
+        return this.checkMembers(message, page);
+      }
+      if (Util.isValidTag(tag)) {
+        return this.checkPlayer(message, tag);
+      }
 
       const mentionId = tag.match(UserOrMemberMentionRegex)?.[1];
       if (mentionId) {
         await this.checkUser(message, mentionId, page);
       } else if (SnowflakeRegex.test(tag)) {
-        if (!config.data.ownerIds.includes(message.author.id)) return;
+        if (!config.data.ownerIds.includes(message.author.id)) {
+          return;
+        }
         await this.checkUser(message, tag, page);
       } else {
         const field = `> ${message.content}\nError, Player tag not valid!`;
@@ -77,23 +86,28 @@ export class UserCommand extends Command {
 
     let count = 0;
     await waitForEach(dataAccounts, async (account) => {
-      if (account.isBanned) return;
+      if (account.isBanned) {
+        return;
+      }
 
       try {
         let field = '';
         const player = await ClashAPI.Instance.getPlayer(account.tag);
-        field += `${Emoji.hashtag} ${player.tag}\n`;
+        field += `${emoji.hashtag} ${player.tag}\n`;
 
-        const level = `${Emoji.level} ${player.expLevel}`;
-        const trophies = `${Emoji.trophies} ${player.trophies.toLocaleString()}`;
-        const attacks = `${Emoji.attackwin} ${player.attackWins.toLocaleString()}`;
+        const level = `${emoji.level} ${player.expLevel}`;
+        const trophies = `${emoji.trophies} ${player.trophies.toLocaleString()}`;
+        const attacks = `${emoji.attackwin} ${player.attackWins.toLocaleString()}`;
         field += `${level} ${trophies} ${attacks}\n`;
 
-        if (player.clan) field += `${Emoji.isclan.true} ${player.clan.name}`;
-        else field += `${Emoji.isclan.false} Player is clanless`;
+        if (player.clan) {
+          field += `${emoji.isclan.true} ${player.clan.name}`;
+        } else {
+          field += `${emoji.isclan.false} Player is clanless`;
+        }
 
         embed.addFields({
-          name: `${++count}. ${Emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
+          name: `${++count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
           value: field,
         });
       } catch (error) {
@@ -106,7 +120,7 @@ export class UserCommand extends Command {
       } finally {
         if (account.isBanned) {
           embed.addFields({
-            name: `${++count}. ${Emoji.townhalls[0]} ${account.tag}`,
+            name: `${++count}. ${emoji.townhalls[0]} ${account.tag}`,
             value: '⛔ Has been banned!',
           });
         }
@@ -119,18 +133,21 @@ export class UserCommand extends Command {
   }
 
   private async checkPlayer(message: Message<true>, tag: string) {
-    let thumbLeague: string,
-      isOwned = '';
+    let thumbLeague: string;
+    let isOwned = '';
 
     const player = await ClashAPI.Instance.getPlayer(tag);
     const embed = new EmbedBuilder();
     embed.setColor('#0099ff');
     embed.setTitle('Open in Clash of Clans ↗');
     embed.setURL(`https://link.clashofclans.com/en?action=OpenPlayerProfile&tag=${tag}`);
-    if (player.league) thumbLeague = player.league.icon.medium;
-    else thumbLeague = Emoji.thumbnail.replace('{0}', 'badges/noleague.png');
+    if (player.leagueTier) {
+      thumbLeague = player.leagueTier.icon.medium;
+    } else {
+      thumbLeague = emoji.thumbnail.replace('{0}', 'badges/noleague.png');
+    }
     embed.setAuthor({ name: `${player.name} (${player.tag})`, iconURL: thumbLeague });
-    embed.setThumbnail(Emoji.thumbnail.replace('{0}', `townhalls/townhall-${player.townHallLevel}.png`));
+    embed.setThumbnail(emoji.thumbnail.replace('{0}', `townhalls/townhall-${player.townHallLevel}.png`));
 
     const getAccount = DBAccount.findOne({ tag }, { joins: [{ table: userTable, on: { userId: 'id' } }] });
     Result.assert(getAccount.isOk(), '', { ...getAccount, tag });
@@ -141,36 +158,36 @@ export class UserCommand extends Command {
       isOwned = `👤 ${member ? member.user.tag : ownerId}\n`;
     }
 
-    const level = `${Emoji.level} ${player.expLevel}`;
-    const trophies = `${Emoji.trophies} ${player.trophies.toLocaleString()}`;
-    const attacks = `${Emoji.attackwin} ${player.attackWins.toLocaleString()}`;
+    const level = `${emoji.level} ${player.expLevel}`;
+    const trophies = `${emoji.trophies} ${player.trophies.toLocaleString()}`;
+    const attacks = `${emoji.attackwin} ${player.attackWins.toLocaleString()}`;
     embed.addFields({ name: 'Profiles', value: `${isOwned}${level} ${trophies} ${attacks}` });
 
-    const troops: string[] = [],
-      darkTroops: string[] = [],
-      superTroops: string[] = [],
-      siegeTroops: string[] = [],
-      petTroops: string[] = [],
-      spells: string[] = [],
-      darkSpells: string[] = [],
-      heroes: string[] = [],
-      achievements: string[] = [],
-      unknowns: unknown[] = [];
+    const troops: string[] = [];
+    const darkTroops: string[] = [];
+    const superTroops: string[] = [];
+    const siegeTroops: string[] = [];
+    const petTroops: string[] = [];
+    const spells: string[] = [];
+    const darkSpells: string[] = [];
+    const heroes: string[] = [];
+    const achievements: string[] = [];
+    const unknowns: unknown[] = [];
 
     await waitForEach(
       player.troops.filter((r) => r.village === 'home'),
       (troop) => {
         const field = '**' + troop.level + '**/' + troop.maxLevel;
-        if (Object.keys(Emoji.troops.normal).includes(troop.name)) {
-          troops.push(Emoji.troops.normal[troop.name] + field);
-        } else if (Object.keys(Emoji.troops.dark).includes(troop.name)) {
-          darkTroops.push(Emoji.troops.dark[troop.name] + field);
-        } else if (Object.keys(Emoji.troops.super).includes(troop.name)) {
-          superTroops.push(Emoji.troops.super[troop.name] + field);
-        } else if (Object.keys(Emoji.troops.siege).includes(troop.name)) {
-          siegeTroops.push(Emoji.troops.siege[troop.name] + field);
-        } else if (Object.keys(Emoji.troops.pets).includes(troop.name)) {
-          petTroops.push(Emoji.troops.pets[troop.name] + field);
+        if (Object.keys(emoji.troops.normal).includes(troop.name)) {
+          troops.push(emoji.troops.normal[troop.name] + field);
+        } else if (Object.keys(emoji.troops.dark).includes(troop.name)) {
+          darkTroops.push(emoji.troops.dark[troop.name] + field);
+        } else if (Object.keys(emoji.troops.super).includes(troop.name)) {
+          superTroops.push(emoji.troops.super[troop.name] + field);
+        } else if (Object.keys(emoji.troops.siege).includes(troop.name)) {
+          siegeTroops.push(emoji.troops.siege[troop.name] + field);
+        } else if (Object.keys(emoji.troops.pets).includes(troop.name)) {
+          petTroops.push(emoji.troops.pets[troop.name] + field);
         } else {
           unknowns.push(troop);
         }
@@ -187,10 +204,10 @@ export class UserCommand extends Command {
       player.spells.filter((r) => r.village === 'home'),
       (spell) => {
         const field = '**' + spell.level + '**/' + spell.maxLevel;
-        if (Object.keys(Emoji.spells.normal).includes(spell.name)) {
-          spells.push(Emoji.spells.normal[spell.name] + field);
-        } else if (Object.keys(Emoji.spells.dark).includes(spell.name)) {
-          darkSpells.push(Emoji.spells.dark[spell.name] + field);
+        if (Object.keys(emoji.spells.normal).includes(spell.name)) {
+          spells.push(emoji.spells.normal[spell.name] + field);
+        } else if (Object.keys(emoji.spells.dark).includes(spell.name)) {
+          darkSpells.push(emoji.spells.dark[spell.name] + field);
         } else {
           unknowns.push(spell);
         }
@@ -204,8 +221,8 @@ export class UserCommand extends Command {
       player.heroes.filter((r) => r.village === 'home'),
       (hero) => {
         const field = '**' + hero.level + '**/' + hero.maxLevel;
-        if (Object.keys(Emoji.heroes).includes(hero.name)) {
-          heroes.push(Emoji.heroes[hero.name] + field);
+        if (Object.keys(emoji.heroes).includes(hero.name)) {
+          heroes.push(emoji.heroes[hero.name] + field);
         } else {
           unknowns.push(hero);
         }
@@ -218,7 +235,7 @@ export class UserCommand extends Command {
     await waitForEach(
       player.achievements.filter((r) => achievementsName.includes(r.name)),
       (achievement) => {
-        achievements.push(Emoji.stars[achievement.stars] + ' **' + achievement.name + '** ' + achievement.value.toLocaleString() + '\n');
+        achievements.push(emoji.stars[achievement.stars] + ' **' + achievement.name + '** ' + achievement.value.toLocaleString() + '\n');
       },
     );
 
@@ -235,11 +252,13 @@ export class UserCommand extends Command {
     const userGuild = getGuild(message.author.id)!;
     await userGuild.members.fetch();
 
-    if (page < 1 || page > config.data.clanTags.length) page = 1;
+    if (page < 1 || page > config.data.clanTags.length) {
+      page = 1;
+    }
 
-    let field = '',
-      leave: string[] = [],
-      unknown: string[] = [];
+    let field = '';
+    const leave: string[] = [];
+    const unknown: string[] = [];
 
     const guildMap = new Map<string, string[]>();
     const clan = await ClashAPI.Instance.getClan(config.data.clanTags[page - 1]);
@@ -266,16 +285,20 @@ export class UserCommand extends Command {
     });
 
     field += `**### ${clan.name} (${clan.tag})**\n👥 **Total Members in Clan:** ${clan.memberCount}\n\n`;
-    if (leave.length) field += `🖕 **Members leave Discord:** ${leave.length}\n${leave.join(' ')}\n`;
+    if (leave.length) {
+      field += `🖕 **Members leave Discord:** ${leave.length}\n${leave.join(' ')}\n`;
+    }
     if (guildMap.size) {
       field += `👍 **Members on Discord:** ${[...guildMap.entries()]
         .map(([ownerId, members]) => {
-          const membersList = members.map((m) => m.trim()).join('\n- ');
+          const membersList = members.map((m) => m.trim()).join('\n  - ');
           return `\n**<@${ownerId}>:**\n  - ${membersList}`;
         })
         .join('')}\n\n`;
     }
-    if (unknown.length) field += `👎 **Members not on Discord:** ${unknown.length}\n${unknown.join(' ')}\n`;
+    if (unknown.length) {
+      field += `👎 **Members not on Discord:** ${unknown.length}\n${unknown.join(' ')}\n`;
+    }
 
     await send(message, field);
   }

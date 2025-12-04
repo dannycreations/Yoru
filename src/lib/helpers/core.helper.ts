@@ -1,8 +1,9 @@
 import { container } from '@sapphire/framework';
 import { attemptAsync } from '@vegapunk/utilities/common';
-import { GuildMember, Role } from 'discord.js';
 
 import { MemberRoles, ModeratorRoles, RegisterRoles } from '../contants/enum';
+
+import type { GuildMember, Role } from 'discord.js';
 
 export const isModeratorRole = (r: Role): boolean => !!(ModeratorRoles as StringObject)[r.name];
 export const isRegisterRole = (r: Role): boolean => !!(RegisterRoles as StringObject)[r.name];

@@ -1,8 +1,9 @@
 import { Listener } from '@sapphire/framework';
 import { send } from '@sapphire/plugin-editable-commands';
-import { Message } from 'discord.js';
 
 import { YoruClient } from '../../lib/YoruClient';
+
+import type { Message } from 'discord.js';
 
 export class UserListener extends Listener<'messageCreate'> {
   public constructor(context: Listener.LoaderContext) {

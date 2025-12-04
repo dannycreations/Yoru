@@ -1,35 +1,31 @@
 import { join } from 'path';
 import { container, Logger, LogLevel, SapphireClient } from '@sapphire/framework';
 import { logger } from '@vegapunk/logger';
-import { chalk } from '@vegapunk/utilities';
-import { z } from '@vegapunk/utilities/strict';
+import { chalk, restartApp } from '@vegapunk/utilities';
+import { v } from '@vegapunk/utilities/strict';
 import { GatewayIntentBits, Partials } from 'discord.js';
 
 import { ClashAPI } from './api/ClashAPI';
 import { ClientEvents } from './contants/enum';
 import { OfflineStore } from './stores/OfflineStore';
 
-const EnvSchema = z.object({
-  DISCORD_TOKEN: z.string().min(1),
-  CLASH_EMAIL: z.string().email(),
-  CLASH_PASSWORD: z.string().min(1),
-});
+const EnvSchema = v.pipe(
+  v.object({
+    DISCORD_TOKEN: v.pipe(v.string(), v.minLength(1)),
+    CLASH_EMAIL: v.pipe(v.string(), v.email()),
+    CLASH_PASSWORD: v.pipe(v.string(), v.minLength(1)),
+  }),
+  v.readonly(),
+);
 
-export const env = EnvSchema.readonly().parse({
-  DISCORD_TOKEN: process.env.DISCORD_TOKEN,
-  CLASH_EMAIL: process.env.CLASH_EMAIL,
-  CLASH_PASSWORD: process.env.CLASH_PASSWORD,
-});
+export const env = v.parse(EnvSchema, process.env);
 
 export class YoruClient extends SapphireClient {
   public static readonly isMaintenance: boolean = false;
 
   public override config: OfflineStore<ConfigContext>;
   public override sessions: OfflineStore<SessionContext>;
-  public override loginTimeout: NodeJS.Timeout = setTimeout(() => {
-    container.logger.info('YoruClient login timeout.');
-    this.destroy();
-  }, 60_000).unref();
+  public override loginTimeout: NodeJS.Timeout;
 
   public constructor() {
     super({
@@ -45,28 +41,33 @@ export class YoruClient extends SapphireClient {
       intents: [...Object.values(GatewayIntentBits)] as GatewayIntentBits[],
     });
 
-    const _logger = logger({
+    const clientLogger = logger({
       // @ts-expect-error
       level: this.logger.level,
       exception: false,
       rejection: false,
     });
-    this.logger.trace = _logger.trace.bind(_logger);
-    this.logger.debug = _logger.debug.bind(_logger);
-    this.logger.info = _logger.info.bind(_logger);
-    this.logger.warn = _logger.warn.bind(_logger);
-    this.logger.error = _logger.error.bind(_logger);
-    this.logger.fatal = _logger.fatal.bind(_logger);
+    this.logger.trace = clientLogger.trace.bind(clientLogger);
+    this.logger.debug = clientLogger.debug.bind(clientLogger);
+    this.logger.info = clientLogger.info.bind(clientLogger);
+    this.logger.warn = clientLogger.warn.bind(clientLogger);
+    this.logger.error = clientLogger.error.bind(clientLogger);
+    this.logger.fatal = clientLogger.fatal.bind(clientLogger);
 
     this.config = new OfflineStore<ConfigContext>({
-      path: join(process.cwd(), 'sessions', 'settings.json'),
+      filePath: join(process.cwd(), 'sessions', 'settings.json'),
       init: { prefix: '?', ownerIds: [], clanTags: [] },
       readonly: true,
     });
     this.sessions = new OfflineStore<SessionContext>({
-      path: join(this.config.dir, 'sessions.json'),
+      filePath: join(this.config.dirPath, 'sessions.json'),
       init: { clans: [] },
     });
+
+    this.loginTimeout = setTimeout(() => {
+      container.logger.info('YoruClient login timeout.');
+      this.destroy();
+    }, 60_000).unref();
   }
 
   public async start(): Promise<void> {
@@ -79,8 +80,8 @@ export class YoruClient extends SapphireClient {
 
   public override async destroy(): Promise<void> {
     container.logger.info(chalk`{bold.red YoruClient is destroyed.}`);
-    await super.destroy();
-    process.exit(1);
+    super.destroy();
+    restartApp();
   }
 
   private async pollingEvent() {

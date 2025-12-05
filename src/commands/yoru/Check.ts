@@ -12,7 +12,7 @@ import { ClashAPI } from '../../lib/api/ClashAPI';
 import { ClientEvents } from '../../lib/core/constants';
 import { emoji } from '../../lib/core/emojis';
 import { DBAccount, DBUser } from '../../lib/database/drizzle';
-import { accountTable, accountTableType, userTable } from '../../lib/database/schema';
+import { accountTable, AccountTable, userTable } from '../../lib/database/schema';
 import { parseClan } from '../../lib/helpers/clan.helper';
 
 import type { Args } from '@sapphire/framework';
@@ -72,7 +72,7 @@ export class UserCommand extends Command {
     }
   }
 
-  private async checkProfile(message: Message<true>, ownerId: string, dataAccounts: accountTableType[]) {
+  private async checkProfile(message: Message<true>, ownerId: string, dataAccounts: AccountTable[]) {
     const member = message.guild.members.cache.get(ownerId);
     if (!member) {
       const field = `> ${message.content}\nUser leaving discord server!`;
@@ -88,7 +88,7 @@ export class UserCommand extends Command {
 
     let count = 0;
     await waitForEach(dataAccounts, async (account) => {
-      if (account.isBanned) {
+      if (account.bannedAt) {
         return;
       }
 
@@ -115,12 +115,12 @@ export class UserCommand extends Command {
       } catch (error) {
         if (isErrorLike(error) && 'reason' in error) {
           if (error.reason === 'notFound') {
-            account.isBanned = true;
+            account.bannedAt = Date.now();
             DBAccount.update(account);
           }
         }
       } finally {
-        if (account.isBanned) {
+        if (account.bannedAt) {
           embed.addFields({
             name: `${++count}. ${emoji.townhalls[0]} ${account.tag}`,
             value: '⛔ Has been banned!',

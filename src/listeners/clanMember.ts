@@ -95,7 +95,7 @@ export class UserListener extends Listener {
         let playerData: Player | undefined;
         const dataAccount = getUser.unwrap().map((r) => r.account);
         await waitForEach(dataAccount, async (account) => {
-          if (account.isBanned || account.tag === player.tag) {
+          if (account.bannedAt || account.tag === player.tag) {
             return false;
           }
 
@@ -107,7 +107,6 @@ export class UserListener extends Listener {
             }
           } else if (isErrorLike(error) && 'reason' in error) {
             if (error.reason === 'notFound') {
-              account.isBanned = true;
               account.bannedAt = Date.now();
               DBAccount.update(account);
             }

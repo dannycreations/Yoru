@@ -15,6 +15,13 @@
       "when": 1730237526061,
       "tag": "0001_chemical_bruce_banner",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1764906245765,
+      "tag": "0002_blue_bullseye",
+      "breakpoints": true
     }
   ]
 }

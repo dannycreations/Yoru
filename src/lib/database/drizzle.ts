@@ -3,11 +3,15 @@ import { Adapter, config, start } from '@vegapunk/drizzle-orm/bsqlite';
 
 import { accountTable, userTable } from './schema';
 
+const isDrizzleKit = process.argv.toString().includes('drizzle-kit');
 const projectDir = resolve(__dirname, '..', '..', '..');
 
+const out = './src/lib/database/migrations';
+const schema = './src/lib/database/schema.ts';
+
 export const drizzleConfig = config({
-  out: join(projectDir, 'src/lib/database/migrations'),
-  schema: join(projectDir, 'src/lib/database/schema.ts'),
+  out: isDrizzleKit ? out : join(projectDir, out),
+  schema: isDrizzleKit ? schema : join(projectDir, schema),
 });
 export const db = start(drizzleConfig);
 

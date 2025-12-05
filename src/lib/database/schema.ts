@@ -12,9 +12,8 @@ export const accountTable = sqliteTable('account', {
     .references(() => userTable.id, { onDelete: 'cascade' })
     .notNull(),
   createdAt: integer('created_at').$default(() => Date.now()),
-  isBanned: integer('is_banned', { mode: 'boolean' }),
   bannedAt: integer('banned_at'),
 });
 
-export type userTableType = typeof userTable.$inferSelect;
-export type accountTableType = typeof accountTable.$inferSelect;
+export type UserTable = typeof userTable.$inferSelect;
+export type AccountTable = typeof accountTable.$inferSelect;

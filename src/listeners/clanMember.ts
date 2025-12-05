@@ -7,7 +7,7 @@ import { waitForEach } from '@vegapunk/utilities/sleep';
 import { GuildMember, Role } from 'discord.js';
 
 import { ClashAPI } from '../lib/api/ClashAPI';
-import { ClientEvents, RegisterRoles } from '../lib/contants/enum';
+import { ClientEvents, RegisterRoles } from '../lib/core/constants';
 import { DBAccount } from '../lib/database/drizzle';
 import { userTable } from '../lib/database/schema';
 import { getGuildMember, isClanRole, isMemberRole, isModeratorRole } from '../lib/helpers/core.helper';
@@ -141,7 +141,9 @@ export class UserListener extends Listener {
           });
         }
       });
-      result.inspectErr((error) => ClashAPI.Instance.emit(ClientEvents.ApiError, null, error));
+      result.inspectErr((error) => {
+        ClashAPI.Instance.emit(ClientEvents.ApiError, null, error);
+      });
 
       this.leavingMutex.release();
       if (this.leavingQueue.size > 0) {

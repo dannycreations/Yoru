@@ -6,8 +6,8 @@ import { Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
 
 import { ClashAPI } from '../../lib/api/ClashAPI';
-import { emoji } from '../../lib/contants/emoji';
-import { ClientEvents, MemberRoles, RegisterRoles } from '../../lib/contants/enum';
+import { ClientEvents, MemberRoles, RegisterRoles } from '../../lib/core/constants';
+import { emoji } from '../../lib/core/emojis';
 import { DBAccount, DBUser } from '../../lib/database/drizzle';
 import { userTable } from '../../lib/database/schema';
 import { parseClan } from '../../lib/helpers/clan.helper';
@@ -55,7 +55,9 @@ export class UserCommand extends Command {
         await send(message, field);
       }
     });
-    result.inspectErr((error) => ClashAPI.Instance.emit(ClientEvents.ApiError, message, error));
+    result.inspectErr((error) => {
+      ClashAPI.Instance.emit(ClientEvents.ApiError, message, error);
+    });
 
     free(message);
     this.queueProtect.delete(message.author.id);
@@ -79,7 +81,7 @@ export class UserCommand extends Command {
       emoji.attackwin
     } ${player.attackWins.toLocaleString()}\n`;
     embed.setDescription(`${titleField}Are you sure want to link this account?`);
-    parseClan(player, (text, iconURL) => embed.setFooter({ text, iconURL }));
+    embed.setFooter(parseClan(player));
 
     const getAccount = DBAccount.findOne({ tag }, { joins: [{ table: userTable, on: { userId: 'id' } }] });
     Result.assert(getAccount.isOk(), '', { ...getAccount, tag });
@@ -199,7 +201,7 @@ export class UserCommand extends Command {
   private readonly queueProtect = new Set<string>();
 }
 
-enum ConfirmEmojis {
-  Yes = '✅',
-  No = '❎',
-}
+const ConfirmEmojis = {
+  Yes: '✅',
+  No: '❎',
+} as const;

@@ -1,31 +1,32 @@
-import { emoji } from '../contants/emoji';
-import { MemberRoles } from '../contants/enum';
+import { MemberRoles } from '../core/constants';
+import { emoji } from '../core/emojis';
 
+import type { ValueOf } from '@vegapunk/utilities';
 import type { Player } from 'clashofclans.js';
+import type { EmbedFooterOptions } from 'discord.js';
 
-export function parseClan(player: Player, callback: (text: string, badge: string) => void): void {
-  let text = 'Player is clanless';
-  let badge = emoji.thumbnail.replace('{0}', 'badges/noclan.png');
-
+export function parseClan(player: Player): EmbedFooterOptions {
   if (player.clan) {
-    // @ts-expect-error
-    (player as { role: MemberRoles }).role = parseClanRole(player.role);
-    text = `${player.role} of ${player.clan.name}\n(${player.clan.tag})`;
-    badge = player.clan.badge.url;
+    const role = parseClanRole(player.role);
+    const text = `${role} of ${player.clan.name}\n(${player.clan.tag})`;
+    const iconURL = player.clan.badge.url;
+    return { text, iconURL };
   }
 
-  callback(text, badge);
+  const text = 'Player is clanless';
+  const iconURL = emoji.thumbnail.replace('{0}', 'badges/noclan.png');
+  return { text, iconURL };
 }
 
-export function parseClanRole(role: Player['role']): MemberRoles {
-  if (role === 'leader') {
-    return MemberRoles.Leader;
+export function parseClanRole(role: Player['role']): ValueOf<typeof MemberRoles> {
+  switch (role) {
+    case 'leader':
+      return MemberRoles.Leader;
+    case 'coLeader':
+      return MemberRoles.CoLeader;
+    case 'elder':
+      return MemberRoles.Elder;
+    default:
+      return MemberRoles.Member;
   }
-  if (role === 'coLeader') {
-    return MemberRoles.CoLeader;
-  }
-  if (role === 'elder') {
-    return MemberRoles.Elder;
-  }
-  return MemberRoles.Member;
 }

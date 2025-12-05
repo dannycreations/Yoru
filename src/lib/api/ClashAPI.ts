@@ -54,33 +54,35 @@ export class ClashAPI extends PollingClient {
         }
 
         if (error instanceof HTTPError) {
-          if (error.status === 503) {
-            this.requestState = 0;
-            error.message = 'Service is temporarily unavailable because of maintenance!';
-            throw error;
-          }
-
-          if (error.status === 403) {
-            if (error.reason === 'accessDenied.invalidIp') {
-              this.rest.requestHandler['keys'].shift();
-              this.ipFromError = error.message.match(/(\d{1,3}\.){3}\d+/)![0];
+          switch (error.status) {
+            case 503: {
+              this.requestState = 0;
+              error.message = 'Service is temporarily unavailable because of maintenance!';
+              throw error;
             }
+            case 403: {
+              if (error.reason === 'accessDenied.invalidIp') {
+                this.rest.requestHandler['keys'].shift();
+                this.ipFromError = error.message.match(/(\d{1,3}\.){3}\d+/)![0];
+              }
 
-            await this.rest.login({
-              email: env.CLASH_EMAIL,
-              password: env.CLASH_PASSWORD,
-              keyName: YoruClient.name,
-              keyCount: 1,
-            });
+              await this.rest.login({
+                email: env.CLASH_EMAIL,
+                password: env.CLASH_PASSWORD,
+                keyName: YoruClient.name,
+                keyCount: 1,
+              });
 
-            this.requestState++;
-            return this.rest.requestHandler.request(path, options);
-          }
-
-          if (ERROR_STATUS_CODES.includes(error.status)) {
-            await sleep(10_000);
-            this.requestState = 0;
-            return this.rest.requestHandler.request(path, options);
+              this.requestState++;
+              return this.rest.requestHandler.request(path, options);
+            }
+            default: {
+              if (ERROR_STATUS_CODES.includes(error.status)) {
+                await sleep(10_000);
+                this.requestState = 0;
+                return this.rest.requestHandler.request(path, options);
+              }
+            }
           }
         } else if (error instanceof SyntaxError) {
           if (error.message.includes('not valid JSON')) {

@@ -6,7 +6,7 @@ import { v } from '@vegapunk/utilities/strict';
 import { GatewayIntentBits, Partials } from 'discord.js';
 
 import { ClashAPI } from './api/ClashAPI';
-import { ClientEvents } from './contants/enum';
+import { ClientEvents } from './core/constants';
 import { OfflineStore } from './stores/OfflineStore';
 
 export const env = v.parse(

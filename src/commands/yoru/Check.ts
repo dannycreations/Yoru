@@ -1,6 +1,7 @@
 import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
 import { Command } from '@sapphire/framework';
 import { free, send } from '@sapphire/plugin-editable-commands';
+import { attemptAsync } from '@vegapunk/utilities/common';
 import { isErrorLike, Result } from '@vegapunk/utilities/result';
 import { waitForEach } from '@vegapunk/utilities/sleep';
 import { dayjs } from '@vegapunk/utilities/time';
@@ -8,12 +9,11 @@ import { Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
 
 import { ClashAPI } from '../../lib/api/ClashAPI';
-import { emoji } from '../../lib/contants/emoji';
-import { ClientEvents } from '../../lib/contants/enum';
+import { ClientEvents } from '../../lib/core/constants';
+import { emoji } from '../../lib/core/emojis';
 import { DBAccount, DBUser } from '../../lib/database/drizzle';
 import { accountTable, accountTableType, userTable } from '../../lib/database/schema';
 import { parseClan } from '../../lib/helpers/clan.helper';
-import { getGuild } from '../../lib/helpers/core.helper';
 
 import type { Args } from '@sapphire/framework';
 import type { Message } from 'discord.js';
@@ -50,7 +50,9 @@ export class UserCommand extends Command {
         await send(message, field);
       }
     });
-    result.inspectErr((error) => ClashAPI.Instance.emit(ClientEvents.ApiError, message, error));
+    result.inspectErr((error) => {
+      ClashAPI.Instance.emit(ClientEvents.ApiError, message, error);
+    });
 
     free(message);
   }
@@ -242,15 +244,12 @@ export class UserCommand extends Command {
     if (achievements.length) embed.addFields({ name: 'Achievements', value: achievements.join('') });
     if (unknowns.length) this.container.logger.warn(unknowns);
 
-    parseClan(player, (text, iconURL) => embed.setFooter({ text, iconURL }));
+    embed.setFooter(parseClan(player));
     await send(message, { embeds: [embed] });
   }
 
   private async checkMembers(message: Message<true>, page = 1) {
     const { config } = this.container.client;
-
-    const userGuild = getGuild(message.author.id)!;
-    await userGuild.members.fetch();
 
     if (page < 1 || page > config.data.clanTags.length) {
       page = 1;
@@ -271,13 +270,14 @@ export class UserCommand extends Command {
 
       const ownerId = getAccount.unwrap()?.user.ownerId;
       if (ownerId) {
-        if (userGuild.members.cache.has(ownerId)) {
+        const [error] = await attemptAsync(() => message.guild.members.fetch(ownerId));
+        if (error) {
+          leave.push(field);
+        } else {
           if (!guildMap.has(ownerId)) {
             guildMap.set(ownerId, []);
           }
           guildMap.get(ownerId)!.push(field);
-        } else {
-          leave.push(field);
         }
       } else {
         unknown.push(field);

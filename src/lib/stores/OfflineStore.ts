@@ -4,7 +4,7 @@ import { parseJsonc } from '@vegapunk/utilities';
 import { DataStore } from './internal/DataStore';
 
 export class OfflineStore<T extends object> extends DataStore<T> {
-  protected override async _init(): Promise<void> {
+  protected async _init(): Promise<void> {
     await access(this.dirPath).catch(() => {
       return mkdir(this.dirPath, { recursive: true });
     });
@@ -13,14 +13,14 @@ export class OfflineStore<T extends object> extends DataStore<T> {
     });
   }
 
-  protected override async _readFile(): Promise<T | null> {
+  protected async _readFile(): Promise<T | null> {
     const readData = await readFile(this.filePath, 'utf8').catch(() => {
       return JSON.stringify(this.options.init);
     });
     return parseJsonc(readData);
   }
 
-  protected override async _writeFile(): Promise<void> {
+  protected async _writeFile(): Promise<void> {
     await rename(this.filePath, `${this.filePath}.bak`).catch(Boolean);
     await writeFile(this.filePath, JSON.stringify(this.data));
   }

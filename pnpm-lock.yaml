@@ -12,26 +12,26 @@ importers:
         specifier: ^7.3.3
         version: 7.3.3
       '@sapphire/framework':
-        specifier: ^5.4.0
-        version: 5.4.0
+        specifier: ^5.5.0
+        version: 5.5.0
       '@sapphire/plugin-editable-commands':
         specifier: ^4.0.4
         version: 4.0.4
       '@vegapunk/drizzle-orm':
-        specifier: ^1.0.28
-        version: 1.0.28(typescript@5.9.3)
+        specifier: ^1.0.29
+        version: 1.0.29(typescript@5.9.3)
       '@vegapunk/logger':
-        specifier: ^1.0.30
-        version: 1.0.30
+        specifier: ^1.0.31
+        version: 1.0.31
       '@vegapunk/request':
-        specifier: ^1.0.43
-        version: 1.0.43(typescript@5.9.3)
+        specifier: ^1.0.44
+        version: 1.0.44(typescript@5.9.3)
       '@vegapunk/struct':
-        specifier: ^1.0.16
-        version: 1.0.16(typescript@5.9.3)
+        specifier: ^1.0.17
+        version: 1.0.17(typescript@5.9.3)
       '@vegapunk/utilities':
-        specifier: ^1.0.77
-        version: 1.0.77(typescript@5.9.3)
+        specifier: ^1.0.78
+        version: 1.0.78(typescript@5.9.3)
       clashofclans.js:
         specifier: ^3.5.1
         version: 3.5.1
@@ -659,8 +659,8 @@ packages:
     resolution: {integrity: sha512-LxjOAFXz81WmrI8XX9YaVcAZDjQj/1p78lZCvkAWZB1nphOwz/D0dU3CBejmhOWx5dO5CszTkLJMNR0xuCK+Zg==}
     engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
 
-  '@sapphire/framework@5.4.0':
-    resolution: {integrity: sha512-Gf0Ui5tOG1lRRf6Gpd/gpUDkAIMZxFXYOzq0X5kMcXRNWiX1B6iIUkyXrzCLaNunzqWRKe6x4UxzRewN5ktNWg==}
+  '@sapphire/framework@5.5.0':
+    resolution: {integrity: sha512-jC+zS8yR/MtJaTFEQutBBWj7Scuvny4d0adtQ3s0OCFWe3rUqNfENomBG3P4tsQ/kRF7L3WCqucyLV8ywG24hw==}
     engines: {node: '>=v18', npm: '>=7'}
 
   '@sapphire/lexure@1.1.12':
@@ -733,30 +733,30 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
-  '@vegapunk/drizzle-orm@1.0.28':
-    resolution: {integrity: sha512-72OeENM1gs0V/M2F8mEDD4itnv/VVF5ONytaUMmLO57uhOHMDLRUyTa6rcedbBouby6SVYTtjbo855JPxqEd9Q==}
+  '@vegapunk/drizzle-orm@1.0.29':
+    resolution: {integrity: sha512-MxhDMYR50dfNgElFCVB3duZnOyttCJ8wIvFlzkfJVsTodlnhDj5wtXw+V+lohfq8erfbFxTo1CwhvmLeNq/ICg==}
     engines: {node: '>=20'}
     bundledDependencies:
       - '@types/better-sqlite3'
 
-  '@vegapunk/logger@1.0.30':
-    resolution: {integrity: sha512-Gu+l0xD1hwhfTe9HM2m+ynJC8ddMkHhG3YVBeREFUC/EQFMfrzBLoyEOLD/ROHDpu8Ou63QnOVkraVIOBbrK3g==}
+  '@vegapunk/logger@1.0.31':
+    resolution: {integrity: sha512-NlOmvHNaP0fX/1LD0TmX4PfsFy9IlJelOUSqB2Rpjdsrgej30/BYSEx/4r9O2pztsq+Zg/n9lvrfdly/Jb538A==}
     engines: {node: '>=20'}
 
-  '@vegapunk/request@1.0.43':
-    resolution: {integrity: sha512-lgKysgMr4aUA3+QTwEpVOS/GYsSOO2rZWXP2JNZuEQ8YHS2lSAhHHZZwgJe7NvPhAhhf7wwHPA2ENbY0/ExEtQ==}
+  '@vegapunk/request@1.0.44':
+    resolution: {integrity: sha512-+H0NG9sTItckCFCpVPocIbLjeOtlSdi9UiF6okCKH6s8TTnhl9BPCGMLbNqdQZ5b+lRdRrh3Rc9KxaSwXJl0Iw==}
     engines: {node: '>=20'}
     bundledDependencies:
       - '@types/user-agents'
 
-  '@vegapunk/struct@1.0.16':
-    resolution: {integrity: sha512-A7LiG5L/IPwSF19UUk9XniZppXzyG9saM4yzosDF5hlSJtJM6G4tH1M3X/yhq5+vTlouQAMlaBmga8kyDXhuZA==}
+  '@vegapunk/struct@1.0.17':
+    resolution: {integrity: sha512-gwYuNZw2tYXOLOnmxEU3MyYkqEvP1fJW8tYaGemfmiia41bdhSo75231UboDUaL3kZUyDhLmzceVY78OapGeVg==}
     engines: {node: '>=20'}
     bundledDependencies:
       - '@types/ws'
 
-  '@vegapunk/utilities@1.0.77':
-    resolution: {integrity: sha512-sep1RNTvxOVSLSMdwLuCf5RwAIY7UGQP7jLCEo9Lnd5XsHVLD66eZmgKzHeBdyLum7Bb/Rm31BB8paN+zVXIHA==}
+  '@vegapunk/utilities@1.0.78':
+    resolution: {integrity: sha512-IF4zSOopqrXHCEqxrxjB3M12c4rimM8r8lj8w68Yz5xa3RR2WqGr11xunQIkKx99/ck+kpxZSEw8CkWQP5dWEQ==}
     engines: {node: '>=20'}
     bundledDependencies:
       - '@types/humanize-duration'
@@ -873,8 +873,8 @@ packages:
     resolution: {integrity: sha512-O9EC/miwdnRDY10qRxM8P3Pg8hXe3LyU4ZipReKOgTwn4OqANmftj8XJz1UPUAS6NMHf0E2htjsbQujUTkncCg==}
     hasBin: true
 
-  drizzle-orm@0.44.7:
-    resolution: {integrity: sha512-quIpnYznjU9lHshEOAYLoZ9s3jweleHlZIAWR/jX9gAWNg/JhQ1wj0KGRf7/Zm+obRrYd9GjPVJg790QY9N5AQ==}
+  drizzle-orm@0.45.1:
+    resolution: {integrity: sha512-Te0FOdKIistGNPMq2jscdqngBRfBpC8uMFVwqjf6gtTVJHIQ/dosgV/CLBU2N4ZJBsXL5savCba9b0YJskKdcA==}
     peerDependencies:
       '@aws-sdk/client-rds-data': '>=3'
       '@cloudflare/workers-types': '>=4'
@@ -968,8 +968,8 @@ packages:
   end-of-stream@1.4.5:
     resolution: {integrity: sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==}
 
-  es-toolkit@1.42.0:
-    resolution: {integrity: sha512-SLHIyY7VfDJBM8clz4+T2oquwTQxEzu263AyhVK4jREOAwJ+8eebaa4wM3nlvnAqhDrMm2EsA6hWHaQsMPQ1nA==}
+  es-toolkit@1.43.0:
+    resolution: {integrity: sha512-SKCT8AsWvYzBBuUqMk4NPwFlSdqLpJwmy6AP322ERn8W2YLIB6JBXnwMI2Qsh2gfphT3q7EKAxKb23cvFHFwKA==}
 
   esbuild-register@3.6.0:
     resolution: {integrity: sha512-H2/S7Pm8a9CL1uhp9OvjwrBh5Pvx0H8qVOxNu8Wed9Y7qv56MPtq+GGM8RJpq6glYJn9Wspr8uw7l55uyinNeg==}
@@ -1043,8 +1043,8 @@ packages:
     resolution: {integrity: sha512-V+23sDMr12Wnz7iTcDeJr3O6AIxlnvT/bmaAAAP/Xda35C90p9599p0F1eHR/N1KILWSoWVAiOMFjBBXaXSMxg==}
     engines: {node: '>=10.19.0'}
 
-  humanize-duration@3.33.1:
-    resolution: {integrity: sha512-hwzSCymnRdFx9YdRkQQ0OYequXiVAV6ZGQA2uzocwB0F4309Ke6pO8dg0P8LHhRQJyVjGteRTAA/zNfEcpXn8A==}
+  humanize-duration@3.33.2:
+    resolution: {integrity: sha512-K7Ny/ULO1hDm2nnhvAY+SJV1skxFb61fd073SG1IWJl+D44ULrruCuTyjHKjBVVcSuTlnY99DKtgEG39CM5QOQ==}
 
   husky@9.1.7:
     resolution: {integrity: sha512-5gs5ytaNjBrh5Ow3zrvdUUY+0VxIuWVL4i9irt6friV+BqdCfmV11CQTWMiBYWHbXhco+J1kHfTOUkePhCDvMA==}
@@ -1743,7 +1743,7 @@ snapshots:
 
   '@sapphire/duration@1.2.0': {}
 
-  '@sapphire/framework@5.4.0':
+  '@sapphire/framework@5.5.0':
     dependencies:
       '@discordjs/builders': 1.13.1
       '@sapphire/discord-utilities': 4.0.0
@@ -1824,11 +1824,11 @@ snapshots:
     dependencies:
       '@types/node': 22.17.0
 
-  '@vegapunk/drizzle-orm@1.0.28(typescript@5.9.3)':
+  '@vegapunk/drizzle-orm@1.0.29(typescript@5.9.3)':
     dependencies:
-      '@vegapunk/utilities': 1.0.77(typescript@5.9.3)
+      '@vegapunk/utilities': 1.0.78(typescript@5.9.3)
       better-sqlite3: 12.5.0
-      drizzle-orm: 0.44.7(better-sqlite3@12.5.0)
+      drizzle-orm: 0.45.1(better-sqlite3@12.5.0)
     transitivePeerDependencies:
       - '@aws-sdk/client-rds-data'
       - '@cloudflare/workers-types'
@@ -1864,14 +1864,14 @@ snapshots:
       - typescript
       - use-sync-external-store
 
-  '@vegapunk/logger@1.0.30':
+  '@vegapunk/logger@1.0.31':
     dependencies:
       pino: 10.1.0
       pino-pretty: 13.1.3
 
-  '@vegapunk/request@1.0.43(typescript@5.9.3)':
+  '@vegapunk/request@1.0.44(typescript@5.9.3)':
     dependencies:
-      '@vegapunk/utilities': 1.0.77(typescript@5.9.3)
+      '@vegapunk/utilities': 1.0.78(typescript@5.9.3)
       got: 11.8.6
       user-agents: 1.1.669
     transitivePeerDependencies:
@@ -1881,9 +1881,9 @@ snapshots:
       - typescript
       - use-sync-external-store
 
-  '@vegapunk/struct@1.0.16(typescript@5.9.3)':
+  '@vegapunk/struct@1.0.17(typescript@5.9.3)':
     dependencies:
-      '@vegapunk/utilities': 1.0.77(typescript@5.9.3)
+      '@vegapunk/utilities': 1.0.78(typescript@5.9.3)
       ws: 8.18.3
     transitivePeerDependencies:
       - '@types/react'
@@ -1894,13 +1894,13 @@ snapshots:
       - use-sync-external-store
       - utf-8-validate
 
-  '@vegapunk/utilities@1.0.77(typescript@5.9.3)':
+  '@vegapunk/utilities@1.0.78(typescript@5.9.3)':
     dependencies:
       '@sapphire/result': 2.8.0
       chalk: 4.1.2
       dayjs: 1.11.19
-      es-toolkit: 1.42.0
-      humanize-duration: 3.33.1
+      es-toolkit: 1.43.0
+      humanize-duration: 3.33.2
       jsonc-parser: 3.3.1
       nanoid: 3.3.11
       valibot: 1.2.0(typescript@5.9.3)
@@ -2031,7 +2031,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.44.7(better-sqlite3@12.5.0):
+  drizzle-orm@0.45.1(better-sqlite3@12.5.0):
     optionalDependencies:
       better-sqlite3: 12.5.0
 
@@ -2039,7 +2039,7 @@ snapshots:
     dependencies:
       once: 1.4.0
 
-  es-toolkit@1.42.0: {}
+  es-toolkit@1.43.0: {}
 
   esbuild-register@3.6.0(esbuild@0.25.8):
     dependencies:
@@ -2181,7 +2181,7 @@ snapshots:
       quick-lru: 5.1.1
       resolve-alpn: 1.2.1
 
-  humanize-duration@3.33.1: {}
+  humanize-duration@3.33.2: {}
 
   husky@9.1.7: {}
 

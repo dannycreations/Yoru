@@ -18,13 +18,13 @@
   },
   "dependencies": {
     "@sapphire/discord.js-utilities": "^7.3.3",
-    "@sapphire/framework": "^5.4.0",
+    "@sapphire/framework": "^5.5.0",
     "@sapphire/plugin-editable-commands": "^4.0.4",
-    "@vegapunk/drizzle-orm": "^1.0.28",
-    "@vegapunk/logger": "^1.0.30",
-    "@vegapunk/request": "^1.0.43",
-    "@vegapunk/struct": "^1.0.16",
-    "@vegapunk/utilities": "^1.0.77",
+    "@vegapunk/drizzle-orm": "^1.0.29",
+    "@vegapunk/logger": "^1.0.31",
+    "@vegapunk/request": "^1.0.44",
+    "@vegapunk/struct": "^1.0.17",
+    "@vegapunk/utilities": "^1.0.78",
     "clashofclans.js": "^3.5.1",
     "discord.js": "14.x",
     "dotenv": "^17.2.3"
@@ -45,5 +45,5 @@
       "esbuild"
     ]
   },
-  "packageManager": "pnpm@10.24.0"
+  "packageManager": "pnpm@10.27.0"
 }

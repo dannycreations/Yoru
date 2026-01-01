@@ -12,6 +12,12 @@ export abstract class DataStore<T extends object, O extends object = object> {
   public readonly filePath: string;
   public readonly dirPath: string;
 
+  private delayMs: number;
+  private isDisposed: boolean;
+  private previousData: string;
+  private watchTimeoutId?: NodeJS.Timeout;
+  private initPromise?: Promise<void>;
+
   public constructor(options: Partial<DataStoreOptions<T> & O>) {
     this.options = {
       ...(options as O),
@@ -30,6 +36,7 @@ export abstract class DataStore<T extends object, O extends object = object> {
 
     this.delayMs = DataStore.MIN_DELAY;
     this.setDelay(this.options.delay);
+
     if (typeof this.options.watch === 'function') {
       this.watch();
     }
@@ -64,18 +71,21 @@ export abstract class DataStore<T extends object, O extends object = object> {
     await this.ensureInit();
 
     Object.assign(this.data, defaultsDeep({}, data, this.data));
+
     if (!force && this.options.readonly) {
       return;
     }
 
     const currentTimeMs = Date.now();
     const isWaiting = this.data.__updatedAt + this.delayMs > currentTimeMs;
+
     if (!force && isWaiting) {
       return;
     }
 
     const currentData = JSON.stringify(this.data);
     const isUnchanged = currentData === this.previousData;
+
     if (!force && isWaiting && isUnchanged) {
       return;
     }
@@ -109,10 +119,10 @@ export abstract class DataStore<T extends object, O extends object = object> {
     this.watchTimeoutId = undefined;
   }
 
-  private watchTimeoutId?: NodeJS.Timeout;
   private watch(): void {
     clearTimeout(this.watchTimeoutId);
     this.watchTimeoutId = undefined;
+
     if (this.isDisposed || this.options.readonly || typeof this.options.watch !== 'function') {
       return;
     }
@@ -131,7 +141,6 @@ export abstract class DataStore<T extends object, O extends object = object> {
     }, this.delayMs);
   }
 
-  private initPromise?: Promise<void>;
   private async ensureInit(): Promise<void> {
     if (!this.initPromise) {
       this.initPromise = (async () => {
@@ -143,13 +152,10 @@ export abstract class DataStore<T extends object, O extends object = object> {
         }
       })();
     }
-    return this.initPromise;
+    await this.initPromise;
   }
-
-  private delayMs: number;
-  private isDisposed: boolean;
-  private previousData: string;
 }
+
 export interface DataStoreOptions<T extends object> {
   readonly init: Partial<T>;
   readonly filePath: string;

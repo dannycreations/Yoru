@@ -46,9 +46,7 @@
       "indexes": {
         "account_tag_unique": {
           "name": "account_tag_unique",
-          "columns": [
-            "tag"
-          ],
+          "columns": ["tag"],
           "isUnique": true
         }
       },
@@ -57,12 +55,8 @@
           "name": "account_user_id_user_id_fk",
           "tableFrom": "account",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -92,9 +86,7 @@
       "indexes": {
         "user_owner_id_unique": {
           "name": "user_owner_id_unique",
-          "columns": [
-            "owner_id"
-          ],
+          "columns": ["owner_id"],
           "isUnique": true
         }
       },

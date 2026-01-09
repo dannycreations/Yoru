@@ -8,8 +8,8 @@ import { config as dbConfig, SqliteLayer } from './services/database';
 import { HttpService } from './services/HttpService';
 import { createLogger, LoggerService } from './services/LoggerService';
 import { cycleMidnightRestart, cycleWithRestart, runForkWithCleanUp } from './services/RuntimeService';
-import { CommandServiceLayer } from './workflows/CommandService';
-import { DiscordClientTag, DiscordServiceLayer } from './workflows/DiscordService';
+import { CommandHandlerLayer } from './workflows/CommandHandler';
+import { DiscordClientTag, DiscordHandlerLayer } from './workflows/DiscordHandler';
 import { EventHandlerLayer } from './workflows/EventHandler';
 
 const program = Effect.gen(function* () {
@@ -24,9 +24,9 @@ const InfraLayer = Layer.mergeAll(EnvLayer, ConfigStoreLayer, SessionStoreLayer,
 
 const AppLayer = InfraLayer.pipe(
   Layer.provideMerge(ClashServiceLayer),
-  Layer.provideMerge(DiscordServiceLayer),
-  Layer.provideMerge(CommandServiceLayer),
   Layer.provideMerge(EventHandlerLayer),
+  Layer.provideMerge(CommandHandlerLayer),
+  Layer.provideMerge(DiscordHandlerLayer),
 );
 
 const logger = createLogger({ exception: false, rejection: false });

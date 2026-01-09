@@ -27,12 +27,18 @@ import type { SQL, Table } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { ExtractTables, InferColumn, InferInsert, InferSelect, JoinClause, QueryFilter, QueryOptions, ReturnAlias, SelectClause } from './types';
 
+/**
+ * Custom error class for database-related operations.
+ */
 export class DatabaseError extends Data.TaggedError('DatabaseError')<{
   readonly message: string;
   readonly cause?: unknown;
   readonly query?: unknown;
 }> {}
 
+/**
+ * Context tag for the SQLite database instance.
+ */
 export class SqliteDatabase extends Context.Tag('SqliteDatabase')<SqliteDatabase, BetterSQLite3Database>() {}
 
 const JOIN_MAP = {
@@ -58,6 +64,9 @@ const OPERATOR_MAP: Record<string, (col: SQL, val: SQL) => SQL> = {
   $null: (col, val) => (val ? isNull(col) : isNotNull(col)),
 };
 
+/**
+ * Generic adapter providing high-level CRUD operations for a Drizzle table.
+ */
 export interface Adapter<A extends Table, Select extends InferSelect<A>, Insert extends InferInsert<A>> {
   readonly count: (filter?: QueryFilter<A>) => Effect.Effect<number, DatabaseError, SqliteDatabase>;
   readonly find: <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
@@ -109,6 +118,9 @@ export interface Adapter<A extends Table, Select extends InferSelect<A>, Insert 
   ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, DatabaseError, SqliteDatabase>;
 }
 
+/**
+ * Creates a database adapter for the specified table.
+ */
 export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>>(
   table: A,
 ): Adapter<A, Select, Insert> => {
@@ -123,6 +135,9 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return false;
   };
 
+  /**
+   * Wraps a database operation with error handling and query tracing.
+   */
   const withTrace = <T>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => T): Effect.Effect<T, DatabaseError, SqliteDatabase> => {
     const trace: { value?: () => SQL } = {};
     return Effect.gen(function* () {
@@ -133,7 +148,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
           let query: unknown = undefined;
           if (trace.value) {
             try {
-              // @ts-expect-error access internal drizzle
+              // @ts-expect-error access internal drizzle dialect for debugging purposes
               query = db.dialect.sqlToQuery(trace.value());
             } catch {}
           }
@@ -147,6 +162,9 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     });
   };
 
+  /**
+   * Builds a cache of columns from the main table and any joined tables.
+   */
   const buildColumnCache = <B extends Array<Table>>(joins?: JoinClause<A, B>): Record<string, unknown> => {
     if (!joins || joins.length === 0) {
       return table as unknown as Record<string, unknown>;
@@ -160,14 +178,16 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return cache;
   };
 
+  /**
+   * Builds a SQL comparison clause for a single column and value.
+   */
   const buildWhereComparison = (key: unknown, val: unknown): Array<SQL> => {
     const column = table[key as keyof A] as unknown as SQL;
     if (!column) return [sql`0`];
     if (val === undefined) return [];
 
     if (val === null || typeof val !== 'object' || Array.isArray(val)) {
-      if (val === null) return [isNull(column)];
-      return [eq(column, val as SQL)];
+      return [val === null ? isNull(column) : eq(column, val as SQL)];
     }
 
     const operation = val as Record<string, unknown>;
@@ -182,7 +202,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         continue;
       }
 
-      if (operand === null && operator !== '$eq' && operator !== '$ne' && operator !== '$null') {
+      if (operand === null && !['$eq', '$ne', '$null'].includes(operator)) {
         result.push(sql`0`);
         continue;
       }
@@ -191,7 +211,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         result.push(isNull(column));
         continue;
       }
-
       if (operator === '$ne' && operand === null) {
         result.push(isNotNull(column));
         continue;
@@ -203,49 +222,45 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return result;
   };
 
+  /**
+   * Recursively builds SQL logical clauses from a filter object.
+   */
   const buildWhereLogical = (filter: QueryFilter<A>): Array<SQL> => {
     const result: Array<SQL> = [];
 
     for (const key in filter) {
       const value = filter[key as keyof typeof filter];
 
-      if (key === '$and' || key === '$nand' || key === '$or' || key === '$nor') {
+      if (['$and', '$nand', '$or', '$nor'].includes(key)) {
         if (!Array.isArray(value) || value.length === 0) {
-          result.push(sql.raw(key === '$and' || key === '$nor' ? '1' : '0'));
+          result.push(sql.raw(['$and', '$nor'].includes(key) ? '1' : '0'));
           continue;
         }
 
-        const nested: SQL[] = [];
-        const values = value as QueryFilter<A>[];
-        for (let i = 0; i < values.length; i++) {
-          const sub = buildWhereLogical(values[i]);
-          nested.push(...sub);
-        }
+        const nested = (value as QueryFilter<A>[]).flatMap((v) => buildWhereLogical(v));
 
         if (nested.length === 0) {
-          result.push(sql.raw(key === '$and' || key === '$nor' ? '1' : '0'));
+          result.push(sql.raw(['$and', '$nor'].includes(key) ? '1' : '0'));
           continue;
         }
 
-        const joined = key === '$and' || key === '$nand' ? and(...nested) : or(...nested);
-        result.push(key === '$nand' || key === '$nor' ? not(joined!) : joined!);
+        const isAnd = key === '$and' || key === '$nand';
+        const joined = isAnd ? and(...nested) : or(...nested);
+        result.push(['$nand', '$nor'].includes(key) ? not(joined!) : joined!);
       } else if (key === '$not') {
-        let conds: SQL[];
-        if (isObjectLike(value) && !Array.isArray(value)) {
-          conds = buildWhereLogical(value as QueryFilter<A>);
-        } else {
-          conds = buildWhereComparison(key, value);
-        }
+        const conds = isObjectLike(value) && !Array.isArray(value) ? buildWhereLogical(value as QueryFilter<A>) : buildWhereComparison(key, value);
         result.push(conds.length === 0 ? sql`0` : not(and(...conds)!));
       } else {
-        const conds = buildWhereComparison(key, value);
-        result.push(...conds);
+        result.push(...buildWhereComparison(key, value));
       }
     }
 
     return result;
   };
 
+  /**
+   * Consolidates logical and comparison clauses into a single WHERE clause.
+   */
   const buildWhereClause = (filter?: QueryFilter<A>): SQL => {
     if (!filter || !hasKeys(filter)) {
       return undefined as unknown as SQL;
@@ -255,6 +270,9 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return conds.length === 0 ? (undefined as unknown as SQL) : and(...conds)!;
   };
 
+  /**
+   * Builds an ORDER BY clause.
+   */
   const buildOrderClause = <S>(columnCache: Record<string, unknown>, order?: S): SQL => {
     if (!order || !hasKeys(order)) return undefined as unknown as SQL;
 
@@ -270,13 +288,15 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return clauses.length === 0 ? (undefined as unknown as SQL) : (sql.join(clauses, sql.raw(', ')) as unknown as SQL);
   };
 
+  /**
+   * Builds a SELECT clause, ensuring 'id' is included unless explicitly excluded.
+   */
   const buildSelectClause = <S>(columnCache: Record<string, unknown>, select?: S): InferColumn<A> => {
     if (!select || !hasKeys(select)) return undefined as unknown as InferColumn<A>;
 
     const columns: Record<string, unknown> = {};
     let hasColumns = false;
 
-    // Handle 'id' implicitly unless explicitly disabled
     const selectObj = select as unknown as Record<string, number>;
     if (selectObj['id'] !== 0) {
       const col = columnCache['id'];
@@ -388,13 +408,13 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
           );
         }
 
-        // @ts-expect-error avoid extensive casting
+        // @ts-expect-error avoid extensive casting for generic implementation
         const s = yield* insert({ ...filter, ...data }, options);
         return s[0];
       }
 
       if (r !== null) {
-        // @ts-expect-error avoid extensive casting
+        // @ts-expect-error avoid extensive casting for generic implementation
         const s = yield* update({ ...r, ...data }, options);
         return s[0];
       }

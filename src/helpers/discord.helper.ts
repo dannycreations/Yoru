@@ -1,6 +1,6 @@
 import { Effect, Option } from 'effect';
 
-import { DiscordClientTag } from '../workflows/DiscordService';
+import { DiscordClientTag } from '../workflows/DiscordHandler';
 
 import type { Guild, GuildMember } from 'discord.js';
 

@@ -54,7 +54,7 @@ export interface DefaultOptions extends Omit<Options, 'prefixUrl' | 'retry' | 't
 /**
  * Interface for the HTTP service.
  */
-export interface HttpService {
+export interface HttpLayer {
   readonly request: <T = string>(options: string | DefaultOptions) => Effect.Effect<Response<T>, HttpRequestError>;
   readonly waitForConnection: (total?: number) => Effect.Effect<void, HttpRequestError>;
 }
@@ -62,7 +62,7 @@ export interface HttpService {
 /**
  * Context tag for the HttpService.
  */
-export const HttpClient = Context.GenericTag<HttpService>('@services/HttpService');
+export const HttpTag = Context.GenericTag<HttpLayer>('@layer/HttpLayer');
 
 const gotInstance: Got = got.bind(got);
 const userAgent = new UserAgent({ deviceCategory: 'desktop' });
@@ -76,7 +76,7 @@ export const isErrorTimeout = (error: unknown): boolean =>
 /**
  * Core implementation of an HTTP request with automatic retries and abort signal integration.
  */
-const requestImpl = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpRequestError> => {
+const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpRequestError> => {
   const isString = typeof options === 'string';
   const payload = defaultsDeep({}, isString ? { url: options } : options, {
     headers: { 'user-agent': userAgent.toString() },
@@ -131,7 +131,7 @@ const requestImpl = <T = string>(options: string | DefaultOptions): Effect.Effec
 /**
  * Implementation of a connection check, racing DNS lookup and a known stable URL.
  */
-const waitForConnectionImpl = (retryMs: number = 10_000): Effect.Effect<void, HttpRequestError> => {
+const waitForConnectionFn = (retryMs: number = 10_000): Effect.Effect<void, HttpRequestError> => {
   const checkGoogle = Effect.tryPromise({
     try: () => lookup('google.com'),
     catch: (error) =>
@@ -142,7 +142,7 @@ const waitForConnectionImpl = (retryMs: number = 10_000): Effect.Effect<void, Ht
       }),
   });
 
-  const checkApple = requestImpl({
+  const checkApple = requestFn({
     url: 'https://captive.apple.com/hotspot-detect.html',
     headers: { 'user-agent': 'CaptiveNetworkSupport/1.0 wispr' },
     timeout: { total: retryMs },
@@ -154,20 +154,20 @@ const waitForConnectionImpl = (retryMs: number = 10_000): Effect.Effect<void, Ht
 /**
  * Helper to perform an HTTP request using the service from the environment.
  */
-export const request = <T = string>(options: string | DefaultOptions) => Effect.flatMap(HttpClient, (service) => service.request<T>(options));
+export const request = <T = string>(options: string | DefaultOptions) => Effect.flatMap(HttpTag, (service) => service.request<T>(options));
 
 /**
  * Helper to wait for network connection using the service from the environment.
  */
-export const waitForConnection = (total?: number) => Effect.flatMap(HttpClient, (service) => service.waitForConnection(total));
+export const waitForConnection = (total?: number) => Effect.flatMap(HttpTag, (service) => service.waitForConnection(total));
 
 /**
  * Layer providing the HttpService implementation.
  */
-export const HttpService = Layer.succeed(
-  HttpClient,
-  HttpClient.of({
-    request: requestImpl,
-    waitForConnection: waitForConnectionImpl,
+export const HttpLayer = Layer.succeed(
+  HttpTag,
+  HttpTag.of({
+    request: requestFn,
+    waitForConnection: waitForConnectionFn,
   }),
 );

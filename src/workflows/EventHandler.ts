@@ -5,18 +5,19 @@ import { ActivityType, GuildMember } from 'discord.js';
 import { Effect, Layer, Option, Queue, Runtime, Scope } from 'effect';
 
 import { ClientEvents, RegisterRoles } from '../core/constants';
-import { ClanData, ClanSchema, ConfigStore, SessionStore } from '../core/schemas';
+import { ClanData, ClanSchema, ConfigStoreTag, SessionStoreTag } from '../core/schemas';
+import { AccountAdapter, UserAdapter } from '../database';
 import { getGuildMember } from '../helpers/discord.helper';
 import { isClanRole, isMemberRole, isModeratorRole } from '../helpers/role.helper';
-import { ClashClientTag } from '../services/ClashService';
-import { AccountAdapter, SqliteDatabase, UserAdapter } from '../services/database';
+import { ClashTag } from '../services/ClashService';
+import { SqliteTag } from '../services/database';
 import { createStore, Store } from '../services/StoreService';
 import { CommandHandlerTag } from './CommandHandler';
 import { DiscordClientTag } from './DiscordHandler';
 
 import type { ClanMember, Player } from 'clashofclans.js';
 import type { Message } from 'discord.js';
-import type { ClashService } from '../services/ClashService';
+import type { ClashLayer } from '../services/ClashService';
 import type { CommandHandler } from './CommandHandler';
 import type { DiscordHandler } from './DiscordHandler';
 
@@ -26,13 +27,13 @@ import type { DiscordHandler } from './DiscordHandler';
 export const EventHandler = Effect.gen(function* () {
   const discordService = yield* DiscordClientTag;
   const { client: discord } = discordService;
-  const { client: clash } = yield* ClashClientTag;
-  const configStore = yield* ConfigStore;
-  const sessionStore = yield* SessionStore;
+  const { client: clash } = yield* ClashTag;
+  const configStore = yield* ConfigStoreTag;
+  const sessionStore = yield* SessionStoreTag;
   const commandService = yield* CommandHandlerTag;
 
   // Capture the current runtime to preserve environment (services, logger, etc.) in callbacks.
-  const runtime = yield* Effect.runtime<SqliteDatabase | DiscordHandler | ConfigStore | SessionStore | CommandHandler | ClashService | Scope.Scope>();
+  const runtime = yield* Effect.runtime<SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | CommandHandler | ClashLayer | Scope.Scope>();
 
   // Map to store clan-specific data persistent stores.
   const clanStores = new Map<string, Store<ClanData>>();

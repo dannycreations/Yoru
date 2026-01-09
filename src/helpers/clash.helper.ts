@@ -50,52 +50,41 @@ export const categorizeUnits = (player: Player) => {
   };
   const unknowns: unknown[] = [];
 
-  const troopMap = [
+  /**
+   * Helper to process a list of units (troops, spells, heroes) and categorize them based on emoji data.
+   * This reduces code duplication across different unit types.
+   */
+  const processUnits = (
+    units: Array<{ name: string; level: number; maxLevel: number; village: string }>,
+    maps: ReadonlyArray<{ data: Record<string, string>; category: string }>,
+  ) => {
+    units
+      .filter((u) => u.village === 'home')
+      .forEach((unit) => {
+        const field = `**${unit.level}**/${unit.maxLevel}`;
+        const found = maps.find((m) => m.data[unit.name]);
+        if (found) {
+          categories[found.category].push(found.data[unit.name] + field);
+        } else {
+          unknowns.push(unit);
+        }
+      });
+  };
+
+  processUnits(player.troops, [
     { data: emoji.troops.normal, category: 'Troops' },
     { data: emoji.troops.dark, category: 'Dark Troops' },
     { data: emoji.troops.super, category: 'Super Troops' },
     { data: emoji.troops.siege, category: 'Siege Machines' },
     { data: emoji.troops.pets, category: 'Pets' },
-  ] as const;
+  ]);
 
-  player.troops
-    .filter((r) => r.village === 'home')
-    .forEach((troop) => {
-      const field = `**${troop.level}**/${troop.maxLevel}`;
-      const found = troopMap.find((m) => m.data[troop.name]);
-      if (found) {
-        categories[found.category].push(found.data[troop.name] + field);
-      } else {
-        unknowns.push(troop);
-      }
-    });
-
-  const spellMap = [
+  processUnits(player.spells, [
     { data: emoji.spells.normal, category: 'Spells' },
     { data: emoji.spells.dark, category: 'Dark Spells' },
-  ] as const;
+  ]);
 
-  player.spells
-    .filter((r) => r.village === 'home')
-    .forEach((spell) => {
-      const field = `**${spell.level}**/${spell.maxLevel}`;
-      const found = spellMap.find((m) => m.data[spell.name]);
-      if (found) {
-        categories[found.category].push(found.data[spell.name] + field);
-      } else {
-        unknowns.push(spell);
-      }
-    });
-
-  player.heroes
-    .filter((r) => r.village === 'home')
-    .forEach((hero) => {
-      if (emoji.heroes[hero.name]) {
-        categories['Heroes'].push(emoji.heroes[hero.name] + `**${hero.level}**/${hero.maxLevel}`);
-      } else {
-        unknowns.push(hero);
-      }
-    });
+  processUnits(player.heroes, [{ data: emoji.heroes, category: 'Heroes' }]);
 
   return { categories, unknowns };
 };

@@ -2,9 +2,9 @@ import { isErrorLike } from '@vegapunk/utilities/result';
 import { HTTPError } from 'clashofclans.js';
 import { Context, Effect, Layer } from 'effect';
 
-import { ConfigStore } from '../core/schemas';
-import { ClashApiError, ClashService } from '../services/ClashService';
-import { SqliteDatabase } from '../services/database';
+import { ConfigStoreTag } from '../core/schemas';
+import { ClashError, ClashLayer } from '../services/ClashService';
+import { SqliteTag } from '../services/database';
 import { checkCommand } from './commands/CheckCommand';
 import { linkCommand } from './commands/LinkCommand';
 import { pingCommand } from './commands/PingCommand';
@@ -24,25 +24,25 @@ export interface CommandContext {
  * Represents the command handling service.
  */
 export interface CommandHandler {
-  readonly handleCommand: (message: Message<true>) => Effect.Effect<void, never, SqliteDatabase | DiscordHandler | ConfigStore | ClashService>;
+  readonly handleCommand: (message: Message<true>) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | ClashLayer>;
 }
 
 /**
  * Context tag for the CommandHandler.
  */
-export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflows/CommandHandler');
+export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/CommandHandler');
 
 /**
  * Implementation of the CommandHandler.
  * Orchestrates command parsing and dispatching to specific command handlers.
  */
 export const CommandHandler = Effect.gen(function* () {
-  const configStore = yield* ConfigStore;
+  const configStore = yield* ConfigStoreTag;
 
   // Mapping of command names and aliases to their respective handler functions.
   const commandMap: Record<
     string,
-    (message: Message<true>, args: string[]) => Effect.Effect<void, unknown, SqliteDatabase | DiscordHandler | ConfigStore | ClashService>
+    (message: Message<true>, args: string[]) => Effect.Effect<void, unknown, SqliteTag | DiscordHandler | ConfigStoreTag | ClashLayer>
   > = {
     ping: (message) => pingCommand(message),
     p: (message) => pingCommand(message),
@@ -77,7 +77,7 @@ export const CommandHandler = Effect.gen(function* () {
           Effect.gen(function* () {
             let field = `> ${message.content}\nUnhandled Rejection, please contact owner!`;
 
-            const cause = error instanceof ClashApiError ? error.cause : error;
+            const cause = error instanceof ClashError ? error.cause : error;
 
             if (cause instanceof HTTPError) {
               field = `> ${message.content}\n${cause.message}`;
@@ -85,7 +85,7 @@ export const CommandHandler = Effect.gen(function* () {
               if (cause.reason === 'notFound' && cause.path.includes('/players/')) {
                 field = `> ${message.content}\nError, Player tag not found!`;
               }
-            } else if (error instanceof ClashApiError) {
+            } else if (error instanceof ClashError) {
               field = `> ${message.content}\n${error.message}`;
             } else if (isErrorLike(error) && 'message' in error) {
               field = `> ${message.content}\n${error.message}`;

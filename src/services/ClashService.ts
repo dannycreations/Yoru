@@ -1,17 +1,17 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { PollingClient as ClashClient, HTTPError } from 'clashofclans.js';
+import { HTTPError, PollingClient } from 'clashofclans.js';
 import { Context, Data, Effect, Layer, Schedule } from 'effect';
 
 import { ClientEvents } from '../core/constants';
-import { ConfigStore, EnvTag } from '../core/schemas';
-import { ERROR_CODES, ERROR_STATUS_CODES, HttpClient, waitForConnection } from './HttpService';
+import { ConfigStoreTag, EnvTag } from '../core/schemas';
+import { ERROR_CODES, ERROR_STATUS_CODES, HttpTag, waitForConnection } from './HttpService';
 
 import type { RequestOptions } from 'clashofclans.js';
 
 /**
  * Custom error class for Clash of Clans API related errors.
  */
-export class ClashApiError extends Data.TaggedError('ClashApiError')<{
+export class ClashError extends Data.TaggedError('ClashError')<{
   readonly message: string;
   readonly status?: number;
   readonly reason?: string;
@@ -21,25 +21,25 @@ export class ClashApiError extends Data.TaggedError('ClashApiError')<{
 /**
  * Represents the Clash of Clans API service.
  */
-export interface ClashService {
-  readonly client: ClashClient;
+export interface ClashLayer {
+  readonly client: PollingClient;
 }
 
 /**
  * Context tag for the ClashService.
  */
-export const ClashClientTag = Context.GenericTag<ClashService>('@services/ClashService');
+export const ClashTag = Context.GenericTag<ClashLayer>('@layer/ClashLayer');
 
 /**
  * Implementation of the ClashService.
  * Handles authentication, automatic IP rotation (on 403), and request retries.
  */
-const createClashService = Effect.gen(function* () {
-  const http = yield* HttpClient;
-  const configStore = yield* ConfigStore;
+const createClash = Effect.gen(function* () {
+  const http = yield* HttpTag;
+  const configStore = yield* ConfigStoreTag;
   const env = yield* EnvTag;
 
-  const client = new ClashClient({
+  const client = new PollingClient({
     keys: [],
     pollingInterval: 60_000,
   });
@@ -56,7 +56,7 @@ const createClashService = Effect.gen(function* () {
           keyName: 'Yoru',
           keyCount: 1,
         }),
-      catch: (error) => new ClashApiError({ message: 'Failed to login to Clash API', cause: error }),
+      catch: (error) => new ClashError({ message: 'Failed to login to Clash API', cause: error }),
     });
 
   // Override internal library methods to provide custom behavior.
@@ -93,7 +93,7 @@ const createClashService = Effect.gen(function* () {
             if (requestState > 2) {
               requestState = 2;
               return Effect.fail(
-                new ClashApiError({
+                new ClashError({
                   message: 'API problem, please check back later!',
                   cause: error,
                 }),
@@ -104,7 +104,7 @@ const createClashService = Effect.gen(function* () {
             if (isErrorLike(error) && ERROR_CODES.includes(error.code)) {
               requestState = 0;
               return waitForConnection().pipe(
-                Effect.flatMap(() => Effect.fail(new ClashApiError({ message: 'Retrying after connection recovery', cause: error }))),
+                Effect.flatMap(() => Effect.fail(new ClashError({ message: 'Retrying after connection recovery', cause: error }))),
               );
             }
 
@@ -113,7 +113,7 @@ const createClashService = Effect.gen(function* () {
               if (error.status === 503) {
                 requestState = 0;
                 return Effect.fail(
-                  new ClashApiError({
+                  new ClashError({
                     message: 'Service is temporarily unavailable because of maintenance!',
                     status: 503,
                   }),
@@ -128,7 +128,7 @@ const createClashService = Effect.gen(function* () {
                 return login().pipe(
                   Effect.flatMap(() => {
                     requestState++;
-                    return Effect.fail(new ClashApiError({ message: 'Retrying due to IP change', status: 403, cause: error }));
+                    return Effect.fail(new ClashError({ message: 'Retrying due to IP change', status: 403, cause: error }));
                   }),
                 );
               }
@@ -136,25 +136,25 @@ const createClashService = Effect.gen(function* () {
               // Handle other transient HTTP status codes defined in HttpService.
               if (ERROR_STATUS_CODES.includes(error.status)) {
                 requestState = 0;
-                return Effect.fail(new ClashApiError({ message: 'Transient API error', status: error.status, cause: error }));
+                return Effect.fail(new ClashError({ message: 'Transient API error', status: error.status, cause: error }));
               }
             }
 
             // Catch malformed JSON responses which can happen during partial outages.
             if (error instanceof SyntaxError && error.message.includes('not valid JSON')) {
-              return Effect.fail(new ClashApiError({ message: 'Invalid JSON response', status: 500, cause: error }));
+              return Effect.fail(new ClashError({ message: 'Invalid JSON response', status: 500, cause: error }));
             }
 
-            return Effect.fail(new ClashApiError({ message: 'Request failed', cause: error }));
+            return Effect.fail(new ClashError({ message: 'Request failed', cause: error }));
           }),
           Effect.retry({
-            while: (error) => error instanceof ClashApiError && error.status !== 503,
+            while: (error) => error instanceof ClashError && error.status !== 503,
             schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
           }),
         );
 
         return res;
-      }).pipe(Effect.provideService(HttpClient, http), Effect.orDie),
+      }).pipe(Effect.provideService(HttpTag, http), Effect.orDie),
     );
 
   yield* login();
@@ -165,7 +165,7 @@ const createClashService = Effect.gen(function* () {
 
   yield* Effect.tryPromise({
     try: () => client.init(),
-    catch: (error) => new ClashApiError({ message: 'Failed to initialize polling client', cause: error }),
+    catch: (error) => new ClashError({ message: 'Failed to initialize polling client', cause: error }),
   });
 
   return {
@@ -176,4 +176,4 @@ const createClashService = Effect.gen(function* () {
 /**
  * Layer for providing the ClashService implementation.
  */
-export const ClashServiceLayer = Layer.effect(ClashClientTag, createClashService);
+export const ClashLayer = Layer.effect(ClashTag, createClash);

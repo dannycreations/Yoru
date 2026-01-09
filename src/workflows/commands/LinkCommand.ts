@@ -5,11 +5,11 @@ import { Effect } from 'effect';
 
 import { MemberRoles, RegisterRoles } from '../../core/constants';
 import { emoji } from '../../core/emojis';
-import { ConfigStore } from '../../core/schemas';
+import { ConfigStoreTag } from '../../core/schemas';
+import { AccountAdapter, UserAdapter } from '../../database';
 import { formatPlayerStats, parseClan } from '../../helpers/clash.helper';
 import { isModeratorRole, isRegisterRole } from '../../helpers/role.helper';
-import { ClashClientTag } from '../../services/ClashService';
-import { AccountAdapter, UserAdapter } from '../../services/database';
+import { ClashTag } from '../../services/ClashService';
 
 import type { Player } from 'clashofclans.js';
 import type { User as DiscordUser, Message, MessageReaction } from 'discord.js';
@@ -22,7 +22,7 @@ const linkedTag = (message: Message<true>, ownerId: string, player: Player) =>
     const member = message.guild.members.cache.get(ownerId);
     if (!member) return;
 
-    const configStore = yield* ConfigStore;
+    const configStore = yield* ConfigStoreTag;
     const config = yield* configStore.get;
     const rolesToRemove = message.guild.roles.cache.filter(isRegisterRole);
     yield* Effect.tryPromise(() => member.roles.remove(rolesToRemove));
@@ -47,7 +47,7 @@ const linkQueue = new Set<string>();
  */
 export const linkCommand = (message: Message<true>, args: string[]) =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashClientTag;
+    const { client: clash } = yield* ClashTag;
     const tag = args[0];
     const mention = args[1];
 
@@ -72,7 +72,7 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
         return;
       }
 
-      const configStore = yield* ConfigStore;
+      const configStore = yield* ConfigStoreTag;
       const config = yield* configStore.get;
       // Authorization check: only owners or moderators can link tags
       const isAuthorized = config.ownerIds.includes(message.author.id) || message.member?.roles.cache.some(isModeratorRole);

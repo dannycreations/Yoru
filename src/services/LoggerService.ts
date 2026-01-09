@@ -109,7 +109,7 @@ export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
   return instance;
 };
 
-export const LoggerService = (self: Logger.Logger<unknown, void>, logger: pino.Logger) =>
+export const LoggerLayer = (self: Logger.Logger<unknown, void>, logger: pino.Logger) =>
   Logger.replace(
     self,
     Logger.make(({ logLevel, message, cause }) => {

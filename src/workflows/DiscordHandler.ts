@@ -2,7 +2,7 @@ import { SapphireClient } from '@sapphire/framework';
 import { GatewayIntentBits, Partials } from 'discord.js';
 import { Context, Data, Effect, Layer } from 'effect';
 
-import { ConfigStore, EnvTag } from '../core/schemas';
+import { ConfigStoreTag, EnvTag } from '../core/schemas';
 
 /**
  * Custom error class for Discord-related operations.
@@ -25,13 +25,13 @@ export interface DiscordHandler {
 /**
  * Context tag for the DiscordService.
  */
-export const DiscordClientTag = Context.GenericTag<DiscordHandler>('@workflows/DiscordHandler');
+export const DiscordClientTag = Context.GenericTag<DiscordHandler>('@workflow/DiscordHandler');
 
 /**
  * Implementation of the DiscordService using Sapphire framework.
  */
 const createDiscordClient = Effect.gen(function* () {
-  const configStore = yield* ConfigStore;
+  const configStore = yield* ConfigStoreTag;
   const config = yield* configStore.get;
   const env = yield* EnvTag;
 

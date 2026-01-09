@@ -3,26 +3,17 @@ import Database from 'better-sqlite3';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { Data, Effect, Layer } from 'effect';
+import { Effect, Layer } from 'effect';
 
-import { Adapter, SqliteDatabase } from './Adapter';
-import { accountTable, userTable } from './schema';
+import { Adapter, SqliteError, SqliteTag } from './Adapter';
 
 import type { PatchedDialect } from './types';
 
 export * from 'drizzle-orm/better-sqlite3';
 export * from 'drizzle-orm/sqlite-core';
-export { Adapter, Database, SqliteDatabase };
+export { Adapter, Database, SqliteError, SqliteTag };
 
-export const UserAdapter = Adapter(userTable);
-export const AccountAdapter = Adapter(accountTable);
-
-export class SqliteError extends Data.TaggedError('SqliteError')<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-export interface BSqliteOptions {
+export interface SqliteOptions {
   out: string;
   schema: string | string[];
   dbCredentials: { url: string };
@@ -48,9 +39,9 @@ const baseOptions = {
   dialect: 'sqlite',
   casing: 'snake_case',
   out: 'migrations',
-  schema: 'src/services/database/schema.ts',
-  dbCredentials: { url: 'sessions/bsqlite.db' },
-} satisfies BSqliteOptions & { dialect: string };
+  schema: 'src/database/schema.ts',
+  dbCredentials: { url: 'sessions/sqlite.db' },
+} satisfies SqliteOptions & { dialect: string };
 
 export const patchDialect = (dialect: PatchedDialect): void => {
   if (dialect.__patched) return;
@@ -60,9 +51,11 @@ export const patchDialect = (dialect: PatchedDialect): void => {
   dialect.buildLimit = (limit: number) => (limit >= 0 ? buildLimit(limit) : sql` LIMIT -1`);
 };
 
-export const SqliteLayer = (options: BSqliteOptions): Layer.Layer<SqliteDatabase, SqliteError, never> =>
+export const createConfig = (options: Partial<SqliteOptions> = {}): SqliteOptions => defaultsDeep({}, options, baseOptions);
+
+export const SqliteLayer = (options: SqliteOptions): Layer.Layer<SqliteTag, SqliteError, never> =>
   Layer.scoped(
-    SqliteDatabase,
+    SqliteTag,
     Effect.acquireRelease(
       Effect.try({
         try: () => {
@@ -90,5 +83,3 @@ export const SqliteLayer = (options: BSqliteOptions): Layer.Layer<SqliteDatabase
       ({ client }) => Effect.sync(() => client.close()),
     ).pipe(Effect.map(({ db }) => db)),
   );
-
-export const config = (options: Partial<BSqliteOptions> = {}): BSqliteOptions => defaultsDeep({}, options, baseOptions);

@@ -5,21 +5,21 @@ import { EmbedBuilder } from 'discord.js';
 import { Effect, Option } from 'effect';
 
 import { emoji } from '../../core/emojis';
-import { ConfigStore } from '../../core/schemas';
+import { ConfigStoreTag } from '../../core/schemas';
+import { AccountAdapter, UserAdapter } from '../../database';
 import { categorizeUnits, formatPlayerStats, parseClan } from '../../helpers/clash.helper';
 import { getGuildMember } from '../../helpers/discord.helper';
-import { ClashClientTag } from '../../services/ClashService';
-import { AccountAdapter, UserAdapter } from '../../services/database';
+import { ClashTag } from '../../services/ClashService';
 
 import type { Message } from 'discord.js';
-import type { AccountTable } from '../../services/database/schema';
+import type { AccountTable } from '../../database/schema';
 
 /**
  * Displays a summary of all accounts linked to a specific Discord user.
  */
 const checkProfile = (message: Message<true>, ownerId: string, accounts: AccountTable[]) =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashClientTag;
+    const { client: clash } = yield* ClashTag;
     const member = message.guild.members.cache.get(ownerId);
     if (!member) {
       yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUser leaving discord server!`));
@@ -74,7 +74,7 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
  */
 const checkPlayer = (message: Message<true>, tag: string) =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashClientTag;
+    const { client: clash } = yield* ClashTag;
     const player = yield* Effect.tryPromise(() => clash.getPlayer(tag));
     const embed = new EmbedBuilder()
       .setColor('#0099ff')
@@ -148,8 +148,8 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
  */
 const checkMembers = (message: Message<true>, page = 1) =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashClientTag;
-    const configStore = yield* ConfigStore;
+    const { client: clash } = yield* ClashTag;
+    const configStore = yield* ConfigStoreTag;
     const config = yield* configStore.get;
     const clanTags = config.clanTags;
     const index = Math.max(0, Math.min(page - 1, clanTags.length - 1));
@@ -180,16 +180,31 @@ const checkMembers = (message: Message<true>, page = 1) =>
       unknown.push(field);
     }
 
-    let response = `**### ${clan.name} (${clan.tag})**\n👥 **Total Members in Clan:** ${clan.memberCount}\n\n`;
-    if (leave.length) response += `🖕 **Members leave Discord:** ${leave.length}\n${leave.join(' ')}\n`;
-    if (guildMap.size) {
-      response += `👍 **Members on Discord:** ${[...guildMap.entries()]
-        .map(([ownerId, members]) => `\n**<@${ownerId}>:**\n  - ${members.map((m) => m.trim()).join('\n  - ')}`)
-        .join('')}\n\n`;
-    }
-    if (unknown.length) response += `👎 **Members not on Discord:** ${unknown.length}\n${unknown.join(' ')}\n`;
+    const embed = new EmbedBuilder()
+      .setColor('#0099ff')
+      .setTitle(`${clan.name} (${clan.tag})`)
+      .setURL(`https://link.clashofclans.com/en?action=OpenClanProfile&tag=${clan.tag.replace('#', '')}`)
+      .setThumbnail(clan.badge.url)
+      .setDescription(`👥 **Total Members in Clan:** ${clan.memberCount}`)
+      .setTimestamp();
 
-    yield* Effect.tryPromise(() => message.reply(response));
+    if (leave.length) {
+      embed.addFields({ name: `🖕 Members leave Discord (${leave.length})`, value: leave.join(' ').slice(0, 1024) });
+    }
+
+    if (guildMap.size) {
+      const field = [...guildMap.entries()]
+        .map(([ownerId, members]) => `**<@${ownerId}>:**\n- ${members.map((m) => m.trim()).join('\n- ')}`)
+        .join('\n')
+        .slice(0, 1024);
+      embed.addFields({ name: '👍 Members on Discord', value: field });
+    }
+
+    if (unknown.length) {
+      embed.addFields({ name: `👎 Members not on Discord (${unknown.length})`, value: unknown.join(' ').slice(0, 1024) });
+    }
+
+    yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
   });
 
 /**
@@ -215,7 +230,7 @@ export const checkCommand = (message: Message<true>, args: string[]) =>
       if (mentionId) {
         yield* checkUser(message, mentionId, page);
       } else if (SnowflakeRegex.test(tag)) {
-        const configStore = yield* ConfigStore;
+        const configStore = yield* ConfigStoreTag;
         const config = yield* configStore.get;
         if (config.ownerIds.includes(message.author.id)) {
           yield* checkUser(message, tag, page);

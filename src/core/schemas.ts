@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from 'effect';
 
-import { Store, StoreService } from '../services/StoreService';
+import { Store, StoreLayer } from '../services/StoreService';
 
 /**
  * Schema for environment variables.
@@ -22,7 +22,7 @@ export type Env = Schema.Schema.Type<typeof EnvSchema>;
 /**
  * Context tag for the Env service.
  */
-export class EnvTag extends Context.Tag('@core/EnvTag')<EnvTag, Env>() {}
+export class EnvTag extends Context.Tag('@schema/EnvLayer')<EnvTag, Env>() {}
 
 /**
  * Layer that decodes environment variables into the EnvTag.
@@ -89,12 +89,12 @@ export type Config = Schema.Schema.Type<typeof ConfigSchema>;
 /**
  * Context tag for the Config store.
  */
-export class ConfigStore extends Context.Tag('@core/ConfigStore')<ConfigStore, Store<Config>>() {}
+export class ConfigStoreTag extends Context.Tag('@schema/ConfigStoreLayer')<ConfigStoreTag, Store<Config>>() {}
 
 /**
  * Layer providing the ConfigStore using local JSON file persistence.
  */
-export const ConfigStoreLayer = StoreService(ConfigStore, 'sessions/settings.json', ConfigSchema, { prefix: '?', ownerIds: [], clanTags: [] }, 5000);
+export const ConfigStoreLayer = StoreLayer(ConfigStoreTag, 'sessions/settings.json', ConfigSchema, { prefix: '?', ownerIds: [], clanTags: [] }, 5000);
 
 /**
  * Schema for session data.
@@ -113,9 +113,9 @@ export type Session = Schema.Schema.Type<typeof SessionSchema>;
 /**
  * Context tag for the Session store.
  */
-export class SessionStore extends Context.Tag('@core/SessionStore')<SessionStore, Store<Session>>() {}
+export class SessionStoreTag extends Context.Tag('@schema/SessionStoreLayer')<SessionStoreTag, Store<Session>>() {}
 
 /**
  * Layer providing the SessionStore using local JSON file persistence.
  */
-export const SessionStoreLayer = StoreService(SessionStore, 'sessions/sessions.json', SessionSchema, { clans: [] }, 5000);
+export const SessionStoreLayer = StoreLayer(SessionStoreTag, 'sessions/sessions.json', SessionSchema, { clans: [] }, 5000);

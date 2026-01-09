@@ -4,6 +4,7 @@ export const userTable = sqliteTable('user', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   ownerId: text('owner_id').unique().notNull(),
 });
+export type UserTable = typeof userTable.$inferSelect;
 
 export const accountTable = sqliteTable('account', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -14,6 +15,4 @@ export const accountTable = sqliteTable('account', {
   createdAt: integer('created_at').$default(() => Date.now()),
   bannedAt: integer('banned_at'),
 });
-
-export type UserTable = typeof userTable.$inferSelect;
 export type AccountTable = typeof accountTable.$inferSelect;

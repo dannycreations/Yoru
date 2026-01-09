@@ -129,7 +129,7 @@ export const createStore = <A extends object, I, R>(
 /**
  * Helper to create a Layer for a Store.
  */
-export const StoreService = <S, A extends object, I, R>(
+export const StoreLayer = <S, A extends object, I, R>(
   tag: Context.Tag<S, Store<A>>,
   filePath: string,
   schema: Schema.Schema<A, I, R>,

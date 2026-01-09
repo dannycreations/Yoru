@@ -18,9 +18,9 @@ export interface DiscordService {
 
 export const DiscordClientTag = Context.GenericTag<DiscordService>('@services/DiscordClient');
 
-const createDiscordService = Effect.gen(function* (_) {
-  const configStore = yield* _(ConfigStore);
-  const config = yield* _(configStore.get);
+const createDiscordService = Effect.gen(function* () {
+  const configStore = yield* ConfigStore;
+  const config = yield* configStore.get;
 
   const client = new SapphireClient({
     typing: true,
@@ -35,7 +35,6 @@ const createDiscordService = Effect.gen(function* (_) {
     intents: [...Object.values(GatewayIntentBits)] as GatewayIntentBits[],
   });
 
-  // Login timeout to prevent hanging on startup
   let loginTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
     Effect.runSync(Effect.logInfo('YoruClient login timeout.'));
     client.destroy();

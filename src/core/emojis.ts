@@ -164,4 +164,4 @@ export const EmojiSchema = Schema.Struct({
 
 export type Emoji = Schema.Schema.Type<typeof EmojiSchema>;
 
-export const emoji: Emoji = Schema.decodeSync(EmojiSchema)(emojiData);
+export const emoji = Schema.decodeSync(EmojiSchema)(emojiData);

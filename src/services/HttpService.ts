@@ -45,7 +45,11 @@ export interface HttpService {
 
 const gotInstance: Got = got.bind(got);
 const userAgent = new UserAgent({ deviceCategory: 'desktop' });
+
 export const HttpClient = Context.GenericTag<HttpService>('@services/HttpClient');
+
+export const isErrorTimeout = (error: unknown): boolean =>
+  isErrorLike<{ _tag: string }>(error) && (error._tag === 'TimeoutException' || error.code === 'ETIMEDOUT');
 
 const requestImpl = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpRequestError> => {
   const isString = typeof options === 'string';
@@ -117,10 +121,6 @@ const waitForConnectionImpl = (retryMs: number = 10_000): Effect.Effect<void, Ht
   });
 
   return Effect.race(checkGoogle, checkApple).pipe(Effect.retry(Schedule.spaced(`${retryMs} millis`)), Effect.asVoid);
-};
-
-export const isErrorTimeout = (error: unknown): boolean => {
-  return isErrorLike<{ _tag: string }>(error) && (error._tag === 'TimeoutException' || error.code === 'ETIMEDOUT');
 };
 
 export const request = <T = string>(options: string | DefaultOptions) => Effect.flatMap(HttpClient, (service) => service.request<T>(options));

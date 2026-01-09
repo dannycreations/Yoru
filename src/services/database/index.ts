@@ -52,15 +52,15 @@ const baseOptions = {
   dbCredentials: { url: 'sessions/bsqlite.db' },
 } satisfies BSqliteOptions & { dialect: string };
 
-export function patchDialect(dialect: PatchedDialect): void {
+export const patchDialect = (dialect: PatchedDialect): void => {
   if (dialect.__patched) return;
   dialect.__patched = true;
 
   const buildLimit = dialect.buildLimit.bind(dialect);
   dialect.buildLimit = (limit: number) => (limit >= 0 ? buildLimit(limit) : sql` LIMIT -1`);
-}
+};
 
-export const SqliteLayer = (options: BSqliteOptions) =>
+export const SqliteLayer = (options: BSqliteOptions): Layer.Layer<SqliteDatabase, SqliteError, never> =>
   Layer.scoped(
     SqliteDatabase,
     Effect.acquireRelease(
@@ -91,6 +91,4 @@ export const SqliteLayer = (options: BSqliteOptions) =>
     ).pipe(Effect.map(({ db }) => db)),
   );
 
-export function config(options: Partial<BSqliteOptions> = {}): BSqliteOptions {
-  return defaultsDeep({}, options, baseOptions);
-}
+export const config = (options: Partial<BSqliteOptions> = {}): BSqliteOptions => defaultsDeep({}, options, baseOptions);

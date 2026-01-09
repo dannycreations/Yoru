@@ -38,13 +38,13 @@ const loadStore = <A>(filePath: string, initialData: A): Effect.Effect<A, StoreE
   );
 
 const saveStore = <A>(filePath: string, data: A): Effect.Effect<void, StoreError> =>
-  Effect.gen(function* (_) {
-    yield* _(ensureDir(filePath));
+  Effect.gen(function* () {
+    yield* ensureDir(filePath);
 
     const tempPath = `${filePath}.tmp`;
-    yield* _(Effect.tryPromise(() => writeFile(tempPath, JSON.stringify(data))));
+    yield* Effect.tryPromise(() => writeFile(tempPath, JSON.stringify(data)));
 
-    yield* _(Effect.tryPromise(() => rename(tempPath, filePath)));
+    yield* Effect.tryPromise(() => rename(tempPath, filePath));
   }).pipe(
     Effect.mapError((error) =>
       error instanceof StoreError ? error : new StoreError({ message: `Failed to save store: ${filePath}`, store: error }),
@@ -56,21 +56,20 @@ export const createStore = <A extends object, I, R>(
   schema: Schema.Schema<A, I, R>,
   initialData: A,
   initialDelay: number = 1000,
-): Effect.Effect<Store<A>, StoreError, R | Scope.Scope> => {
-  return Effect.gen(function* (_) {
-    const dataRef = yield* _(Ref.make(initialData));
-    const delayRef = yield* _(Ref.make(initialDelay));
-    const dirtyRef = yield* _(Ref.make(false));
+): Effect.Effect<Store<A>, StoreError, R | Scope.Scope> =>
+  Effect.gen(function* () {
+    const dataRef = yield* Ref.make(initialData);
+    const delayRef = yield* Ref.make(initialDelay);
+    const dirtyRef = yield* Ref.make(false);
 
     const decode = Schema.decodeUnknown(schema);
 
-    const rawData = yield* _(loadStore(filePath, initialData));
-    const validatedData = yield* _(
-      decode(rawData),
+    const rawData = yield* loadStore(filePath, initialData);
+    const validatedData = yield* decode(rawData).pipe(
       Effect.mapError((error) => new StoreError({ message: `Validation failed for store: ${filePath}`, store: error })),
     );
 
-    yield* _(Ref.set(dataRef, validatedData));
+    yield* Ref.set(dataRef, validatedData);
 
     const save = Ref.getAndSet(dirtyRef, false).pipe(
       Effect.flatMap((isDirty) =>
@@ -83,15 +82,15 @@ export const createStore = <A extends object, I, R>(
       ),
     );
 
-    const autoSaveLoop = Effect.gen(function* (_) {
-      const delay = yield* _(Ref.get(delayRef));
-      yield* _(Effect.sleep(`${Math.max(1000, delay)} millis`));
-      yield* _(save);
+    const autoSaveLoop = Effect.gen(function* () {
+      const delay = yield* Ref.get(delayRef);
+      yield* Effect.sleep(`${Math.max(1000, delay)} millis`);
+      yield* save;
     }).pipe(Effect.repeat(Schedule.forever));
 
-    const autoSaveFiber = yield* _(Effect.forkDaemon(autoSaveLoop));
+    const autoSaveFiber = yield* Effect.forkDaemon(autoSaveLoop);
 
-    yield* _(Effect.addFinalizer(() => Effect.zipRight(Fiber.interrupt(autoSaveFiber), save).pipe(Effect.catchAllCause(() => Effect.void))));
+    yield* Effect.addFinalizer(() => Effect.zipRight(Fiber.interrupt(autoSaveFiber), save).pipe(Effect.catchAllCause(() => Effect.void)));
 
     return {
       get: Ref.get(dataRef),
@@ -100,7 +99,6 @@ export const createStore = <A extends object, I, R>(
       setDelay: (delayMs) => Ref.set(delayRef, Math.max(1000, delayMs)),
     };
   });
-};
 
 export const StoreService = <A extends object, I, R>(
   tag: Context.Tag<Store<A>, Store<A>>,

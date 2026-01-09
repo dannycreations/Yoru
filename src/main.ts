@@ -12,27 +12,27 @@ import { CommandServiceLayer } from './workflows/CommandService';
 import { DiscordClientTag, DiscordServiceLayer } from './workflows/DiscordService';
 import { EventHandlerLayer } from './workflows/EventHandler';
 
-const program = Effect.gen(function* (_) {
-  const discord = yield* _(DiscordClientTag);
-  yield* _(ClashClientTag);
-  yield* _(discord.login());
-  yield* _(cycleMidnightRestart);
-});
+const main = () => {
+  const program = Effect.gen(function* () {
+    const discord = yield* DiscordClientTag;
 
-const logger = createLogger({ exception: false, rejection: false });
+    yield* ClashClientTag;
+    yield* discord.login();
+    yield* cycleMidnightRestart;
+  });
 
-runForkWithCleanUp(
-  cycleWithRestart(
-    program.pipe(
-      Effect.provide(
-        Layer.mergeAll(ConfigStoreLayer, SessionStoreLayer, HttpService, SqliteLayer(dbConfig())).pipe(
-          Layer.provideMerge(ClashServiceLayer),
-          Layer.provideMerge(DiscordServiceLayer),
-          Layer.provideMerge(CommandServiceLayer),
-          Layer.provideMerge(EventHandlerLayer),
-        ),
-      ),
-      Effect.provide(LoggerService(Logger.defaultLogger, logger)),
-    ),
-  ),
-);
+  const logger = createLogger({ exception: false, rejection: false });
+
+  const MainLayer = Layer.mergeAll(ConfigStoreLayer, SessionStoreLayer, HttpService, SqliteLayer(dbConfig())).pipe(
+    Layer.provideMerge(ClashServiceLayer),
+    Layer.provideMerge(DiscordServiceLayer),
+    Layer.provideMerge(CommandServiceLayer),
+    Layer.provideMerge(EventHandlerLayer),
+  );
+
+  const runnable = program.pipe(Effect.provide(MainLayer), Effect.provide(LoggerService(Logger.defaultLogger, logger)));
+
+  runForkWithCleanUp(cycleWithRestart(runnable));
+};
+
+main();

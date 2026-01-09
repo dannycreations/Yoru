@@ -100,10 +100,10 @@ export const createStore = <A extends object, I, R>(
     };
   });
 
-export const StoreService = <A extends object, I, R>(
-  tag: Context.Tag<Store<A>, Store<A>>,
+export const StoreService = <S, A extends object, I, R>(
+  tag: Context.Tag<S, Store<A>>,
   filePath: string,
   schema: Schema.Schema<A, I, R>,
   initialData: A,
   initialDelay: number = 1000,
-): Layer.Layer<Store<A>, StoreError, R> => Layer.scoped(tag, createStore(filePath, schema, initialData, initialDelay));
+): Layer.Layer<S, StoreError, R> => Layer.scoped(tag, createStore(filePath, schema, initialData, initialDelay));

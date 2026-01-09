@@ -1,3 +1,4 @@
+import { isObjectLike } from '@vegapunk/utilities/common';
 import {
   and,
   asc,
@@ -230,7 +231,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         result.push(key === '$nand' || key === '$nor' ? not(joined!) : joined!);
       } else if (key === '$not') {
         let conds: SQL[];
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
+        if (isObjectLike(value) && !Array.isArray(value)) {
           conds = buildWhereLogical(value as QueryFilter<A>);
         } else {
           conds = buildWhereComparison(key, value);
@@ -378,7 +379,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       if (options.upsert && r === null) {
         const isComplex =
           Object.keys(filter).some((k) => k.startsWith('$')) ||
-          Object.values(filter).some((v) => v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith('$')));
+          Object.values(filter).some((v) => isObjectLike(v) && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith('$')));
         if (isComplex) {
           return yield* Effect.fail(
             new DatabaseError({

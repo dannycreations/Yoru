@@ -1,19 +1,22 @@
 import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
+import { isErrorLike } from '@vegapunk/utilities/result';
 import { HTTPError, Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
 import { Context, Effect, Layer, Option } from 'effect';
 
+import { MemberRoles, RegisterRoles } from '../core/constants';
 import { emoji } from '../core/emojis';
+import { ConfigStore } from '../core/schemas';
 import { categorizeUnits, formatPlayerStats, parseClan } from '../helpers/clash.helper';
 import { getGuildMember } from '../helpers/discord.helper';
 import { isModeratorRole, isRegisterRole } from '../helpers/role.helper';
 import { ClashApiError, ClashClientTag } from '../services/ClashService';
-import { ConfigStore } from '../services/ConfigService';
 import { AccountAdapter, SqliteDatabase, UserAdapter } from '../services/database';
 import { DiscordClientTag } from './DiscordService';
 
 import type { Player } from 'clashofclans.js';
 import type { User as DiscordUser, Message, MessageReaction } from 'discord.js';
+import type { AccountTable } from '../services/database/schema';
 import type { DiscordService } from './DiscordService';
 
 export interface CommandContext {
@@ -22,7 +25,7 @@ export interface CommandContext {
 }
 
 export interface CommandService {
-  readonly handleCommand: (message: Message<true>) => Effect.Effect<void, any, SqliteDatabase | DiscordService>;
+  readonly handleCommand: (message: Message<true>) => Effect.Effect<void, never, SqliteDatabase | DiscordService>;
 }
 
 export const CommandServiceTag = Context.GenericTag<CommandService>('@services/CommandService');
@@ -40,7 +43,7 @@ export const CommandService = Effect.gen(function* () {
       yield* Effect.tryPromise(() => msg.edit(`Pong! BOT Latency ${botLatency}ms. API Latency ${apiLatency}ms.`));
     });
 
-  const checkProfile = (message: Message<true>, ownerId: string, accounts: any[]) =>
+  const checkProfile = (message: Message<true>, ownerId: string, accounts: AccountTable[]) =>
     Effect.gen(function* () {
       const member = message.guild.members.cache.get(ownerId);
       if (!member) {
@@ -56,7 +59,13 @@ export const CommandService = Effect.gen(function* () {
 
       let count = 0;
       for (const account of accounts) {
-        if (account.bannedAt) continue;
+        if (account.bannedAt) {
+          embed.addFields({
+            name: `${++count}. ${emoji.townhalls[0]} ${account.tag}`,
+            value: '⛔ Has been banned!',
+          });
+          continue;
+        }
 
         try {
           let field = '';
@@ -70,11 +79,9 @@ export const CommandService = Effect.gen(function* () {
             value: field,
           });
         } catch (error) {
-          if (error && typeof error === 'object' && 'reason' in error && error.reason === 'notFound') {
+          // If the player is not found, mark the account as banned (likely deleted or permanently banned)
+          if (isErrorLike<{ reason: string }>(error) && error.reason === 'notFound') {
             yield* AccountAdapter.update({ ...account, bannedAt: Date.now() });
-          }
-        } finally {
-          if (account.bannedAt) {
             embed.addFields({
               name: `${++count}. ${emoji.townhalls[0]} ${account.tag}`,
               value: '⛔ Has been banned!',
@@ -158,9 +165,9 @@ export const CommandService = Effect.gen(function* () {
     Effect.gen(function* () {
       const config = yield* configStore.get;
       const clanTags = config.clanTags;
-      if (page < 1 || page > clanTags.length) page = 1;
+      const index = Math.max(0, Math.min(page - 1, clanTags.length - 1));
 
-      const clan = yield* Effect.tryPromise(() => clash.getClan(clanTags[page - 1]));
+      const clan = yield* Effect.tryPromise(() => clash.getClan(clanTags[index]));
       const guildMap = new Map<string, string[]>();
       const leave: string[] = [];
       const unknown: string[] = [];
@@ -238,12 +245,12 @@ export const CommandService = Effect.gen(function* () {
 
       if (player.clan && config.clanTags.includes(player.clan.tag)) {
         const clanName = player.clan.name;
-        const rolesToAdd = message.guild.roles.cache.filter((r) => r.name === clanName || r.name === 'Elder');
+        const rolesToAdd = message.guild.roles.cache.filter((r) => r.name === clanName || r.name === MemberRoles.Elder);
         yield* Effect.tryPromise(() => member.roles.add(rolesToAdd));
         const nickname = member.user.username.toLowerCase() === player.name.toLowerCase() ? `${player.name} ${player.tag}` : player.name;
         yield* Effect.tryPromise(() => member.setNickname(nickname));
       } else {
-        const approvedRole = message.guild.roles.cache.find((r) => r.name === 'Approved');
+        const approvedRole = message.guild.roles.cache.find((r) => r.name === RegisterRoles.Approved);
         if (approvedRole) yield* Effect.tryPromise(() => member.roles.add(approvedRole));
         yield* Effect.tryPromise(() => member.setNickname(`TH ${player.townHallLevel} - ${player.name}`));
       }
@@ -256,11 +263,13 @@ export const CommandService = Effect.gen(function* () {
       const tag = args[0];
       const mention = args[1];
 
+      // Validate player tag format using clashofclans.js utility
       if (!tag || !Util.isValidTag(tag)) {
         yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nError, Player tag not valid!`));
         return;
       }
 
+      // Prevent concurrent link operations from the same author to avoid race conditions
       if (linkQueue.has(message.author.id)) {
         yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nYou must complete previous operation before create new one.`));
         return;
@@ -268,6 +277,7 @@ export const CommandService = Effect.gen(function* () {
       linkQueue.add(message.author.id);
 
       yield* Effect.gen(function* () {
+        // Extract mentionId from either a mention or a raw snowflake
         const mentionId = mention?.match(UserOrMemberMentionRegex)?.[1] || (SnowflakeRegex.test(mention) ? mention : null);
         if (!mentionId) {
           yield* Effect.tryPromise(() => message.reply('Please mention a user to link.'));
@@ -275,9 +285,11 @@ export const CommandService = Effect.gen(function* () {
         }
 
         const config = yield* configStore.get;
+        // Authorization check: only owners or moderators can link tags
         const isAuthorized = config.ownerIds.includes(message.author.id) || message.member?.roles.cache.some(isModeratorRole);
         if (!isAuthorized) return;
 
+        // Fetch player data to display in the confirmation embed
         const player = yield* Effect.tryPromise(() => clash.getPlayer(tag));
         const embed = new EmbedBuilder().setColor('#0099ff').setFooter(parseClan(player));
         const thumbLeague = player.leagueTier ? player.leagueTier.icon.medium : emoji.thumbnail.replace('{0}', 'badges/noleague.png');
@@ -286,30 +298,42 @@ export const CommandService = Effect.gen(function* () {
 
         const titleField = `${formatPlayerStats(player)}\n`;
 
+        // Check if the tag is already linked in the database
         const account = yield* AccountAdapter.findOne({ tag });
         if (account) {
           const user = yield* UserAdapter.findOne({ id: account.userId });
           const member = message.guild.members.cache.get(user?.ownerId || '');
 
           if (user && user.ownerId === mentionId) {
+            // Case 1: Tag already linked to the target user. Refresh roles/nick
             yield* linkedTag(message, mentionId, player);
             embed.setDescription(`${titleField}Re-linked to **${member?.user.tag || mentionId}**.`);
           } else if (user) {
-            yield* UserAdapter.update({ ...user, ownerId: mentionId });
-            yield* linkedTag(message, mentionId, player);
-            const newMember = message.guild.members.cache.get(mentionId);
-            embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag || mentionId}**.`);
+            // Case 2: Tag linked to a different user
+            if (member) {
+              // Only allow ownership change if the current owner has left the server
+              // This prevents users from "stealing" links from active members
+              embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`);
+            } else {
+              // Current owner left the server, allow changing ownership to the new user
+              yield* UserAdapter.update({ ...user, ownerId: mentionId });
+              yield* linkedTag(message, mentionId, player);
+              const newMember = message.guild.members.cache.get(mentionId);
+              embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag || mentionId}**.`);
+            }
           }
           yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
           return;
         }
 
+        // Case 3: New link. Ask for confirmation
         embed.setDescription(`${titleField}Are you sure you want to link this account?`);
         const msg = yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
         yield* Effect.tryPromise(() => msg.react('✅'));
         yield* Effect.tryPromise(() => msg.react('❎'));
 
         const filter = (r: MessageReaction, u: DiscordUser) => ['✅', '❎'].includes(r.emoji.name!) && u.id === message.author.id;
+        // Wait for user reaction. If no reaction within 60s, it's treated as a cancellation
         const collected = yield* Effect.tryPromise(() => msg.awaitReactions({ filter, max: 1, time: 60_000 })).pipe(
           Effect.catchAll(() => Effect.succeed(null)),
         );
@@ -317,21 +341,26 @@ export const CommandService = Effect.gen(function* () {
         yield* Effect.tryPromise(() => msg.reactions.removeAll());
 
         if (collected?.first()?.emoji.name === '✅') {
+          // User confirmed: upsert user and account records, then update roles
           const user = yield* UserAdapter.findOneAndUpdate({ ownerId: mentionId }, { ownerId: mentionId }, { upsert: true });
           yield* AccountAdapter.findOneAndUpdate({ tag }, { tag, userId: user!.id }, { upsert: true });
           yield* linkedTag(message, mentionId, player);
           const member = message.guild.members.cache.get(mentionId);
           embed.setDescription(`${titleField}Linked to **${member?.user.tag || mentionId}**.`);
         } else {
+          // User cancelled or timed out
           const description = collected ? `${titleField}Operation canceled.` : `${titleField}No answer after 60 seconds, operation canceled.`;
           embed.setDescription(description);
         }
 
         yield* Effect.tryPromise(() => msg.edit({ embeds: [embed] }));
-      }).pipe(Effect.ensuring(Effect.sync(() => linkQueue.delete(message.author.id))));
+      }).pipe(
+        // Ensure the queue is cleared even if an error occurs
+        Effect.ensuring(Effect.sync(() => linkQueue.delete(message.author.id))),
+      );
     });
 
-  const commandMap: Record<string, (message: Message<true>, args: string[]) => Effect.Effect<void, any, SqliteDatabase | DiscordService>> = {
+  const commandMap: Record<string, (message: Message<true>, args: string[]) => Effect.Effect<void, unknown, SqliteDatabase | DiscordService>> = {
     ping: (message) => pingCommand(message),
     p: (message) => pingCommand(message),
     check: (message, args) => checkCommand(message, args),
@@ -354,7 +383,7 @@ export const CommandService = Effect.gen(function* () {
       if (!commandName || !commandMap[commandName]) return;
 
       yield* commandMap[commandName](message, args).pipe(
-        Effect.catchAll((error: any) =>
+        Effect.catchAll((error) =>
           Effect.gen(function* () {
             let field = `> ${message.content}\nUnhandled Rejection, please contact owner!`;
 
@@ -362,25 +391,28 @@ export const CommandService = Effect.gen(function* () {
 
             if (cause instanceof HTTPError) {
               field = `> ${message.content}\n${cause.message}`;
+              // Specific handling for common Clash API errors to provide more user-friendly messages
               if (cause.reason === 'notFound' && cause.path.includes('/players/')) {
                 field = `> ${message.content}\nError, Player tag not found!`;
               }
             } else if (error instanceof ClashApiError) {
               field = `> ${message.content}\n${error.message}`;
-            } else if (error && typeof error === 'object' && 'message' in error) {
-              field = `> ${message.content}\n${(error as any).message}`;
+            } else if (isErrorLike(error) && 'message' in error) {
+              field = `> ${message.content}\n${error.message}`;
             } else {
-              yield* Effect.logError(error);
+              // Log unexpected errors for debugging while keeping the user informed of a general failure
+              yield* Effect.logError('Unexpected command error', error);
             }
             yield* Effect.tryPromise(() => message.reply(field));
           }),
         ),
+        Effect.ignore,
       );
     });
 
   return {
     handleCommand,
-  };
+  } as const;
 });
 
 export const CommandServiceLayer = Layer.effect(CommandServiceTag, CommandService);

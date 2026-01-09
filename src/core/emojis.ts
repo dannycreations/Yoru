@@ -1,5 +1,7 @@
 import { Schema } from 'effect';
 
+import { EmojiSchema } from './schemas';
+
 const emojiData = {
   thumbnail: 'https://raw.githubusercontent.com/dannycreations/yoru/main/discord/emojis/{0}',
   level: '<:level:679995912151760920>',
@@ -134,34 +136,5 @@ const emojiData = {
     'Minion Prince': '<:minionprince:1333152496620667031>',
   },
 } as const;
-
-export const EmojiSchema = Schema.Struct({
-  thumbnail: Schema.String,
-  level: Schema.String,
-  hashtag: Schema.String,
-  trophies: Schema.String,
-  attackwin: Schema.String,
-  noleague: Schema.String,
-  isclan: Schema.Struct({
-    true: Schema.String,
-    false: Schema.String,
-  }),
-  stars: Schema.Array(Schema.String),
-  townhalls: Schema.Array(Schema.String),
-  troops: Schema.Struct({
-    normal: Schema.Record({ key: Schema.String, value: Schema.String }),
-    dark: Schema.Record({ key: Schema.String, value: Schema.String }),
-    super: Schema.Record({ key: Schema.String, value: Schema.String }),
-    siege: Schema.Record({ key: Schema.String, value: Schema.String }),
-    pets: Schema.Record({ key: Schema.String, value: Schema.String }),
-  }),
-  spells: Schema.Struct({
-    normal: Schema.Record({ key: Schema.String, value: Schema.String }),
-    dark: Schema.Record({ key: Schema.String, value: Schema.String }),
-  }),
-  heroes: Schema.Record({ key: Schema.String, value: Schema.String }),
-});
-
-export type Emoji = Schema.Schema.Type<typeof EmojiSchema>;
 
 export const emoji = Schema.decodeSync(EmojiSchema)(emojiData);

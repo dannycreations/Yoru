@@ -25,6 +25,7 @@ export const ERROR_CODES: readonly string[] = [
   'ETIMEDOUT',
   'ERR_CANCELED',
   'ECONNABORTED',
+  'UND_ERR_CONNECT_TIMEOUT',
 ];
 
 export const ERROR_STATUS_CODES: readonly number[] = [408, 413, 429, 500, 502, 503, 504, 521, 522, 524];
@@ -43,10 +44,10 @@ export interface HttpService {
   readonly waitForConnection: (total?: number) => Effect.Effect<void, HttpRequestError>;
 }
 
+export const HttpClient = Context.GenericTag<HttpService>('@services/HttpClient');
+
 const gotInstance: Got = got.bind(got);
 const userAgent = new UserAgent({ deviceCategory: 'desktop' });
-
-export const HttpClient = Context.GenericTag<HttpService>('@services/HttpClient');
 
 export const isErrorTimeout = (error: unknown): boolean =>
   isErrorLike<{ _tag: string }>(error) && (error._tag === 'TimeoutException' || error.code === 'ETIMEDOUT');

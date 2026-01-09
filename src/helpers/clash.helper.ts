@@ -50,33 +50,38 @@ export const categorizeUnits = (player: Player) => {
   };
   const unknowns: unknown[] = [];
 
+  const troopMap = [
+    { data: emoji.troops.normal, category: 'Troops' },
+    { data: emoji.troops.dark, category: 'Dark Troops' },
+    { data: emoji.troops.super, category: 'Super Troops' },
+    { data: emoji.troops.siege, category: 'Siege Machines' },
+    { data: emoji.troops.pets, category: 'Pets' },
+  ] as const;
+
   player.troops
     .filter((r) => r.village === 'home')
     .forEach((troop) => {
       const field = `**${troop.level}**/${troop.maxLevel}`;
-      if (emoji.troops.normal[troop.name]) {
-        categories['Troops'].push(emoji.troops.normal[troop.name] + field);
-      } else if (emoji.troops.dark[troop.name]) {
-        categories['Dark Troops'].push(emoji.troops.dark[troop.name] + field);
-      } else if (emoji.troops.super[troop.name]) {
-        categories['Super Troops'].push(emoji.troops.super[troop.name] + field);
-      } else if (emoji.troops.siege[troop.name]) {
-        categories['Siege Machines'].push(emoji.troops.siege[troop.name] + field);
-      } else if (emoji.troops.pets[troop.name]) {
-        categories['Pets'].push(emoji.troops.pets[troop.name] + field);
+      const found = troopMap.find((m) => m.data[troop.name]);
+      if (found) {
+        categories[found.category].push(found.data[troop.name] + field);
       } else {
         unknowns.push(troop);
       }
     });
 
+  const spellMap = [
+    { data: emoji.spells.normal, category: 'Spells' },
+    { data: emoji.spells.dark, category: 'Dark Spells' },
+  ] as const;
+
   player.spells
     .filter((r) => r.village === 'home')
     .forEach((spell) => {
       const field = `**${spell.level}**/${spell.maxLevel}`;
-      if (emoji.spells.normal[spell.name]) {
-        categories['Spells'].push(emoji.spells.normal[spell.name] + field);
-      } else if (emoji.spells.dark[spell.name]) {
-        categories['Dark Spells'].push(emoji.spells.dark[spell.name] + field);
+      const found = spellMap.find((m) => m.data[spell.name]);
+      if (found) {
+        categories[found.category].push(found.data[spell.name] + field);
       } else {
         unknowns.push(spell);
       }

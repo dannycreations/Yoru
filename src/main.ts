@@ -2,8 +2,8 @@ import 'dotenv/config';
 
 import { Effect, Layer, Logger } from 'effect';
 
+import { ConfigStoreLayer, EnvLayer, SessionStoreLayer } from './core/schemas';
 import { ClashClientTag, ClashServiceLayer } from './services/ClashService';
-import { ConfigStoreLayer, SessionStoreLayer } from './services/ConfigService';
 import { config as dbConfig, SqliteLayer } from './services/database';
 import { HttpService } from './services/HttpService';
 import { createLogger, LoggerService } from './services/LoggerService';
@@ -12,27 +12,25 @@ import { CommandServiceLayer } from './workflows/CommandService';
 import { DiscordClientTag, DiscordServiceLayer } from './workflows/DiscordService';
 import { EventHandlerLayer } from './workflows/EventHandler';
 
-const main = () => {
-  const program = Effect.gen(function* () {
-    const discord = yield* DiscordClientTag;
+const program = Effect.gen(function* () {
+  const discord = yield* DiscordClientTag;
 
-    yield* ClashClientTag;
-    yield* discord.login();
-    yield* cycleMidnightRestart;
-  });
+  yield* ClashClientTag;
+  yield* discord.login();
+  yield* cycleMidnightRestart;
+});
 
-  const logger = createLogger({ exception: false, rejection: false });
+const InfraLayer = Layer.mergeAll(EnvLayer, ConfigStoreLayer, SessionStoreLayer, HttpService, SqliteLayer(dbConfig()));
 
-  const MainLayer = Layer.mergeAll(ConfigStoreLayer, SessionStoreLayer, HttpService, SqliteLayer(dbConfig())).pipe(
-    Layer.provideMerge(ClashServiceLayer),
-    Layer.provideMerge(DiscordServiceLayer),
-    Layer.provideMerge(CommandServiceLayer),
-    Layer.provideMerge(EventHandlerLayer),
-  );
+const AppLayer = InfraLayer.pipe(
+  Layer.provideMerge(ClashServiceLayer),
+  Layer.provideMerge(DiscordServiceLayer),
+  Layer.provideMerge(CommandServiceLayer),
+  Layer.provideMerge(EventHandlerLayer),
+);
 
-  const runnable = program.pipe(Effect.provide(MainLayer), Effect.provide(LoggerService(Logger.defaultLogger, logger)));
+const logger = createLogger({ exception: false, rejection: false });
 
-  runForkWithCleanUp(cycleWithRestart(runnable));
-};
+const runnable = program.pipe(Effect.provide(AppLayer), Effect.provide(LoggerService(Logger.defaultLogger, logger)));
 
-main();
+runForkWithCleanUp(cycleWithRestart(runnable));

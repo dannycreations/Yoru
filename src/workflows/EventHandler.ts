@@ -1,17 +1,24 @@
 import { Events } from '@sapphire/framework';
+import { isErrorLike } from '@vegapunk/utilities/result';
+import { PollingEvents } from 'clashofclans.js';
 import { ActivityType, GuildMember } from 'discord.js';
-import { Effect, Layer, Option, Queue, Schema, Scope } from 'effect';
+import { Effect, Layer, Option, Queue, Runtime, Scope } from 'effect';
 
+import { ClientEvents, RegisterRoles } from '../core/constants';
+import { ClanData, ClanSchema, ConfigStore, SessionStore } from '../core/schemas';
 import { getGuildMember } from '../helpers/discord.helper';
 import { isClanRole, isMemberRole, isModeratorRole } from '../helpers/role.helper';
 import { ClashClientTag } from '../services/ClashService';
-import { ConfigStore, SessionStore } from '../services/ConfigService';
 import { AccountAdapter, SqliteDatabase, UserAdapter } from '../services/database';
 import { createStore, Store } from '../services/StoreService';
 import { CommandServiceTag } from '../workflows/CommandService';
 import { DiscordClientTag } from '../workflows/DiscordService';
 
+import type { ClanMember, Player } from 'clashofclans.js';
 import type { Message } from 'discord.js';
+import type { ClashService } from '../services/ClashService';
+import type { CommandService } from './CommandService';
+import type { DiscordService } from './DiscordService';
 
 export const EventHandler = Effect.gen(function* () {
   const discordService = yield* DiscordClientTag;
@@ -20,9 +27,15 @@ export const EventHandler = Effect.gen(function* () {
   const configStore = yield* ConfigStore;
   const sessionStore = yield* SessionStore;
   const commandService = yield* CommandServiceTag;
-  const sqlite = yield* SqliteDatabase;
 
-  const clanStores = new Map<string, Store<any>>();
+  // Capture the current runtime to preserve environment (services, logger, etc.) in callbacks
+  const runtime = yield* Effect.runtime<SqliteDatabase | DiscordService | ConfigStore | SessionStore | CommandService | ClashService | Scope.Scope>();
+
+  // Map to store clan-specific data persistent stores
+  const clanStores = new Map<string, Store<ClanData>>();
+
+  // Set to track player tags currently pending in the leaving queue
+  const pendingLeavers = new Set<string>();
 
   const onReady = Effect.gen(function* () {
     discordService.clearLoginTimeout();
@@ -38,16 +51,19 @@ export const EventHandler = Effect.gen(function* () {
 
   const onMessageCreate = (message: Message) =>
     Effect.gen(function* () {
+      // Ignore system messages, webhooks, and bot messages
       if (message.webhookId !== null || message.system || message.author.bot) return;
 
       yield* Effect.logInfo(`${message.author.tag}: ${message.content}`);
 
       const config = yield* configStore.get;
+      // Maintenance mode check
       if (discordService.isMaintenance && !config.ownerIds.includes(message.author.id)) {
         yield* Effect.tryPromise(() => message.reply('⚠️ Under Maintenance!'));
         return;
       }
 
+      // Delegate command handling to CommandService
       yield* commandService.handleCommand(message as Message<true>).pipe(
         Effect.catchAllCause((cause) =>
           Effect.gen(function* () {
@@ -57,12 +73,17 @@ export const EventHandler = Effect.gen(function* () {
       );
     });
 
-  const handleMemberLeave = (player: any) =>
+  const handleMemberLeave = (player: ClanMember) =>
     Effect.gen(function* () {
+      // Check if this player is still marked as pending
+      // If not, it means they were removed because another account of the same user was already processed
+      if (!pendingLeavers.has(player.tag)) return;
+
       const config = yield* configStore.get;
       const account = yield* AccountAdapter.findOne({ tag: player.tag });
 
       if (!account || !account.userId) {
+        pendingLeavers.delete(player.tag);
         yield* Effect.logInfo(`${player.tag}: Unregistered player left clan.`);
         return;
       }
@@ -71,13 +92,22 @@ export const EventHandler = Effect.gen(function* () {
 
       const user = yield* UserAdapter.findOne({ id: account.userId });
       if (!user) {
+        pendingLeavers.delete(player.tag);
         yield* Effect.logWarning(`User not found for userId ${account.userId}`);
         return;
       }
 
       const userAccounts = yield* AccountAdapter.find({ userId: user.id });
-      let otherAccountInClan: any = null;
 
+      // Remove all accounts of this user from the pending leavers set
+      // to avoid redundant processing for the same user
+      for (const acc of userAccounts) {
+        pendingLeavers.delete(acc.tag);
+      }
+
+      let otherAccountInClan: Player | null = null;
+
+      // Check if the user has any other accounts still in a monitored clan
       for (const acc of userAccounts) {
         if (acc.bannedAt || acc.tag === player.tag) continue;
         try {
@@ -87,7 +117,7 @@ export const EventHandler = Effect.gen(function* () {
             break;
           }
         } catch (error) {
-          if (error && typeof error === 'object' && 'reason' in error && error.reason === 'notFound') {
+          if (isErrorLike<{ reason: string }>(error) && error.reason === 'notFound') {
             yield* AccountAdapter.update({ ...acc, bannedAt: Date.now() });
           }
         }
@@ -100,8 +130,10 @@ export const EventHandler = Effect.gen(function* () {
       const guild = member.guild;
 
       try {
+        // Only update roles if the member is still in the server and not a moderator
         if (member instanceof GuildMember && !member.roles.cache.some(isModeratorRole)) {
           if (otherAccountInClan) {
+            // User still has another account in a clan: update nickname to that account
             const nickname =
               member.user.username.toLowerCase() === otherAccountInClan.name.toLowerCase()
                 ? `${otherAccountInClan.name} ${otherAccountInClan.tag}`
@@ -109,10 +141,11 @@ export const EventHandler = Effect.gen(function* () {
             yield* Effect.tryPromise(() => member.setNickname(nickname));
             yield* Effect.logInfo(`${player.tag}: Nick updated ${member.user.displayName} to ${nickname}`);
           } else {
+            // No accounts left in clans: remove clan roles and add 'Reapply' role
             const session = yield* sessionStore.get;
             const rolesToRemove = member.roles.cache.filter((r) => isMemberRole(r) || isClanRole(r, session.clans));
             yield* Effect.tryPromise(() => member.roles.remove(rolesToRemove));
-            const reapplyRole = guild.roles.cache.find((r) => r.name === 'Reapply');
+            const reapplyRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Reapply);
             if (reapplyRole) yield* Effect.tryPromise(() => member.roles.add(reapplyRole));
             yield* Effect.logInfo(`${player.tag}: Added Reapply to ${member.user.displayName}`);
           }
@@ -122,7 +155,10 @@ export const EventHandler = Effect.gen(function* () {
       }
     });
 
-  const leavingQueue = yield* Queue.unbounded<any>();
+  // Queue and worker for processing leaving members asynchronously to avoid blocking
+  // Queue for processing members who left a clan.
+  // We use a ClanMember type here as it's what we get from the clan member list.
+  const leavingQueue = yield* Queue.unbounded<ClanMember>();
 
   const leavingWorker = Effect.forever(
     Effect.gen(function* () {
@@ -131,45 +167,52 @@ export const EventHandler = Effect.gen(function* () {
     }),
   );
 
+  // Run the worker in a separate fiber
   yield* Effect.forkDaemon(leavingWorker);
 
+  // Semaphore to ensure clan member updates are processed sequentially per clan
   const updateSemaphore = yield* Effect.makeSemaphore(1);
 
-  const onClanMemberUpdate = (oldClan: any, newClan: any) =>
+  const onClanMemberUpdate = (oldClan: ClanData, newClan: ClanData) =>
     updateSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const session = yield* sessionStore.get;
 
+        // Ensure the clan is registered in the session store for role management purposes.
         if (!session.clans.some((r) => r.tag === oldClan.tag)) {
           yield* sessionStore.update((s) => ({ ...s, clans: [...s.clans, { name: oldClan.name, tag: oldClan.tag }] }));
         }
 
+        // Load or create a persistent store for the clan's member list to track state across restarts.
+
         let clanStore = clanStores.get(oldClan.tag);
         if (!clanStore) {
-          const ClanSchema = Schema.Struct({
-            tag: Schema.String,
-            name: Schema.String,
-            members: Schema.Array(Schema.Any),
-          });
           const store = yield* createStore(`sessions/clan/${oldClan.tag}.json`, ClanSchema, oldClan, 60_000);
           clanStores.set(oldClan.tag, store);
           clanStore = store;
 
           oldClan = yield* clanStore.get;
-        } else {
-          yield* clanStore.set(oldClan);
         }
 
-        const leftMembers = oldClan.members.filter((m: any) => !newClan.members.some((nm: any) => nm.tag === m.tag));
+        // Identify members who were in the old state but are not in the new state.
+        const leftMembers = oldClan.members.filter((m) => !newClan.members.some((nm) => nm.tag === m.tag));
 
+        // Queue each leaving member for processing and remove them from the 'old' state if they are confirmed gone.
         for (const player of leftMembers) {
-          yield* Queue.offer(leavingQueue, player);
+          if (!pendingLeavers.has(player.tag)) {
+            pendingLeavers.add(player.tag);
+            yield* Queue.offer(leavingQueue, player);
+          }
         }
+
+        // Update the store with the latest clan state (newClan) for the next comparison.
+        yield* clanStore.set(newClan);
       }),
     );
 
+  // Register Discord event listeners
   discord.once(Events.ClientReady, (c) => {
-    Effect.runFork(onReady.pipe(Effect.provideService(DiscordClientTag, discordService), Effect.provideService(ConfigStore, configStore)));
+    Runtime.runFork(runtime)(onReady);
     c.user.setPresence({
       status: 'idle',
       activities: [{ name: 'Clash of Clans', type: ActivityType.Playing }],
@@ -177,17 +220,21 @@ export const EventHandler = Effect.gen(function* () {
   });
 
   discord.on(Events.MessageCreate, (m) => {
-    Effect.runFork(onMessageCreate(m).pipe(Effect.provideService(SqliteDatabase, sqlite), Effect.provideService(DiscordClientTag, discordService)));
+    Runtime.runFork(runtime)(
+      onMessageCreate(m).pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError('Unhandled error in MessageCreate handler', cause);
+          }),
+        ),
+      ),
+    );
   });
 
-  const globalScope = yield* Scope.make();
-
-  clash.on('clanMemberUpdate', (o, n) => {
-    Effect.runFork(
+  // Register Clash API event listeners
+  clash.on(ClientEvents.ClanMember, (o, n) => {
+    Runtime.runFork(runtime)(
       onClanMemberUpdate(o, n).pipe(
-        Effect.provideService(SqliteDatabase, sqlite),
-        Effect.provideService(DiscordClientTag, discordService),
-        Effect.provideService(Scope.Scope, globalScope),
         Effect.catchAllCause((cause) =>
           Effect.gen(function* () {
             yield* Effect.logError('Error in clanMemberUpdate handler', cause);
@@ -197,8 +244,8 @@ export const EventHandler = Effect.gen(function* () {
     );
   });
 
-  clash.on('error', (error) => {
-    Effect.runFork(
+  clash.on(PollingEvents.Error, (error) => {
+    Runtime.runFork(runtime)(
       Effect.gen(function* () {
         yield* Effect.logError('Clash API Error', error);
       }),

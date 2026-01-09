@@ -16,7 +16,7 @@ export const runForkWithCleanUp = <A, E, R>(effect: Effect.Effect<A, E, R>): voi
   process.on('SIGTERM', () => Effect.runPromise(Fiber.interrupt(fiber)).then(() => process.exit(0)));
 };
 
-export const skdWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, options: RuntimeOptions = {}): Effect.Effect<void, never, R> => {
+export const cycleWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, options: RuntimeOptions = {}): Effect.Effect<void, never, R> => {
   const { maxRestarts = 3, intervalMs = 60_000, restartDelayMs = 5_000 } = options;
   const restartTimes: number[] = [];
 
@@ -32,6 +32,18 @@ export const skdWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, options
           if (isRestart) {
             yield* _(Effect.logInfo(chalk`{bold.yellow Scheduled restart triggered.}`));
             return;
+          }
+
+          // Handle specific error codes to avoid unnecessary fatal logs
+          const failures = Array.from(Cause.failures(cause));
+          for (const failure of failures) {
+            if (failure && typeof failure === 'object' && 'context' in failure) {
+              const ctx = (failure as any).context;
+              if (ctx && ctx.error && ctx.error.code === 'ENOTFOUND') {
+                yield* _(Effect.logWarning('Network error (ENOTFOUND) detected, skipping fatal crash.'));
+                return;
+              }
+            }
           }
 
           const now = Date.now();
@@ -58,7 +70,7 @@ export const skdWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, options
   return Effect.repeat(loop, Schedule.forever).pipe(Effect.asVoid);
 };
 
-export const skdMidnightRestart = Effect.gen(function* (_) {
+export const cycleMidnightRestart = Effect.gen(function* (_) {
   const now = new Date();
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   const msUntilMidnight = tomorrow.getTime() - now.getTime();

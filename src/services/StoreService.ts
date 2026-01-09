@@ -1,9 +1,10 @@
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { parseJsonc } from '@vegapunk/utilities';
 import { defaultsDeep } from '@vegapunk/utilities/common';
 import { Context, Data, Effect, Fiber, Layer, Ref, Schedule, Schema, Scope } from 'effect';
 
-import { ensureDir } from '../core/utils';
+const ensureDir = (path: string) => Effect.tryPromise(() => mkdir(dirname(path), { recursive: true }));
 
 export class StoreError extends Data.TaggedError('StoreError')<{
   readonly message: string;
@@ -50,7 +51,7 @@ const saveStore = <A>(filePath: string, data: A): Effect.Effect<void, StoreError
     ),
   );
 
-const createStore = <A extends object, I, R>(
+export const createStore = <A extends object, I, R>(
   filePath: string,
   schema: Schema.Schema<A, I, R>,
   initialData: A,

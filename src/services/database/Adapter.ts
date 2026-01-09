@@ -111,13 +111,11 @@ export interface Adapter<A extends Table, Select extends InferSelect<A>, Insert 
 export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>>(
   table: A,
 ): Adapter<A, Select, Insert> => {
-  // Check for id
   const tableWithId = table as A & { id: { primary: boolean } };
   if (!('id' in tableWithId && tableWithId.id.primary)) {
     throw new Error(`Table "${getTableName(table)}" must have a primary key "id"`);
   }
 
-  // Helpers
   const hasKeys = (obj?: object | null): obj is object => {
     if (obj == null) return false;
     for (const _ in obj) return true;
@@ -301,7 +299,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return hasColumns ? (columns as InferColumn<A>) : (undefined as unknown as InferColumn<A>);
   };
 
-  // Methods
   const count = (filter: QueryFilter<A> = {}): Effect.Effect<number, DatabaseError, SqliteDatabase> => {
     return withTrace((db, trace) => {
       const query = db.select({ count: countSql() }).from(table);
@@ -372,7 +369,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return Effect.map(find(filter, { ...options, limit: 1 }), (r) => r[0] ?? null);
   };
 
-  // Need to handle overloads for findOneAndUpdate
   const findOneAndUpdate = ((
     filter: Partial<InferSelect<A>> | QueryFilter<A>,
     data: Partial<Omit<Insert, 'id'>>,

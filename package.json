@@ -10,6 +10,7 @@
     "start:debug": "npm run build && node --inspect-brk .",
     "build": "npm run clean && tsc",
     "check": "tsc --noEmit",
+    "test": "vitest",
     "format": "prettier --write .",
     "clean": "pnpx rimraf -g \"*.tsbuildinfo\" \"dist\"",
     "clean:node": "pnpx rimraf -g \"*-lock*\" \"node_modules\"",
@@ -19,8 +20,6 @@
   "dependencies": {
     "@sapphire/discord.js-utilities": "^7.3.3",
     "@sapphire/framework": "^5.5.0",
-    "@sapphire/plugin-editable-commands": "^4.0.4",
-    "@vegapunk/struct": "^1.0.17",
     "@vegapunk/utilities": "^1.0.78",
     "better-sqlite3": "^12.5.0",
     "clashofclans.js": "^3.5.1",

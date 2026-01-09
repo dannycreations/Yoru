@@ -1,3 +1,3 @@
-import { drizzleConfig } from './src/lib/database/drizzle';
+import { config } from './src/services/database';
 
-export default drizzleConfig;
+export default config();

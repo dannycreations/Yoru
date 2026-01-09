@@ -6,12 +6,16 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { Data, Effect, Layer } from 'effect';
 
 import { Adapter, SqliteDatabase } from './Adapter';
+import { accountTable, userTable } from './schema';
 
 import type { PatchedDialect } from './types';
 
 export * from 'drizzle-orm/better-sqlite3';
 export * from 'drizzle-orm/sqlite-core';
 export { Adapter, Database, SqliteDatabase };
+
+export const UserAdapter = Adapter(userTable);
+export const AccountAdapter = Adapter(accountTable);
 
 export class SqliteError extends Data.TaggedError('SqliteError')<{
   readonly message: string;
@@ -43,8 +47,8 @@ export interface BSqliteOptions {
 const baseOptions = {
   dialect: 'sqlite',
   casing: 'snake_case',
-  out: 'src/lib/database/migrations',
-  schema: 'src/lib/database/schema.ts',
+  out: 'migrations',
+  schema: 'src/services/database/schema.ts',
   dbCredentials: { url: 'sessions/bsqlite.db' },
 } satisfies BSqliteOptions & { dialect: string };
 

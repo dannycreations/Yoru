@@ -11,7 +11,7 @@ export class HttpRequestError extends Data.TaggedError('HttpRequestError')<{
   readonly message: string;
   readonly code?: string;
   readonly status?: number;
-  readonly request?: unknown;
+  readonly cause?: unknown;
 }> {}
 
 export const ERROR_CODES: readonly string[] = [
@@ -89,7 +89,7 @@ const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<
         message: err.message || 'Request failed',
         code: err.code,
         status: err.response?.statusCode,
-        request: error,
+        cause: error,
       });
     },
   }).pipe(
@@ -111,7 +111,7 @@ const waitForConnectionFn = (retryMs: number = 10_000): Effect.Effect<void, Http
       new HttpRequestError({
         message: 'DNS lookup failed',
         code: 'ENOTFOUND',
-        request: error,
+        cause: error,
       }),
   });
 

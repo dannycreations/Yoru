@@ -32,8 +32,8 @@ export const ClashConfigTag = Context.GenericTag<ClashConfig>('@config/ClashConf
 
 export interface ClashLayer {
   readonly client: Client;
-  readonly addClans: (tags: string[]) => Effect.Effect<void>;
   readonly events: PubSub.PubSub<ClashEvent>;
+  readonly addClans: (tags: string[]) => Effect.Effect<void>;
 }
 
 export const ClashTag = Context.GenericTag<ClashLayer>('@layer/ClashLayer');
@@ -167,7 +167,11 @@ const createClash = Effect.gen(function* () {
       const oldClan = cache.get(tag);
 
       if (oldClan) {
-        yield* PubSub.publish(events, { _tag: ClientEvents.ClanMember, oldClan, newClan } as const);
+        yield* PubSub.publish(events, {
+          _tag: ClientEvents.ClanMember,
+          oldClan,
+          newClan,
+        } as const);
       }
 
       yield* Ref.update(clanCache, (map) => new Map(map).set(tag, newClan));
@@ -182,13 +186,13 @@ const createClash = Effect.gen(function* () {
 
   return {
     client,
+    events,
     addClans: (tags: string[]) =>
       Ref.update(clanTags, (set) => {
         const next = new Set(set);
         for (const tag of tags) next.add(tag);
         return next;
       }),
-    events,
   } as const;
 });
 

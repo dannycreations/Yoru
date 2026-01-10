@@ -8,7 +8,7 @@ const ensureDir = (path: string) => Effect.tryPromise(() => mkdir(dirname(path),
 
 export class StoreError extends Data.TaggedError('StoreError')<{
   readonly message: string;
-  readonly store?: unknown;
+  readonly cause?: unknown;
 }> {}
 
 export interface Store<T> {
@@ -31,10 +31,10 @@ const loadStore = <A>(filePath: string, initialData: A): Effect.Effect<A, StoreE
         return ensureDir(filePath).pipe(
           Effect.flatMap(() => Effect.tryPromise(() => writeFile(filePath, JSON.stringify(initialData)))),
           Effect.as(initialData),
-          Effect.mapError((error) => new StoreError({ message: `Failed to initialize store: ${filePath}`, store: error })),
+          Effect.mapError((error) => new StoreError({ message: `Failed to initialize store: ${filePath}`, cause: error })),
         );
       }
-      return Effect.fail(error instanceof StoreError ? error : new StoreError({ message: `Failed to load store: ${filePath}`, store: error }));
+      return Effect.fail(error instanceof StoreError ? error : new StoreError({ message: `Failed to load store: ${filePath}`, cause: error }));
     }),
   );
 
@@ -48,7 +48,7 @@ const saveStore = <A>(filePath: string, data: A): Effect.Effect<void, StoreError
     yield* Effect.tryPromise(() => rename(tempPath, filePath));
   }).pipe(
     Effect.mapError((error) =>
-      error instanceof StoreError ? error : new StoreError({ message: `Failed to save store: ${filePath}`, store: error }),
+      error instanceof StoreError ? error : new StoreError({ message: `Failed to save store: ${filePath}`, cause: error }),
     ),
   );
 
@@ -67,7 +67,7 @@ export const createStore = <A extends object, I, R>(
 
     const rawData = yield* loadStore(filePath, initialData);
     const validatedData = yield* decode(rawData).pipe(
-      Effect.mapError((error) => new StoreError({ message: `Validation failed for store: ${filePath}`, store: error })),
+      Effect.mapError((error) => new StoreError({ message: `Validation failed for store: ${filePath}`, cause: error })),
     );
 
     yield* Ref.set(dataRef, validatedData);

@@ -122,7 +122,7 @@ const waitForConnectionFn = (retryMs: number = 10_000): Effect.Effect<void, Http
   });
 
   // Racing DNS lookups against HTTP requests provides a faster determination of network availability by utilizing the first successful response.
-  return Effect.race(checkGoogle, checkApple).pipe(Effect.retry(Schedule.spaced(`${retryMs} millis`)), Effect.asVoid);
+  return Effect.raceAll([checkGoogle, checkApple]).pipe(Effect.retry(Schedule.spaced(`${retryMs} millis`)), Effect.asVoid);
 };
 
 export const request = <T = string>(options: string | DefaultOptions) => Effect.flatMap(HttpTag, (service) => service.request<T>(options));

@@ -109,14 +109,12 @@ export interface Adapter<A extends Table, Select extends InferSelect<A>, Insert 
   ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteError, SqliteTag>;
 }
 
-// Moving utility functions outside the factory avoids redundant function allocations and reduces memory overhead during adapter instantiation.
 const hasKeys = (obj?: object | null): obj is object => {
   if (obj == null) return false;
   for (const _ in obj) return true;
   return false;
 };
 
-// Database operations wrap with a tracing utility that captures generated SQL for debugging purposes, particularly when resolving complex dynamic filters.
 const withTrace = <T>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => T): Effect.Effect<T, SqliteError, SqliteTag> => {
   const trace: { value?: () => SQL } = {};
   return Effect.gen(function* () {
@@ -209,20 +207,16 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       const value = filter[key as keyof typeof filter];
 
       if (['$and', '$nand', '$or', '$nor'].includes(key)) {
-        if (!Array.isArray(value) || value.length === 0) {
-          result.push(sql.raw(['$and', '$nor'].includes(key) ? '1' : '0'));
-          continue;
-        }
+        const nested = Array.isArray(value) ? (value as QueryFilter<A>[]).flatMap((v) => buildWhereLogical(v)) : [];
+        const isPositive = key === '$and' || key === '$nor';
 
-        const nested = (value as QueryFilter<A>[]).flatMap((v) => buildWhereLogical(v));
-
+        // Logical operators with empty or non-matching conditions default to a vacuously true or false state based on their SQL semantics.
         if (nested.length === 0) {
-          result.push(sql.raw(['$and', '$nor'].includes(key) ? '1' : '0'));
+          result.push(sql.raw(isPositive ? '1' : '0'));
           continue;
         }
 
-        const isAnd = key === '$and' || key === '$nand';
-        const joined = isAnd ? and(...nested) : or(...nested);
+        const joined = key === '$and' || key === '$nand' ? and(...nested) : or(...nested);
         result.push(['$nand', '$nor'].includes(key) ? not(joined!) : joined!);
       } else if (key === '$not') {
         const conds = isObjectLike(value) && !Array.isArray(value) ? buildWhereLogical(value as QueryFilter<A>) : buildWhereComparison(key, value);
@@ -235,7 +229,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return result;
   };
 
-  // The where clause is constructed by recursively processing logical and comparison operators from the filter object.
   const buildWhereClause = (filter?: QueryFilter<A>): SQL | undefined => {
     if (!filter || !hasKeys(filter)) {
       return undefined;
@@ -264,29 +257,19 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     if (!select || !hasKeys(select)) return undefined as unknown as InferColumn<A>;
 
     const columns: Record<string, unknown> = {};
-    let hasColumns = false;
-
     const selectObj = select as unknown as Record<string, number>;
-    if (selectObj['id'] !== 0) {
-      const col = columnCache['id'];
-      if (col) {
-        columns['id'] = col;
-        hasColumns = true;
-      }
+
+    // Explicitly including the primary key unless it is specifically excluded ensures that record identity is preserved in all query results.
+    if (selectObj['id'] !== 0 && columnCache['id']) {
+      columns['id'] = columnCache['id'];
     }
 
     for (const key in selectObj) {
-      if (key === 'id') continue;
-      if (selectObj[key] === 0) continue;
-
-      const column = columnCache[key];
-      if (column) {
-        columns[key] = column;
-        hasColumns = true;
-      }
+      if (key === 'id' || selectObj[key] === 0) continue;
+      if (columnCache[key]) columns[key] = columnCache[key];
     }
 
-    return hasColumns ? (columns as InferColumn<A>) : (undefined as unknown as InferColumn<A>);
+    return hasKeys(columns) ? (columns as InferColumn<A>) : (undefined as unknown as InferColumn<A>);
   };
 
   const count = (filter: QueryFilter<A> = {}): Effect.Effect<number, SqliteError, SqliteTag> =>

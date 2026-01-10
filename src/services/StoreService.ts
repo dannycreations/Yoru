@@ -85,6 +85,8 @@ export const createStore = <A extends object, I, R>(
 
     const autoSaveLoop = Effect.gen(function* () {
       const delay = yield* Ref.get(delayRef);
+
+      // Periodic execution of the save operation ensures that in-memory state is persisted to disk at regular intervals, minimizing potential data loss.
       yield* Effect.sleep(`${Math.max(1000, delay)} millis`);
       yield* save;
     }).pipe(Effect.repeat(Schedule.forever));

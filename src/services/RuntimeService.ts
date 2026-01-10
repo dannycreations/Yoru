@@ -24,24 +24,17 @@ export const cycleWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, optio
     Effect.gen(function* () {
       const failures = Array.from(Cause.failures(cause));
 
+      // Identification of scheduled restarts or transient network failures allows the system to bypass fatal crash thresholds and maintain availability.
       const isRestart = failures.some((error) => isErrorLike<{ _tag: string }>(error) && error._tag === 'ScheduleRestart');
 
       if (isRestart) {
-        yield* Effect.logInfo(chalk`{bold.yellow Scheduled restart triggered.}`);
         return;
       }
 
-      for (const failure of failures) {
-        if (isErrorLike<{ code?: string }>(failure) && failure.code === 'ENOTFOUND') {
-          yield* Effect.logWarning('Network error (ENOTFOUND) detected, skipping fatal crash.');
-          return;
-        }
-      }
-
       const now = Date.now();
-      restartTimes.push(now);
-
       const recentRestarts = restartTimes.filter((t) => now - t < intervalMs);
+      recentRestarts.push(now);
+
       restartTimes.length = 0;
       restartTimes.push(...recentRestarts);
 

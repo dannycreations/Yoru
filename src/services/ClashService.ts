@@ -2,8 +2,6 @@ import { isErrorLike } from '@vegapunk/utilities/result';
 import { HTTPError, PollingClient } from 'clashofclans.js';
 import { Context, Data, Effect, Layer, Schedule } from 'effect';
 
-import { ClientEvents } from '../core/constants';
-import { ConfigStoreTag, EnvTag } from '../core/schemas';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpTag, waitForConnection } from './HttpService';
 
 import type { RequestOptions } from 'clashofclans.js';
@@ -15,6 +13,16 @@ export class ClashError extends Data.TaggedError('ClashError')<{
   readonly cause?: unknown;
 }> {}
 
+export interface ClashConfig {
+  readonly email: string;
+  readonly password: string;
+  readonly keyName?: string;
+  readonly keyCount?: number;
+  readonly pollingInterval?: number;
+}
+
+export const ClashConfigTag = Context.GenericTag<ClashConfig>('@config/ClashConfig');
+
 export interface ClashLayer {
   readonly client: PollingClient;
 }
@@ -23,22 +31,21 @@ export const ClashTag = Context.GenericTag<ClashLayer>('@layer/ClashLayer');
 
 const createClash = Effect.gen(function* () {
   const http = yield* HttpTag;
-  const configStore = yield* ConfigStoreTag;
-  const env = yield* EnvTag;
+  const config = yield* ClashConfigTag;
 
   const client = new PollingClient({
     keys: [],
-    pollingInterval: 60_000,
+    pollingInterval: config.pollingInterval ?? 60_000,
   });
 
   const login = () =>
     Effect.tryPromise({
       try: () =>
         client.rest.login({
-          email: env.CLASH_EMAIL,
-          password: env.CLASH_PASSWORD,
-          keyName: 'Yoru',
-          keyCount: 1,
+          email: config.email,
+          password: config.password,
+          keyName: config.keyName ?? 'Yoru',
+          keyCount: config.keyCount ?? 1,
         }),
       catch: (error) => new ClashError({ message: 'Failed to login to Clash API', cause: error }),
     });
@@ -139,10 +146,6 @@ const createClash = Effect.gen(function* () {
     );
 
   yield* login();
-
-  const config = yield* configStore.get;
-  client.addClans(config.clanTags as string[]);
-  client.setClanEvent({ name: ClientEvents.ClanMember, filter: Boolean });
 
   yield* Effect.tryPromise({
     try: () => client.init(),

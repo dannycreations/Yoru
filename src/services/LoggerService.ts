@@ -17,6 +17,7 @@ export const LOG_LEVEL_MAP: ReadonlyRecord<LogLevel.LogLevel['_tag'], pino.Level
 };
 
 export interface LoggerOptions {
+  readonly dir?: string;
   readonly level?: Level;
   readonly trace?: boolean;
   readonly pretty?: boolean;
@@ -26,6 +27,7 @@ export interface LoggerOptions {
 
 export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
   const {
+    dir = `${process.cwd()}/logs`,
     level = process.env.NODE_ENV === 'development' ? 'debug' : 'info',
     trace = false,
     pretty = true,
@@ -38,7 +40,7 @@ export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
       level: 'warn',
       stream: pino.destination({
         mkdir: true,
-        dest: `${process.cwd()}/logs/errors.log`,
+        dest: `${dir}/errors.log`,
       }),
     },
   ];
@@ -48,7 +50,7 @@ export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
       level: 'trace',
       stream: pino.destination({
         mkdir: true,
-        dest: `${process.cwd()}/logs/traces.log`,
+        dest: `${dir}/traces.log`,
       }),
     });
   }

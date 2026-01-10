@@ -13,7 +13,7 @@ import { ClashTag } from '../services/ClashService';
 import { SqliteTag } from '../services/database';
 import { createStore, Store } from '../services/StoreService';
 import { CommandHandlerTag } from './CommandHandler';
-import { DiscordClientTag } from './DiscordHandler';
+import { DiscordHandlerTag } from './DiscordHandler';
 
 import type { ClanMember, Player } from 'clashofclans.js';
 import type { Message } from 'discord.js';
@@ -21,12 +21,9 @@ import type { ClashLayer } from '../services/ClashService';
 import type { CommandHandler } from './CommandHandler';
 import type { DiscordHandler } from './DiscordHandler';
 
-/**
- * Orchestrates event handling for both Discord and Clash of Clans API.
- */
 export const EventHandler = Effect.gen(function* () {
-  const discordService = yield* DiscordClientTag;
-  const { client: discord } = discordService;
+  const discordHandler = yield* DiscordHandlerTag;
+  const { client: discord } = discordHandler;
   const { client: clash } = yield* ClashTag;
   const configStore = yield* ConfigStoreTag;
   const sessionStore = yield* SessionStoreTag;
@@ -34,6 +31,7 @@ export const EventHandler = Effect.gen(function* () {
 
   // Capture the current runtime to preserve environment (services, logger, etc.) in callbacks.
   const runtime = yield* Effect.runtime<SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | CommandHandler | ClashLayer | Scope.Scope>();
+  const scope = yield* Effect.scope;
 
   // Map to store clan-specific data persistent stores.
   const clanStores = new Map<string, Store<ClanData>>();
@@ -41,12 +39,10 @@ export const EventHandler = Effect.gen(function* () {
   // Set to track player tags currently pending in the leaving queue.
   const pendingLeavers = new Set<string>();
 
-  /**
-   * Called when the Discord client is ready.
-   */
   const onReady = Effect.gen(function* () {
-    discordService.clearLoginTimeout();
-    yield* Effect.logInfo('Bot has started, status set to idle.');
+    // Allowing the asynchronous initialization logs from Sapphire to be printed first.
+    yield* Effect.sleep(1000);
+    discordHandler.clearLoginTimeout();
     const text = [
       'Bot has started,',
       `${discord.users.cache.size} users,`,
@@ -56,9 +52,6 @@ export const EventHandler = Effect.gen(function* () {
     yield* Effect.logInfo(text.join(' '));
   });
 
-  /**
-   * Handles incoming Discord messages.
-   */
   const onMessageCreate = (message: Message) =>
     Effect.gen(function* () {
       // Ignore system messages, webhooks, and bot messages.
@@ -68,7 +61,7 @@ export const EventHandler = Effect.gen(function* () {
 
       const config = yield* configStore.get;
       // Maintenance mode check.
-      if (discordService.isMaintenance && !config.ownerIds.includes(message.author.id)) {
+      if (discordHandler.isMaintenance && !config.ownerIds.includes(message.author.id)) {
         yield* Effect.tryPromise(() => message.reply('⚠️ Under Maintenance!'));
         return;
       }
@@ -83,9 +76,6 @@ export const EventHandler = Effect.gen(function* () {
       );
     });
 
-  /**
-   * Processes a member leaving a clan.
-   */
   const handleMemberLeave = (player: ClanMember) =>
     Effect.gen(function* () {
       // Check if this player is still marked as pending.
@@ -191,9 +181,6 @@ export const EventHandler = Effect.gen(function* () {
   // Semaphore to ensure clan member updates are processed sequentially per clan.
   const updateSemaphore = yield* Effect.makeSemaphore(1);
 
-  /**
-   * Handles updates to a clan's member list.
-   */
   const onClanMemberUpdate = (oldClan: ClanData, newClan: ClanData) =>
     updateSemaphore.withPermits(1)(
       Effect.gen(function* () {
@@ -207,7 +194,9 @@ export const EventHandler = Effect.gen(function* () {
         // Load or create a persistent store for the clan's member list to track state across restarts.
         let clanStore = clanStores.get(oldClan.tag);
         if (!clanStore) {
-          const store = yield* createStore(`sessions/clan/${oldClan.tag}.json`, ClanSchema, oldClan, 60_000);
+          const store = yield* createStore(`sessions/clan/${oldClan.tag}.json`, ClanSchema, oldClan, 60_000).pipe(
+            Effect.provideService(Scope.Scope, scope),
+          );
           clanStores.set(oldClan.tag, store);
           clanStore = store;
 
@@ -271,11 +260,6 @@ export const EventHandler = Effect.gen(function* () {
       }),
     );
   });
-
-  yield* Effect.logInfo('Event handlers registered.');
 });
 
-/**
- * Layer for providing the EventHandler implementation.
- */
 export const EventHandlerLayer = Layer.effectDiscard(EventHandler);

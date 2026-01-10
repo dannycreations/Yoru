@@ -14,9 +14,6 @@ import { ClashTag } from '../../services/ClashService';
 import type { Message } from 'discord.js';
 import type { AccountTable } from '../../database/schema';
 
-/**
- * Displays a summary of all accounts linked to a specific Discord user.
- */
 const checkProfile = (message: Message<true>, ownerId: string, accounts: AccountTable[]) =>
   Effect.gen(function* () {
     const { client: clash } = yield* ClashTag;
@@ -69,9 +66,6 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
   });
 
-/**
- * Displays detailed information about a specific Clash of Clans player.
- */
 const checkPlayer = (message: Message<true>, tag: string) =>
   Effect.gen(function* () {
     const { client: clash } = yield* ClashTag;
@@ -122,9 +116,6 @@ const checkPlayer = (message: Message<true>, tag: string) =>
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
   });
 
-/**
- * Checks all accounts linked to a Discord user and displays either a list or a specific account's details.
- */
 const checkUser = (message: Message<true>, ownerId: string, page: number) =>
   Effect.gen(function* () {
     const user = yield* UserAdapter.findOne({ ownerId });
@@ -143,9 +134,6 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
     }
   });
 
-/**
- * Audits a clan's members to see who is on Discord and who is not.
- */
 const checkMembers = (message: Message<true>, page = 1) =>
   Effect.gen(function* () {
     const { client: clash } = yield* ClashTag;
@@ -207,10 +195,6 @@ const checkMembers = (message: Message<true>, page = 1) =>
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
   });
 
-/**
- * Main entry point for the check command.
- * Dispatches to member audit, player check, or user check based on arguments.
- */
 export const checkCommand = (message: Message<true>, args: string[]) =>
   Effect.gen(function* () {
     const tag = args[0];

@@ -1,20 +1,14 @@
-import { SapphireClient } from '@sapphire/framework';
+import { Logger, LogLevel, SapphireClient } from '@sapphire/framework';
 import { GatewayIntentBits, Partials } from 'discord.js';
-import { Context, Data, Effect, Layer } from 'effect';
+import { Context, Data, Effect, Layer, Runtime } from 'effect';
 
-import { ConfigStoreTag, EnvTag } from '../core/schemas';
+import { EnvTag } from '../core/schemas';
 
-/**
- * Custom error class for Discord-related operations.
- */
 export class DiscordError extends Data.TaggedError('DiscordError')<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
-/**
- * Represents the Discord integration service.
- */
 export interface DiscordHandler {
   readonly client: SapphireClient;
   readonly login: () => Effect.Effect<void, DiscordError>;
@@ -22,18 +16,11 @@ export interface DiscordHandler {
   readonly clearLoginTimeout: () => void;
 }
 
-/**
- * Context tag for the DiscordService.
- */
-export const DiscordClientTag = Context.GenericTag<DiscordHandler>('@workflow/DiscordHandler');
+export const DiscordHandlerTag = Context.GenericTag<DiscordHandler>('@workflow/DiscordHandler');
 
-/**
- * Implementation of the DiscordService using Sapphire framework.
- */
 const createDiscordClient = Effect.gen(function* () {
-  const configStore = yield* ConfigStoreTag;
-  const config = yield* configStore.get;
   const env = yield* EnvTag;
+  const runtime = yield* Effect.runtime();
 
   const client = new SapphireClient({
     typing: true,
@@ -43,20 +30,24 @@ const createDiscordClient = Effect.gen(function* () {
     caseInsensitivePrefixes: true,
     loadDefaultErrorListeners: true,
     loadMessageCommandListeners: true,
-    defaultPrefix: config.prefix,
+    logger: new Logger(LogLevel.Debug),
     partials: [...Object.values(Partials)] as Partials[],
     intents: [...Object.values(GatewayIntentBits)] as GatewayIntentBits[],
   });
 
+  client.logger.trace = (...v) => Runtime.runSync(runtime)(Effect.logTrace(...v));
+  client.logger.debug = (...v) => Runtime.runSync(runtime)(Effect.logDebug(...v));
+  client.logger.info = (...v) => Runtime.runSync(runtime)(Effect.logInfo(...v));
+  client.logger.warn = (...v) => Runtime.runSync(runtime)(Effect.logWarning(...v));
+  client.logger.error = (...v) => Runtime.runSync(runtime)(Effect.logError(...v));
+  client.logger.fatal = (...v) => Runtime.runSync(runtime)(Effect.logFatal(...v));
+
   // Set a timeout for the initial login attempt to prevent hanging.
   let loginTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
-    Effect.runSync(Effect.logInfo('YoruClient login timeout.'));
+    Runtime.runSync(runtime)(Effect.logInfo('YoruClient login timeout.'));
     client.destroy();
   }, 60_000).unref();
 
-  /**
-   * Clears the login timeout once a successful connection is established.
-   */
   const clearLoginTimeout = () => {
     if (loginTimeout) {
       clearTimeout(loginTimeout);
@@ -64,9 +55,6 @@ const createDiscordClient = Effect.gen(function* () {
     }
   };
 
-  /**
-   * Logs the client into Discord.
-   */
   const login = () =>
     Effect.tryPromise({
       try: () => client.login(env.DISCORD_TOKEN),
@@ -83,11 +71,8 @@ const createDiscordClient = Effect.gen(function* () {
   } as const;
 });
 
-/**
- * Layer providing the DiscordService with lifecycle management (acquire/release).
- */
 export const DiscordHandlerLayer = Layer.scoped(
-  DiscordClientTag,
+  DiscordHandlerTag,
   Effect.acquireRelease(createDiscordClient, ({ client }) =>
     Effect.sync(() => {
       client.destroy();

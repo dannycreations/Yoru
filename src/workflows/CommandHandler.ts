@@ -12,30 +12,17 @@ import { pingCommand } from './commands/PingCommand';
 import type { Message } from 'discord.js';
 import type { DiscordHandler } from './DiscordHandler';
 
-/**
- * Defines the structure for command context, providing access to the message and its arguments.
- */
 export interface CommandContext {
   message: Message<true>;
   args: string[];
 }
 
-/**
- * Represents the command handling service.
- */
 export interface CommandHandler {
   readonly handleCommand: (message: Message<true>) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | ClashLayer>;
 }
 
-/**
- * Context tag for the CommandHandler.
- */
 export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/CommandHandler');
 
-/**
- * Implementation of the CommandHandler.
- * Orchestrates command parsing and dispatching to specific command handlers.
- */
 export const CommandHandler = Effect.gen(function* () {
   const configStore = yield* ConfigStoreTag;
 
@@ -52,9 +39,6 @@ export const CommandHandler = Effect.gen(function* () {
     l: (message, args) => linkCommand(message, args),
   };
 
-  /**
-   * Main entry point for processing incoming messages as potential commands.
-   */
   const handleCommand = (message: Message<true>) =>
     Effect.gen(function* () {
       const config = yield* configStore.get;
@@ -105,7 +89,4 @@ export const CommandHandler = Effect.gen(function* () {
   } as const;
 });
 
-/**
- * Layer for providing the CommandHandler implementation.
- */
 export const CommandHandlerLayer = Layer.effect(CommandHandlerTag, CommandHandler);

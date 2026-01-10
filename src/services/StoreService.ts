@@ -4,22 +4,13 @@ import { parseJsonc } from '@vegapunk/utilities';
 import { defaultsDeep } from '@vegapunk/utilities/common';
 import { Context, Data, Effect, Fiber, Layer, Ref, Schedule, Schema, Scope } from 'effect';
 
-/**
- * Ensures that the directory for a given file path exists.
- */
 const ensureDir = (path: string) => Effect.tryPromise(() => mkdir(dirname(path), { recursive: true }));
 
-/**
- * Custom error class for store-related operations.
- */
 export class StoreError extends Data.TaggedError('StoreError')<{
   readonly message: string;
   readonly store?: unknown;
 }> {}
 
-/**
- * Generic interface for a persistent data store.
- */
 export interface Store<T> {
   readonly get: Effect.Effect<T>;
   readonly set: (data: Partial<T>) => Effect.Effect<void>;
@@ -27,9 +18,6 @@ export interface Store<T> {
   readonly setDelay: (delayMs: number) => Effect.Effect<void>;
 }
 
-/**
- * Loads data from a JSON file, applying initial data as defaults.
- */
 const loadStore = <A>(filePath: string, initialData: A): Effect.Effect<A, StoreError> =>
   Effect.tryPromise({
     try: () => readFile(filePath, 'utf-8'),
@@ -50,9 +38,6 @@ const loadStore = <A>(filePath: string, initialData: A): Effect.Effect<A, StoreE
     }),
   );
 
-/**
- * Saves data to a JSON file using a temporary file to ensure atomic writes.
- */
 const saveStore = <A>(filePath: string, data: A): Effect.Effect<void, StoreError> =>
   Effect.gen(function* () {
     yield* ensureDir(filePath);
@@ -67,9 +52,6 @@ const saveStore = <A>(filePath: string, data: A): Effect.Effect<void, StoreError
     ),
   );
 
-/**
- * Creates a reactive data store with automatic persistence.
- */
 export const createStore = <A extends object, I, R>(
   filePath: string,
   schema: Schema.Schema<A, I, R>,
@@ -90,9 +72,6 @@ export const createStore = <A extends object, I, R>(
 
     yield* Ref.set(dataRef, validatedData);
 
-    /**
-     * Internal save function that checks if data is dirty before writing.
-     */
     const save = Ref.getAndSet(dirtyRef, false).pipe(
       Effect.flatMap((isDirty) =>
         isDirty
@@ -104,9 +83,6 @@ export const createStore = <A extends object, I, R>(
       ),
     );
 
-    /**
-     * Background loop for periodically saving dirty data.
-     */
     const autoSaveLoop = Effect.gen(function* () {
       const delay = yield* Ref.get(delayRef);
       yield* Effect.sleep(`${Math.max(1000, delay)} millis`);
@@ -126,9 +102,6 @@ export const createStore = <A extends object, I, R>(
     };
   });
 
-/**
- * Helper to create a Layer for a Store.
- */
 export const StoreLayer = <S, A extends object, I, R>(
   tag: Context.Tag<S, Store<A>>,
   filePath: string,

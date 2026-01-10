@@ -8,9 +8,6 @@ import { ERROR_CODES, ERROR_STATUS_CODES, HttpTag, waitForConnection } from './H
 
 import type { RequestOptions } from 'clashofclans.js';
 
-/**
- * Custom error class for Clash of Clans API related errors.
- */
 export class ClashError extends Data.TaggedError('ClashError')<{
   readonly message: string;
   readonly status?: number;
@@ -18,22 +15,12 @@ export class ClashError extends Data.TaggedError('ClashError')<{
   readonly cause?: unknown;
 }> {}
 
-/**
- * Represents the Clash of Clans API service.
- */
 export interface ClashLayer {
   readonly client: PollingClient;
 }
 
-/**
- * Context tag for the ClashService.
- */
 export const ClashTag = Context.GenericTag<ClashLayer>('@layer/ClashLayer');
 
-/**
- * Implementation of the ClashService.
- * Handles authentication, automatic IP rotation (on 403), and request retries.
- */
 const createClash = Effect.gen(function* () {
   const http = yield* HttpTag;
   const configStore = yield* ConfigStoreTag;
@@ -44,9 +31,6 @@ const createClash = Effect.gen(function* () {
     pollingInterval: 60_000,
   });
 
-  /**
-   * Performs login to the Clash of Clans API.
-   */
   const login = () =>
     Effect.tryPromise({
       try: () =>
@@ -79,9 +63,6 @@ const createClash = Effect.gen(function* () {
 
   const requestOrig = requestHandler.request.bind(requestHandler);
 
-  /**
-   * Custom request implementation with error handling and retry logic.
-   */
   requestHandler.request = async <T>(path: string, options: RequestOptions = {}) =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -173,7 +154,4 @@ const createClash = Effect.gen(function* () {
   } as const;
 });
 
-/**
- * Layer for providing the ClashService implementation.
- */
 export const ClashLayer = Layer.effect(ClashTag, createClash);

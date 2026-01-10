@@ -50,10 +50,6 @@ export const categorizeUnits = (player: Player) => {
   };
   const unknowns: unknown[] = [];
 
-  /**
-   * Helper to process a list of units (troops, spells, heroes) and categorize them based on emoji data.
-   * This reduces code duplication across different unit types.
-   */
   const processUnits = (
     units: Array<{ name: string; level: number; maxLevel: number; village: string }>,
     maps: ReadonlyArray<{ data: Record<string, string>; category: string }>,

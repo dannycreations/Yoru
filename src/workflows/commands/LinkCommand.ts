@@ -14,9 +14,6 @@ import { ClashTag } from '../../services/ClashService';
 import type { Player } from 'clashofclans.js';
 import type { User as DiscordUser, Message, MessageReaction } from 'discord.js';
 
-/**
- * Updates a member's roles and nickname after a successful tag link.
- */
 const linkedTag = (message: Message<true>, ownerId: string, player: Player) =>
   Effect.gen(function* () {
     const member = message.guild.members.cache.get(ownerId);
@@ -42,9 +39,6 @@ const linkedTag = (message: Message<true>, ownerId: string, player: Player) =>
 
 const linkQueue = new Set<string>();
 
-/**
- * Handles the link command to associate a Clash of Clans tag with a Discord user.
- */
 export const linkCommand = (message: Message<true>, args: string[]) =>
   Effect.gen(function* () {
     const { client: clash } = yield* ClashTag;

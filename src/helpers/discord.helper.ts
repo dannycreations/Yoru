@@ -1,12 +1,12 @@
 import { Effect, Option } from 'effect';
 
-import { DiscordClientTag } from '../workflows/DiscordHandler';
+import { DiscordHandlerTag } from '../workflows/DiscordHandler';
 
 import type { Guild, GuildMember } from 'discord.js';
 
 export const getGuild = (userId: string) =>
   Effect.gen(function* () {
-    const { client } = yield* DiscordClientTag;
+    const { client } = yield* DiscordHandlerTag;
     const cache = client.guilds.cache.find((guild) => guild.members.cache.has(userId));
     if (cache) return Option.some(cache);
 

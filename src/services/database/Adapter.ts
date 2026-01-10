@@ -27,18 +27,12 @@ import type { SQL, Table } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { ExtractTables, InferColumn, InferInsert, InferSelect, JoinClause, QueryFilter, QueryOptions, ReturnAlias, SelectClause } from './types';
 
-/**
- * Custom error class for database-related operations.
- */
 export class SqliteError extends Data.TaggedError('SqliteError')<{
   readonly message: string;
   readonly cause?: unknown;
   readonly query?: unknown;
 }> {}
 
-/**
- * Context tag for the SQLite database instance.
- */
 export class SqliteTag extends Context.Tag('@layer/SqliteLayer')<SqliteTag, BetterSQLite3Database>() {}
 
 const JOIN_MAP = {
@@ -64,9 +58,6 @@ const OPERATOR_MAP: Record<string, (col: SQL, val: SQL) => SQL> = {
   $null: (col, val) => (val ? isNull(col) : isNotNull(col)),
 };
 
-/**
- * Generic adapter providing high-level CRUD operations for a Drizzle table.
- */
 export interface Adapter<A extends Table, Select extends InferSelect<A>, Insert extends InferInsert<A>> {
   readonly count: (filter?: QueryFilter<A>) => Effect.Effect<number, SqliteError, SqliteTag>;
   readonly find: <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
@@ -118,9 +109,6 @@ export interface Adapter<A extends Table, Select extends InferSelect<A>, Insert 
   ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteError, SqliteTag>;
 }
 
-/**
- * Creates a database adapter for the specified table.
- */
 export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>>(
   table: A,
 ): Adapter<A, Select, Insert> => {
@@ -135,9 +123,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return false;
   };
 
-  /**
-   * Wraps a database operation with error handling and query tracing.
-   */
   const withTrace = <T>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => T): Effect.Effect<T, SqliteError, SqliteTag> => {
     const trace: { value?: () => SQL } = {};
     return Effect.gen(function* () {
@@ -162,9 +147,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     });
   };
 
-  /**
-   * Builds a cache of columns from the main table and any joined tables.
-   */
   const buildColumnCache = <B extends Array<Table>>(joins?: JoinClause<A, B>): Record<string, unknown> => {
     if (!joins || joins.length === 0) {
       return table as unknown as Record<string, unknown>;
@@ -178,9 +160,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return cache;
   };
 
-  /**
-   * Builds a SQL comparison clause for a single column and value.
-   */
   const buildWhereComparison = (key: unknown, val: unknown): Array<SQL> => {
     const column = table[key as keyof A] as unknown as SQL;
     if (!column) return [sql`0`];
@@ -222,9 +201,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return result;
   };
 
-  /**
-   * Recursively builds SQL logical clauses from a filter object.
-   */
   const buildWhereLogical = (filter: QueryFilter<A>): Array<SQL> => {
     const result: Array<SQL> = [];
 
@@ -258,9 +234,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return result;
   };
 
-  /**
-   * Consolidates logical and comparison clauses into a single WHERE clause.
-   */
   const buildWhereClause = (filter?: QueryFilter<A>): SQL => {
     if (!filter || !hasKeys(filter)) {
       return undefined as unknown as SQL;
@@ -270,9 +243,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return conds.length === 0 ? (undefined as unknown as SQL) : and(...conds)!;
   };
 
-  /**
-   * Builds an ORDER BY clause.
-   */
   const buildOrderClause = <S>(columnCache: Record<string, unknown>, order?: S): SQL => {
     if (!order || !hasKeys(order)) return undefined as unknown as SQL;
 
@@ -288,9 +258,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return clauses.length === 0 ? (undefined as unknown as SQL) : (sql.join(clauses, sql.raw(', ')) as unknown as SQL);
   };
 
-  /**
-   * Builds a SELECT clause, ensuring 'id' is included unless explicitly excluded.
-   */
   const buildSelectClause = <S>(columnCache: Record<string, unknown>, select?: S): InferColumn<A> => {
     if (!select || !hasKeys(select)) return undefined as unknown as InferColumn<A>;
 

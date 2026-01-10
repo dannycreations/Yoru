@@ -28,34 +28,44 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
       .setDescription(`Joined <t:${Math.floor(member.joinedTimestamp! / 1000)}:R>`)
       .setThumbnail(member.user.displayAvatarURL());
 
-    let count = 0;
-    for (const account of accounts) {
-      if (account.bannedAt) {
+    // Parallelizing player data retrieval significantly reduces the total response time for profiles with multiple linked accounts.
+    const results = yield* Effect.all(
+      accounts.map((account) =>
+        Effect.gen(function* () {
+          if (account.bannedAt) return { tag: account.tag, banned: true as const, player: null };
+
+          return yield* Effect.tryPromise(() => clash.getPlayer(account.tag)).pipe(
+            Effect.map((player) => ({ player, banned: false as const, tag: account.tag })),
+            Effect.catchIf(
+              (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
+              () =>
+                AccountAdapter.update({ ...account, bannedAt: Date.now() }).pipe(
+                  Effect.as({ tag: account.tag, banned: true as const, player: null }),
+                ),
+            ),
+          );
+        }).pipe(Effect.either),
+      ),
+      { concurrency: 'unbounded' },
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result._tag === 'Left') continue;
+
+      const data = result.right;
+      const count = i + 1;
+
+      if (data.banned) {
         embed.addFields({
-          name: `${++count}. ${emoji.townhalls[0]} ${account.tag}`,
+          name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
           value: '⛔ Has been banned!',
         });
-        continue;
-      }
-
-      try {
-        const player = yield* Effect.tryPromise(() => clash.getPlayer(account.tag));
-
-        // Centralized formatting helpers maintain a consistent layout for player summaries within the profile overview.
-        const fieldName = `${++count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`;
+      } else if (data.player) {
         embed.addFields({
-          name: fieldName,
-          value: formatPlayerField(player),
+          name: `${count}. ${emoji.townhalls[data.player.townHallLevel - 1]} ${data.player.name}`,
+          value: formatPlayerField(data.player),
         });
-      } catch (error) {
-        // If the player is not found, mark the account as banned (likely deleted or permanently banned)
-        if (isErrorLike<{ reason: string }>(error) && error.reason === 'notFound') {
-          yield* AccountAdapter.update({ ...account, bannedAt: Date.now() });
-          embed.addFields({
-            name: `${++count}. ${emoji.townhalls[0]} ${account.tag}`,
-            value: '⛔ Has been banned!',
-          });
-        }
       }
     }
 
@@ -92,15 +102,13 @@ const checkPlayer = (message: Message<true>, tag: string) =>
       if (list.length) embed.addFields({ name, value: list.join(' ') });
     });
 
-    const achievements: string[] = [];
-    const achievementsName = ['Friend in Need', 'Games Champion'];
-    player.achievements
-      .filter((r) => achievementsName.includes(r.name))
-      .forEach((achievement) => {
-        achievements.push(emoji.stars[achievement.stars] + ' **' + achievement.name + '** ' + achievement.value.toLocaleString() + '\n');
-      });
+    // Filtering for specific high-value achievements provides a concise summary of player activity without overwhelming the profile embed.
+    const achievements = player.achievements
+      .filter((r) => ['Friend in Need', 'Games Champion'].includes(r.name))
+      .map((a) => `${emoji.stars[a.stars]} **${a.name}** ${a.value.toLocaleString()}\n`)
+      .join('');
 
-    if (achievements.length) embed.addFields({ name: 'Achievements', value: achievements.join('') });
+    if (achievements) embed.addFields({ name: 'Achievements', value: achievements });
 
     if (unknowns.length) yield* Effect.logWarning('Unknown assets detected:', unknowns);
 
@@ -150,23 +158,31 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
     const userMap = new Map(users.map((u) => [u.id, u]));
 
-    for (const member of clan.members) {
-      const field = `**${member.name}** ${member.tag}\n`;
-      const account = accountMap.get(member.tag);
-      const user = account?.userId ? userMap.get(account.userId) : null;
+    // Parallel resolution of Discord member status for all clan members optimizes the generation of the summary embed.
+    yield* Effect.all(
+      clan.members.map((member) =>
+        Effect.gen(function* () {
+          const field = `**${member.name}** ${member.tag}\n`;
+          const account = accountMap.get(member.tag);
+          const user = account?.userId ? userMap.get(account.userId) : null;
 
-      if (user) {
-        const memberOpt = yield* getGuildMember(user.ownerId);
-        if (Option.isSome(memberOpt)) {
+          if (!user) {
+            unknown.push(field);
+            return;
+          }
+
+          const memberOpt = yield* getGuildMember(user.ownerId);
+          if (Option.isNone(memberOpt)) {
+            leave.push(field);
+            return;
+          }
+
           if (!guildMap.has(user.ownerId)) guildMap.set(user.ownerId, []);
           guildMap.get(user.ownerId)!.push(field);
-        } else {
-          leave.push(field);
-        }
-      } else {
-        unknown.push(field);
-      }
-    }
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
 
     const embed = new EmbedBuilder()
       .setColor('#0099ff')

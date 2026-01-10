@@ -4,6 +4,7 @@ import { Effect, Layer, Logger } from 'effect';
 
 import { ClientEvents } from './core/constants';
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
+import { MemberManagerLayer } from './domain/MemberManager';
 import { ClashConfigTag, ClashLayer, ClashTag } from './services/ClashService';
 import { createConfig as dbConfig, SqliteLayer } from './services/database';
 import { HttpLayer } from './services/HttpService';
@@ -43,7 +44,7 @@ const ClashConfigLayer = Layer.effect(
 
 const InfraLayer = Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(dbConfig()));
 
-const ServicesLayer = Layer.mergeAll(ClashLayer, DiscordHandlerLayer, CommandHandlerLayer);
+const ServicesLayer = Layer.mergeAll(ClashLayer, DiscordHandlerLayer, CommandHandlerLayer, MemberManagerLayer);
 
 const MainLayer = ServicesLayer.pipe(Layer.provide(ClashConfigLayer), Layer.provide(InfraLayer), Layer.merge(InfraLayer));
 

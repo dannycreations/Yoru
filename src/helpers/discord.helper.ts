@@ -16,11 +16,18 @@ export const getGuild = (userId: string) =>
     const cache = client.guilds.cache.find((guild) => guild.members.cache.has(userId));
     if (cache) return Option.some(cache);
 
-    for (const guild of client.guilds.cache.values()) {
-      const member = yield* Effect.tryPromise(() => guild.members.fetch(userId)).pipe(Effect.option);
-      if (Option.isSome(member)) return Option.some(guild);
-    }
-    return Option.none<Guild>();
+    // Parallelizing member lookups across all cached guilds ensures that the correct guild context is identified quickly when the member is not present in the local cache.
+    const results = yield* Effect.all(
+      Array.from(client.guilds.cache.values()).map((guild) =>
+        Effect.tryPromise(() => guild.members.fetch(userId)).pipe(
+          Effect.map(() => Option.some(guild)),
+          Effect.catchAll(() => Effect.succeed(Option.none<Guild>())),
+        ),
+      ),
+      { concurrency: 'unbounded' },
+    );
+
+    return Option.fromNullable(results.find(Option.isSome)?.value);
   });
 
 export const getGuildMember = (userId: string) =>

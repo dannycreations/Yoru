@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from 'effect';
 
-import { ConfigStoreTag } from '../core/schemas';
+import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
+import { MemberManagerTag } from '../domain/MemberManager';
 import { replyWithError } from '../helpers/error.helper';
 import { ClashLayer } from '../services/ClashService';
 import { SqliteTag } from '../services/database';
@@ -12,7 +13,9 @@ import type { Message } from 'discord.js';
 import type { DiscordHandler } from './DiscordHandler';
 
 export interface CommandHandler {
-  readonly handleCommand: (message: Message<true>) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | ClashLayer>;
+  readonly handleCommand: (
+    message: Message<true>,
+  ) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberManagerTag.Service>;
 }
 
 export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/CommandHandler');
@@ -23,7 +26,10 @@ export const CommandHandler = Effect.gen(function* () {
   // Command names and aliases are mapped to their respective handler functions for efficient dispatching.
   const commandMap: Record<
     string,
-    (message: Message<true>, args: string[]) => Effect.Effect<void, unknown, SqliteTag | DiscordHandler | ConfigStoreTag | ClashLayer>
+    (
+      message: Message<true>,
+      args: string[],
+    ) => Effect.Effect<void, unknown, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberManagerTag.Service>
   > = {
     ping: (message) => pingCommand(message),
     p: (message) => pingCommand(message),

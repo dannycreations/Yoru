@@ -103,9 +103,8 @@ export const categorizeUnits = (player: Player) => {
   };
   const unknowns: unknown[] = [];
 
-  const allUnits = [...player.troops, ...player.spells, ...player.heroes];
-
-  for (const unit of allUnits) {
+  // Categorizing player units by their respective types allows for a structured and readable presentation of their progression in the profile embed.
+  for (const unit of [...player.troops, ...player.spells, ...player.heroes]) {
     if (unit.village !== 'home') continue;
 
     const mapping = UNIT_LOOKUP.get(unit.name);

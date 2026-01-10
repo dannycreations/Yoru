@@ -1,39 +1,29 @@
 import { Util } from 'clashofclans.js';
 import { Effect } from 'effect';
 
-import { MemberRoles, RegisterRoles } from '../../core/constants';
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountAdapter, UserAdapter } from '../../database';
-import { createPlayerEmbed, formatPlayerStats, getPlayerNickname } from '../../helpers/clash.helper';
+import { MemberManagerTag } from '../../domain/MemberManager';
+import { createPlayerEmbed, formatPlayerStats } from '../../helpers/clash.helper';
 import { parseMentionOrSnowflake } from '../../helpers/discord.helper';
-import { isModeratorRole, isRegisterRole } from '../../helpers/role.helper';
+import { isModeratorRole } from '../../helpers/role.helper';
 import { ClashTag } from '../../services/ClashService';
+import { DiscordHandlerTag } from '../DiscordHandler';
 
 import type { Player } from 'clashofclans.js';
 import type { User as DiscordUser, Message, MessageReaction } from 'discord.js';
 
-const linkedTag = (message: Message<true>, ownerId: string, player: Player) =>
+// The local linkedTag function is replaced by a call to MemberManager to ensure that role and nickname updates are handled consistently across the system.
+const linkedTag = (ownerId: string, player: Player) =>
   Effect.gen(function* () {
-    const member = message.guild.members.cache.get(ownerId);
+    const { client: discord } = yield* DiscordHandlerTag;
+    const memberManager = yield* MemberManagerTag;
+
+    const guild = discord.guilds.cache.first();
+    const member = guild?.members.cache.get(ownerId);
     if (!member) return;
 
-    const configStore = yield* ConfigStoreTag;
-    const config = yield* configStore.get;
-    const rolesToRemove = message.guild.roles.cache.filter(isRegisterRole);
-    yield* Effect.tryPromise(() => member.roles.remove(rolesToRemove));
-
-    if (player.clan && config.clanTags.includes(player.clan.tag)) {
-      const clanName = player.clan.name;
-      const rolesToAdd = message.guild.roles.cache.filter((r) => r.name === clanName || r.name === MemberRoles.Elder);
-      yield* Effect.tryPromise(() => member.roles.add(rolesToAdd));
-      // Nickname generation is delegated to a centralized helper to maintain consistency across different interaction points.
-      const nickname = getPlayerNickname(member, player);
-      yield* Effect.tryPromise(() => member.setNickname(nickname));
-    } else {
-      const approvedRole = message.guild.roles.cache.find((r) => r.name === RegisterRoles.Approved);
-      if (approvedRole) yield* Effect.tryPromise(() => member.roles.add(approvedRole));
-      yield* Effect.tryPromise(() => member.setNickname(`TH ${player.townHallLevel} - ${player.name}`));
-    }
+    yield* memberManager.updatePresence(member, player);
   });
 
 const linkQueue = new Set<string>();
@@ -84,8 +74,8 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
         const member = message.guild.members.cache.get(user?.ownerId || '');
 
         if (user && user.ownerId === mentionId) {
-          // Tags already linked to the target user trigger a refresh of roles and nicknames.
-          yield* linkedTag(message, mentionId, player);
+          // Tags already linked to the target user trigger a refresh of roles and nicknames via the centralized MemberManager.
+          yield* linkedTag(mentionId, player);
           embed.setDescription(`${titleField}Re-linked to **${member?.user.tag || mentionId}**.`);
         } else if (user) {
           // Tags linked to different users are handled according to the current owner's server status.
@@ -95,7 +85,7 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
           } else {
             // Absence of the current owner from the server permits the transfer of ownership to a new user.
             yield* UserAdapter.update({ ...user, ownerId: mentionId });
-            yield* linkedTag(message, mentionId, player);
+            yield* linkedTag(mentionId, player);
             const newMember = message.guild.members.cache.get(mentionId);
             embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag || mentionId}**.`);
           }
@@ -122,7 +112,7 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
         // Confirmed requests result in the upserting of user and account records followed by a role update.
         const user = yield* UserAdapter.findOneAndUpdate({ ownerId: mentionId }, { ownerId: mentionId }, { upsert: true });
         yield* AccountAdapter.findOneAndUpdate({ tag }, { tag, userId: user!.id }, { upsert: true });
-        yield* linkedTag(message, mentionId, player);
+        yield* linkedTag(mentionId, player);
         const member = message.guild.members.cache.get(mentionId);
         embed.setDescription(`${titleField}Linked to **${member?.user.tag || mentionId}**.`);
       } else {

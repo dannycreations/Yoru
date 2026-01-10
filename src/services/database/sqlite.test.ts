@@ -99,7 +99,7 @@ let uniquePairAdapter: Adapter<typeof uniquePairTable, UniquePair, InsertUniqueP
 beforeAll(() => {
   client = new Database(':memory:');
   db = drizzle(client);
-  // @ts-expect-error Internal drizzle dialect access facilitates the application of required patches.
+  // @ts-expect-error Internal drizzle access.
   patchDialect(db.dialect);
 });
 
@@ -1198,7 +1198,7 @@ describe('Adapter insert()', () => {
       const newUser = { email: 'nonnull@example.com' } as Omit<InsertUser, 'id' | 'name'>;
       const exit = yield* Effect.exit(userAdapter.insert(newUser as Omit<InsertUser, 'id'>));
       expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+      // @ts-expect-error Internal effect access.
       expect(exit.cause.error.message).toMatch(/NOT NULL constraint failed: users.name/i);
     }),
   );
@@ -1209,7 +1209,7 @@ describe('Adapter insert()', () => {
       const newUser: Omit<InsertUser, 'id'> = { name: 'Conflict User', email: existingUserEmail };
       const exit = yield* Effect.exit(userAdapter.insert(newUser));
       expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+      // @ts-expect-error Internal effect access.
       expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
     }),
   );
@@ -1219,7 +1219,7 @@ describe('Adapter insert()', () => {
       const newUser: Omit<InsertUser, 'id'> = { name: 'FK User', email: 'fk@example.com', officeId: 9999 };
       const exit = yield* Effect.exit(userAdapter.insert(newUser));
       expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+      // @ts-expect-error Internal effect access.
       expect(exit.cause.error.message).toMatch(/FOREIGN KEY constraint failed/i);
     }),
   );
@@ -1580,7 +1580,7 @@ describe('Adapter update()', () => {
       const invalidUser = { name: 'No ID User', email: 'noid@example.com' } as unknown as User;
       const exit = yield* Effect.exit(userAdapter.update(invalidUser));
       expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+      // @ts-expect-error Internal effect access.
       expect(exit.cause.error.message).toMatch(/Missing required "id" for update operation/i);
     }),
   );
@@ -1602,7 +1602,7 @@ describe('Adapter update()', () => {
       const updatedBob: User = { ...bob, email: alice.email };
       const exit = yield* Effect.exit(userAdapter.update(updatedBob));
       expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+      // @ts-expect-error Internal effect access.
       expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
     }),
   );
@@ -1613,7 +1613,7 @@ describe('Adapter update()', () => {
       const updatedCharlie: User = { ...charlie, officeId: 9999 };
       const exit = yield* Effect.exit(userAdapter.update(updatedCharlie));
       expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+      // @ts-expect-error Internal effect access.
       expect(exit.cause.error.message).toMatch(/FOREIGN KEY constraint failed/i);
     }),
   );
@@ -1670,7 +1670,7 @@ describe('Adapter delete()', () => {
       const invalidUser = { name: 'No ID User To Delete' } as unknown as User;
       const exit = yield* Effect.exit(userAdapter.delete(invalidUser));
       expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+      // @ts-expect-error Internal effect access.
       expect(exit.cause.error.message).toMatch(/Missing required "id" for delete operation/i);
     }),
   );
@@ -1826,7 +1826,7 @@ describe('Adapter findOneAndUpdate()', () => {
       const payload = { age: 22 };
       const exit = yield* Effect.exit(userAdapter.findOneAndUpdate(filterForUpsert, payload, { upsert: true }));
       expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+      // @ts-expect-error Internal effect access.
       expect(exit.cause.error.message).toMatch(/NOT NULL constraint failed: users.name/i);
     }),
   );
@@ -1868,7 +1868,7 @@ describe('Adapter findOneAndUpdate()', () => {
         );
 
         expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+        // @ts-expect-error Internal effect access.
         expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
         expect(yield* userAdapter.findOne({ email: newNonExistentEmail })).toBeNull();
         const bobUser = yield* userAdapter.findOne({ email: bobEmail });
@@ -1884,7 +1884,7 @@ describe('Adapter findOneAndUpdate()', () => {
         const exit = yield* Effect.exit(userAdapter.findOneAndUpdate({ email: aliceEmail }, { email: bobEmail }, { upsert: true }));
 
         expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+        // @ts-expect-error Internal effect access.
         expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
         const aliceUser = yield* userAdapter.findOne({ name: 'Alice' });
         expect(aliceUser!.email).toBe(aliceEmail);
@@ -1921,7 +1921,7 @@ describe('Adapter findOneAndUpdate()', () => {
 
         const exit = yield* Effect.exit(userAdapter.findOneAndUpdate(complexFilter, payload, { upsert: true }));
         expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect structure access allows for the verification of specific error messages.
+        // @ts-expect-error Internal effect access.
         expect(exit.cause.error.message).toMatch(/Cannot use complex filter when upserting/i);
       }),
     );

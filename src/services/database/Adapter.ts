@@ -109,6 +109,38 @@ export interface Adapter<A extends Table, Select extends InferSelect<A>, Insert 
   ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteError, SqliteTag>;
 }
 
+// Moving utility functions outside the factory avoids redundant function allocations and reduces memory overhead during adapter instantiation.
+const hasKeys = (obj?: object | null): obj is object => {
+  if (obj == null) return false;
+  for (const _ in obj) return true;
+  return false;
+};
+
+// Database operations wrap with a tracing utility that captures generated SQL for debugging purposes, particularly when resolving complex dynamic filters.
+const withTrace = <T>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => T): Effect.Effect<T, SqliteError, SqliteTag> => {
+  const trace: { value?: () => SQL } = {};
+  return Effect.gen(function* () {
+    const db = yield* SqliteTag;
+    return yield* Effect.try({
+      try: () => fn(db, trace),
+      catch: (error) => {
+        let query: unknown = undefined;
+        if (trace.value) {
+          try {
+            // @ts-expect-error Internal drizzle access.
+            query = db.dialect.sqlToQuery(trace.value());
+          } catch {}
+        }
+        return new SqliteError({
+          message: error instanceof Error ? error.message : String(error),
+          cause: error,
+          query,
+        });
+      },
+    });
+  });
+};
+
 export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>>(
   table: A,
 ): Adapter<A, Select, Insert> => {
@@ -117,38 +149,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   if (!('id' in tableWithId && tableWithId.id.primary)) {
     throw new Error(`Table "${getTableName(table)}" must have a primary key "id"`);
   }
-
-  const hasKeys = (obj?: object | null): obj is object => {
-    if (obj == null) return false;
-    for (const _ in obj) return true;
-    return false;
-  };
-
-  // Database operations wrap with a tracing utility that captures generated SQL for debugging purposes, particularly when resolving complex dynamic filters.
-  const withTrace = <T>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => T): Effect.Effect<T, SqliteError, SqliteTag> => {
-    const trace: { value?: () => SQL } = {};
-    return Effect.gen(function* () {
-      const db = yield* SqliteTag;
-      return yield* Effect.try({
-        try: () => fn(db, trace),
-        catch: (error) => {
-          let query: unknown = undefined;
-          if (trace.value) {
-            try {
-              // Raw query strings are extracted from the Drizzle dialect where possible to provide additional context in error logs.
-              // @ts-expect-error Internal drizzle dialect access facilitates debugging.
-              query = db.dialect.sqlToQuery(trace.value());
-            } catch {}
-          }
-          return new SqliteError({
-            message: error instanceof Error ? error.message : String(error),
-            cause: error,
-            query,
-          });
-        },
-      });
-    });
-  };
 
   // A flat cache of columns from the main table and all joined tables facilitates rapid lookup during query building.
   const buildColumnCache = <B extends Array<Table>>(joins?: JoinClause<A, B>): Record<string, unknown> => {
@@ -377,13 +377,13 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
           );
         }
 
-        // @ts-expect-error Generic implementation requirements necessitate the avoidance of extensive casting.
+        // @ts-expect-error Avoid extensive casting.
         const s = yield* insert({ ...filter, ...data }, options);
         return s[0];
       }
 
       if (r !== null) {
-        // @ts-expect-error Generic implementation requirements necessitate the avoidance of extensive casting.
+        // @ts-expect-error Avoid extensive casting.
         const s = yield* update({ ...r, ...data }, options);
         return s[0];
       }

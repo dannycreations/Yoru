@@ -68,7 +68,7 @@ export const SqliteLayer = (options: SqliteOptions): Layer.Layer<SqliteTag, Sqli
             logger: options.logger,
           });
 
-          // @ts-expect-error Internal drizzle dialect access allows for the application of required patches.
+          // @ts-expect-error Internal drizzle access.
           patchDialect(db.dialect);
 
           migrate(db, { migrationsFolder: options.out });

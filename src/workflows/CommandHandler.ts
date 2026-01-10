@@ -20,24 +20,24 @@ export interface CommandHandler {
 
 export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/CommandHandler');
 
+// Defining the command mapping outside the service factory prevents redundant object allocations during each service resolution.
+const commandMap: Record<
+  string,
+  (
+    message: Message<true>,
+    args: string[],
+  ) => Effect.Effect<void, unknown, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberManagerTag.Service>
+> = {
+  ping: (message) => pingCommand(message),
+  p: (message) => pingCommand(message),
+  check: (message, args) => checkCommand(message, args),
+  c: (message, args) => checkCommand(message, args),
+  link: (message, args) => linkCommand(message, args),
+  l: (message, args) => linkCommand(message, args),
+};
+
 export const CommandHandler = Effect.gen(function* () {
   const configStore = yield* ConfigStoreTag;
-
-  // Command names and aliases are mapped to their respective handler functions for efficient dispatching.
-  const commandMap: Record<
-    string,
-    (
-      message: Message<true>,
-      args: string[],
-    ) => Effect.Effect<void, unknown, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberManagerTag.Service>
-  > = {
-    ping: (message) => pingCommand(message),
-    p: (message) => pingCommand(message),
-    check: (message, args) => checkCommand(message, args),
-    c: (message, args) => checkCommand(message, args),
-    link: (message, args) => linkCommand(message, args),
-    l: (message, args) => linkCommand(message, args),
-  };
 
   const handleCommand = (message: Message<true>) =>
     Effect.gen(function* () {

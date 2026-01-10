@@ -1,6 +1,6 @@
 import type { InferInsertModel, InferSelectModel, SQL, Table } from 'drizzle-orm';
 
-// @ts-expect-error The buildLimit property is private within the original dialect implementation.
+// @ts-expect-error Internal drizzle access.
 export interface PatchedDialect extends SQLiteSyncDialect {
   __patched?: boolean;
   buildLimit(limit: number): SQL;

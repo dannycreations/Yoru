@@ -11,11 +11,6 @@ import { pingCommand } from './commands/PingCommand';
 import type { Message } from 'discord.js';
 import type { DiscordHandler } from './DiscordHandler';
 
-export interface CommandContext {
-  message: Message<true>;
-  args: string[];
-}
-
 export interface CommandHandler {
   readonly handleCommand: (message: Message<true>) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | ClashLayer>;
 }

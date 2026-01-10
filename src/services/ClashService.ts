@@ -130,6 +130,7 @@ const createClash = Effect.gen(function* () {
           }),
           Effect.retry({
             while: (error) => error instanceof ClashError && error.status !== 503,
+            // Retrying at fixed intervals ensures that transient API or network issues are given time to resolve before the request is considered failed.
             schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
           }),
         );

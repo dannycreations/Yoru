@@ -146,17 +146,18 @@ export const EventHandler = Effect.gen(function* () {
         return;
       }
 
-      // Departure tracking for all accounts associated with a user is cleared to avoid redundant processing of multiple departures.
       const userAccounts = yield* AccountAdapter.find({ userId: user.id });
-      for (const acc of userAccounts) {
-        pendingLeavers.delete(acc.tag);
-      }
 
       const otherAccountInClan = yield* findActiveAccountInClan(userAccounts, player.tag, config.clanTags);
       const memberOpt = yield* getGuildMember(user.ownerId);
 
       if (Option.isSome(memberOpt)) {
         yield* updateMemberPresence(memberOpt.value, otherAccountInClan);
+
+        // Departure tracking for all accounts associated with a user is cleared to avoid redundant processing of multiple departures.
+        for (const acc of userAccounts) {
+          pendingLeavers.delete(acc.tag);
+        }
       }
     });
 

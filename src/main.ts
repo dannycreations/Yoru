@@ -4,9 +4,10 @@ import { Effect, Layer, Logger } from 'effect';
 
 import { ClientEvents } from './core/constants';
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
+import { sqliteConfig } from './database';
 import { MemberManagerLayer } from './domain/MemberManager';
 import { ClashConfigTag, ClashLayer, ClashTag } from './services/ClashService';
-import { createConfig as dbConfig, SqliteLayer } from './services/database';
+import { SqliteLayer } from './services/database';
 import { HttpLayer } from './services/HttpService';
 import { createLogger, LoggerLayer } from './services/LoggerService';
 import { cycleMidnightRestart, cycleWithRestart, runForkWithCleanUp } from './services/RuntimeService';
@@ -42,14 +43,14 @@ const ClashConfigLayer = Layer.effect(
   }),
 );
 
-const InfraLayer = Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(dbConfig()));
+const InfraLayer = Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(sqliteConfig));
 
-const ServicesLayer = Layer.mergeAll(ClashLayer, DiscordHandlerLayer, CommandHandlerLayer, MemberManagerLayer);
+const ServicesLayer = DiscordHandlerLayer.pipe(Layer.merge(CommandHandlerLayer), Layer.merge(MemberManagerLayer), Layer.provideMerge(ClashLayer));
 
 const MainLayer = ServicesLayer.pipe(Layer.provide(ClashConfigLayer), Layer.provide(InfraLayer), Layer.merge(InfraLayer));
 
 const AppLayer = EventHandlerLayer.pipe(Layer.provide(MainLayer), Layer.merge(MainLayer));
 
-const runnable = program.pipe(Effect.provide(AppLayer), Effect.provide(LoggerLayer(Logger.defaultLogger, logger)));
+const runnable = program.pipe(Effect.provide(AppLayer));
 
-runForkWithCleanUp(cycleWithRestart(runnable.pipe(Effect.scoped)));
+runForkWithCleanUp(cycleWithRestart(runnable.pipe(Effect.scoped)).pipe(Effect.provide(LoggerLayer(Logger.defaultLogger, logger))));

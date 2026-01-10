@@ -1,4 +1,4 @@
-import { Logger, LogLevel } from 'effect';
+import { Cause, Logger, LogLevel } from 'effect';
 import pino from 'pino';
 import pinoPretty from 'pino-pretty';
 
@@ -119,7 +119,7 @@ export const LoggerLayer = (self: Logger.Logger<unknown, void>, logger: pino.Log
       const payload = Array.isArray(message) ? [...message] : [message];
 
       if (cause && cause._tag !== 'Empty') {
-        payload.push({ cause });
+        payload.push({ cause: Cause.pretty(cause) });
       }
 
       (logger[level] as Function)(...payload);

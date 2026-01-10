@@ -110,7 +110,7 @@ const checkPlayer = (message: Message<true>, tag: string) =>
 
     if (achievements) embed.addFields({ name: 'Achievements', value: achievements });
 
-    if (unknowns.length) yield* Effect.logWarning('Unknown assets detected:', unknowns);
+    if (unknowns.length) yield* Effect.logWarning('Unknown assets detected', unknowns);
 
     // Default embed formatting, including the clan footer, is applied during creation to ensure consistent presentation.
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));

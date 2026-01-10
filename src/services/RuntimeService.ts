@@ -25,9 +25,7 @@ export const cycleWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, optio
       const failures = Array.from(Cause.failures(cause));
 
       // Identification of scheduled restarts or transient network failures allows the system to bypass fatal crash thresholds and maintain availability.
-      const isRestart = failures.some((error) => isErrorLike<{ _tag: string }>(error) && error._tag === 'ScheduleRestart');
-
-      if (isRestart) {
+      if (failures.some((error) => isErrorLike<{ _tag: string }>(error) && error._tag === 'ScheduleRestart')) {
         return;
       }
 
@@ -39,13 +37,13 @@ export const cycleWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, optio
       restartTimes.push(...recentRestarts);
 
       if (restartTimes.length >= maxRestarts) {
-        yield* Effect.logFatal(chalk`{bold.red System crashed too many times (${maxRestarts}+ in ${intervalMs / 1000}s). Shutting down...}`);
-        yield* Effect.logError(cause);
+        // Logging the fatal cause alongside the termination message ensures that the final state of the system is preserved for post-mortem analysis.
+        yield* Effect.logFatal(chalk`{bold.red System crashed too many times (${maxRestarts}+ in ${intervalMs / 1000}s). Shutting down...}`, cause);
         process.exit(1);
       }
 
-      yield* Effect.logError(chalk`{bold.red System encountered an error:}`, cause);
-      yield* Effect.logInfo(chalk`{bold.yellow System restarting in ${restartDelayMs / 1000} seconds...}`, cause);
+      yield* Effect.logError(chalk`{bold.red System encountered an error}`, cause);
+      yield* Effect.logInfo(chalk`{bold.yellow System restarting in ${restartDelayMs / 1000} seconds...}`);
       yield* Effect.sleep(`${restartDelayMs} millis`);
     }),
   );

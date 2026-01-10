@@ -1,3 +1,3 @@
-import { config } from './src/services/database';
+import { createConfig } from './src/services/database';
 
-export default config();
+export default createConfig();

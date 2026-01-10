@@ -7,6 +7,7 @@ import { Effect, Layer, Option, Queue, Runtime, Scope } from 'effect';
 import { ClientEvents, RegisterRoles } from '../core/constants';
 import { ClanData, ClanSchema, ConfigStoreTag, SessionStoreTag } from '../core/schemas';
 import { AccountAdapter, UserAdapter } from '../database';
+import { getPlayerNickname } from '../helpers/clash.helper';
 import { getGuildMember } from '../helpers/discord.helper';
 import { isClanRole, isMemberRole, isModeratorRole } from '../helpers/role.helper';
 import { ClashTag } from '../services/ClashService';
@@ -15,8 +16,10 @@ import { createStore, Store } from '../services/StoreService';
 import { CommandHandlerTag } from './CommandHandler';
 import { DiscordHandlerTag } from './DiscordHandler';
 
+import type { SapphireClient } from '@sapphire/framework';
 import type { ClanMember, Player } from 'clashofclans.js';
 import type { Message } from 'discord.js';
+import type { AccountTable } from '../database/schema';
 import type { ClashLayer } from '../services/ClashService';
 import type { CommandHandler } from './CommandHandler';
 import type { DiscordHandler } from './DiscordHandler';
@@ -29,57 +32,100 @@ export const EventHandler = Effect.gen(function* () {
   const sessionStore = yield* SessionStoreTag;
   const commandService = yield* CommandHandlerTag;
 
-  // Capture the current runtime to preserve environment (services, logger, etc.) in callbacks.
+  // The current runtime is captured to preserve the execution environment, including services and loggers, for use within callbacks.
   const runtime = yield* Effect.runtime<SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | CommandHandler | ClashLayer | Scope.Scope>();
   const scope = yield* Effect.scope;
 
-  // Map to store clan-specific data persistent stores.
+  // A registry of persistent stores for each monitored clan ensures data continuity across application restarts.
   const clanStores = new Map<string, Store<ClanData>>();
 
-  // Set to track player tags currently pending in the leaving queue.
+  // Player tags undergoing the departure process are tracked to prevent redundant event processing.
   const pendingLeavers = new Set<string>();
 
-  const onReady = Effect.gen(function* () {
-    // Allowing the asynchronous initialization logs from Sapphire to be printed first.
-    yield* Effect.sleep(1000);
-    discordHandler.clearLoginTimeout();
-    const text = [
-      'Bot has started,',
-      `${discord.users.cache.size} users,`,
-      `${discord.channels.cache.size} channels,`,
-      `${discord.guilds.cache.size} guilds.`,
-    ];
-    yield* Effect.logInfo(text.join(' '));
-  });
+  // Successful connections trigger an update to the client's presence to indicate that the service is active.
+  const onReady = (client: SapphireClient<true>) =>
+    Effect.gen(function* () {
+      // A one-second delay allows asynchronous initialization logs from Sapphire to be printed before signaling readiness.
+      yield* Effect.sleep(1000);
+      discordHandler.clearLoginTimeout();
 
+      client.user.setPresence({
+        status: 'idle',
+        activities: [{ name: 'Clash of Clans', type: ActivityType.Playing }],
+      });
+
+      const stats = [`${client.users.cache.size} users`, `${client.channels.cache.size} channels`, `${client.guilds.cache.size} guilds`];
+      yield* Effect.logInfo(`Bot has started with ${stats.join(', ')}.`);
+    });
+
+  // Incoming messages are filtered to exclude bots and system messages before being delegated to the command handler under normal operating conditions.
   const onMessageCreate = (message: Message) =>
     Effect.gen(function* () {
-      // Ignore system messages, webhooks, and bot messages.
       if (message.webhookId !== null || message.system || message.author.bot) return;
 
       yield* Effect.logInfo(`${message.author.tag}: ${message.content}`);
 
       const config = yield* configStore.get;
-      // Maintenance mode check.
       if (discordHandler.isMaintenance && !config.ownerIds.includes(message.author.id)) {
         yield* Effect.tryPromise(() => message.reply('⚠️ Under Maintenance!'));
         return;
       }
 
-      // Delegate command handling to CommandService.
-      yield* commandService.handleCommand(message as Message<true>).pipe(
-        Effect.catchAllCause((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logFatal('UnhandledRejection.', cause);
-          }),
-        ),
-      );
+      yield* commandService
+        .handleCommand(message as Message<true>)
+        .pipe(Effect.catchAllCause((cause) => Effect.logFatal('Unhandled rejection in command handler.', cause)));
     });
 
+  // Identification of at least one active account in a monitored clan determines whether a user's member status is preserved.
+  const findActiveAccountInClan = (userAccounts: AccountTable[], currentTag: string, clanTags: readonly string[]) =>
+    Effect.gen(function* () {
+      const otherAccounts = userAccounts.filter((acc) => !acc.bannedAt && acc.tag !== currentTag);
+
+      for (const account of otherAccounts) {
+        const result = yield* Effect.tryPromise(() => clash.getPlayer(account.tag)).pipe(
+          Effect.map((p) => (p.clan && clanTags.includes(p.clan.tag) ? p : null)),
+          Effect.catchAll((error) => {
+            // Accounts missing from the API are marked as banned under the assumption of deletion or permanent disability.
+            if (isErrorLike<{ reason: string }>(error) && error.reason === 'notFound') {
+              return AccountAdapter.update({ ...account, bannedAt: Date.now() }).pipe(Effect.as(null));
+            }
+            return Effect.succeed(null);
+          }),
+        );
+
+        if (result) return result;
+      }
+
+      return null;
+    });
+
+  // Discord member states are synchronized with their clan affiliation by adjusting roles and nicknames to maintain server organization.
+  const updateMemberPresence = (member: GuildMember, otherAccountInClan: Player | null) =>
+    Effect.gen(function* () {
+      if (member.roles.cache.some(isModeratorRole)) return;
+
+      const guild = member.guild;
+      if (otherAccountInClan) {
+        // Nickname generation is delegated to a centralized helper to maintain consistency across different interaction points.
+        const nickname = getPlayerNickname(member, otherAccountInClan);
+        yield* Effect.tryPromise(() => member.setNickname(nickname));
+        yield* Effect.logInfo(`${member.user.tag}: Nickname updated to reflect active account ${otherAccountInClan.tag}`);
+      } else {
+        // Absence of active accounts in monitored clans results in the removal of clan-specific roles and the assignment of the reapply role.
+        const session = yield* sessionStore.get;
+        const rolesToRemove = member.roles.cache.filter((r) => isMemberRole(r) || isClanRole(r, session.clans));
+        // Removing all clan-related roles in a single operation minimizes the number of API calls to Discord and ensures atomic state transitions for members.
+        if (rolesToRemove.size > 0) yield* Effect.tryPromise(() => member.roles.remove(rolesToRemove));
+
+        const reapplyRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Reapply);
+        if (reapplyRole) yield* Effect.tryPromise(() => member.roles.add(reapplyRole));
+        yield* Effect.logInfo(`${member.user.tag}: Clan roles removed and Reapply role added`);
+      }
+    }).pipe(Effect.catchAll((error) => Effect.logError(`Failed to update Discord presence for ${member.id}`, error)));
+
+  // The lifecycle of a member's departure is managed through database updates and Discord role synchronization.
   const handleMemberLeave = (player: ClanMember) =>
     Effect.gen(function* () {
-      // Check if this player is still marked as pending.
-      // If not, it means they were removed because another account of the same user was already processed.
       if (!pendingLeavers.has(player.tag)) return;
 
       const config = yield* configStore.get;
@@ -96,76 +142,26 @@ export const EventHandler = Effect.gen(function* () {
       const user = yield* UserAdapter.findOne({ id: account.userId });
       if (!user) {
         pendingLeavers.delete(player.tag);
-        yield* Effect.logWarning(`User not found for userId ${account.userId}`);
+        yield* Effect.logWarning(`User record missing for linked account ${player.tag}`);
         return;
       }
 
+      // Departure tracking for all accounts associated with a user is cleared to avoid redundant processing of multiple departures.
       const userAccounts = yield* AccountAdapter.find({ userId: user.id });
-
-      // Remove all accounts of this user from the pending leavers set
-      // to avoid redundant processing for the same user.
       for (const acc of userAccounts) {
         pendingLeavers.delete(acc.tag);
       }
 
-      // Efficiently check if the user has any other accounts still in a monitored clan.
-      // We use Effect.all with concurrency to fetch multiple player profiles in parallel,
-      // which is significantly faster than sequential await in a loop.
-      const otherAccounts = userAccounts.filter((acc) => !acc.bannedAt && acc.tag !== player.tag);
-      const playerResults = yield* Effect.all(
-        otherAccounts.map((acc) =>
-          Effect.tryPromise(() => clash.getPlayer(acc.tag)).pipe(
-            Effect.flatMap((p) =>
-              p.clan && config.clanTags.includes(p.clan.tag) ? Effect.succeed(Option.some(p)) : Effect.succeed(Option.none<Player>()),
-            ),
-            Effect.catchAll((error) => {
-              // If a player is not found, mark it as banned in the database to prevent future redundant API calls.
-              if (isErrorLike<{ reason: string }>(error) && error.reason === 'notFound') {
-                return AccountAdapter.update({ ...acc, bannedAt: Date.now() }).pipe(Effect.as(Option.none<Player>()));
-              }
-              return Effect.succeed(Option.none<Player>());
-            }),
-          ),
-        ),
-        { concurrency: 5 }, // Limit concurrency to avoid overwhelming the API or network.
-      );
-
-      const otherAccountInClan = playerResults.find(Option.isSome)?.value ?? null;
-
+      const otherAccountInClan = yield* findActiveAccountInClan(userAccounts, player.tag, config.clanTags);
       const memberOpt = yield* getGuildMember(user.ownerId);
-      if (Option.isNone(memberOpt)) return;
 
-      const member = memberOpt.value;
-      const guild = member.guild;
-
-      try {
-        // Only update roles if the member is still in the server and not a moderator.
-        if (member instanceof GuildMember && !member.roles.cache.some(isModeratorRole)) {
-          if (otherAccountInClan) {
-            // User still has another account in a clan: update nickname to that account.
-            const nickname =
-              member.user.username.toLowerCase() === otherAccountInClan.name.toLowerCase()
-                ? `${otherAccountInClan.name} ${otherAccountInClan.tag}`
-                : otherAccountInClan.name;
-            yield* Effect.tryPromise(() => member.setNickname(nickname));
-            yield* Effect.logInfo(`${player.tag}: Nick updated ${member.user.displayName} to ${nickname}`);
-          } else {
-            // No accounts left in clans: remove clan roles and add 'Reapply' role.
-            const session = yield* sessionStore.get;
-            const rolesToRemove = member.roles.cache.filter((r) => isMemberRole(r) || isClanRole(r, session.clans));
-            yield* Effect.tryPromise(() => member.roles.remove(rolesToRemove));
-            const reapplyRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Reapply);
-            if (reapplyRole) yield* Effect.tryPromise(() => member.roles.add(reapplyRole));
-            yield* Effect.logInfo(`${player.tag}: Added Reapply to ${member.user.displayName}`);
-          }
-        }
-      } catch (error) {
-        yield* Effect.logError(`Failed to update member roles for ${user.ownerId}`, error);
+      if (Option.isSome(memberOpt)) {
+        yield* updateMemberPresence(memberOpt.value, otherAccountInClan);
       }
     });
 
-  // Queue for processing members who left a clan.
-  // We use a ClanMember type here as it's what we get from the clan member list.
+  // An unbounded queue processes members who have left a clan.
+  // The ClanMember type is utilized as it represents the data structure provided by the clan member list.
   const leavingQueue = yield* Queue.unbounded<ClanMember>();
 
   const leavingWorker = Effect.forever(
@@ -175,91 +171,84 @@ export const EventHandler = Effect.gen(function* () {
     }),
   );
 
-  // Run the worker in a separate fiber.
+  // The leaving worker runs in a separate fiber to handle departures asynchronously.
   yield* Effect.forkDaemon(leavingWorker);
 
-  // Semaphore to ensure clan member updates are processed sequentially per clan.
+  // A semaphore ensures that clan member updates are processed sequentially for each clan.
   const updateSemaphore = yield* Effect.makeSemaphore(1);
 
+  // Clan metadata is synchronized with the session store to enable accurate role identification across the system.
+  const syncClanSession = (clan: ClanData) =>
+    Effect.gen(function* () {
+      const session = yield* sessionStore.get;
+      if (!session.clans.some((r) => r.tag === clan.tag)) {
+        yield* sessionStore.update((s) => ({ ...s, clans: [...s.clans, { name: clan.name, tag: clan.tag }] }));
+      }
+    });
+
+  // Individual persistent stores for each clan track member changes over time and survive application restarts.
+  const getClanStore = (clan: ClanData) =>
+    Effect.gen(function* () {
+      let clanStore = clanStores.get(clan.tag);
+      if (!clanStore) {
+        clanStore = yield* createStore(`sessions/clan/${clan.tag}.json`, ClanSchema, clan, 60_000).pipe(Effect.provideService(Scope.Scope, scope));
+        clanStores.set(clan.tag, clanStore);
+      }
+      return clanStore;
+    });
+
+  // Clan member updates are processed by comparing the incoming API state with the local persistent state to detect departures.
   const onClanMemberUpdate = (oldClan: ClanData, newClan: ClanData) =>
     updateSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const session = yield* sessionStore.get;
+        yield* syncClanSession(oldClan);
 
-        // Ensure the clan is registered in the session store for role management purposes.
-        if (!session.clans.some((r) => r.tag === oldClan.tag)) {
-          yield* sessionStore.update((s) => ({ ...s, clans: [...s.clans, { name: oldClan.name, tag: oldClan.tag }] }));
-        }
+        const clanStore = yield* getClanStore(oldClan);
+        const storedClan = yield* clanStore.get;
 
-        // Load or create a persistent store for the clan's member list to track state across restarts.
-        let clanStore = clanStores.get(oldClan.tag);
-        if (!clanStore) {
-          const store = yield* createStore(`sessions/clan/${oldClan.tag}.json`, ClanSchema, oldClan, 60_000).pipe(
-            Effect.provideService(Scope.Scope, scope),
-          );
-          clanStores.set(oldClan.tag, store);
-          clanStore = store;
+        // Members no longer present in the clan are identified by filtering the stored member list against the latest API data.
+        const leftMembers = storedClan.members.filter((m) => !newClan.members.some((nm) => nm.tag === m.tag));
 
-          oldClan = yield* clanStore.get;
-        }
-
-        // Identify members who were in the old state but are not in the new state.
-        const leftMembers = oldClan.members.filter((m) => !newClan.members.some((nm) => nm.tag === m.tag));
-
-        // Queue each leaving member for processing and remove them from the 'old' state if they are confirmed gone.
         for (const player of leftMembers) {
+          // A tracking set prevents redundant leave processing if multiple updates occur in rapid succession.
           if (!pendingLeavers.has(player.tag)) {
             pendingLeavers.add(player.tag);
             yield* Queue.offer(leavingQueue, player);
           }
         }
 
-        // Update the store with the latest clan state (newClan) for the next comparison.
         yield* clanStore.set(newClan);
       }),
     );
 
-  // Register Discord event listeners.
-  discord.once(Events.ClientReady, (c) => {
-    Runtime.runFork(runtime)(onReady);
-    c.user.setPresence({
-      status: 'idle',
-      activities: [{ name: 'Clash of Clans', type: ActivityType.Playing }],
-    });
-  });
-
-  discord.on(Events.MessageCreate, (m) => {
-    Runtime.runFork(runtime)(
-      onMessageCreate(m).pipe(
-        Effect.catchAllCause((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logError('Unhandled error in MessageCreate handler', cause);
-          }),
+  // Event listeners are registered using a structured approach that ensures asynchronous handlers execute within the correct Effect runtime.
+  // Generic types for the emitter, listener arguments, errors, and requirements provide full type safety.
+  const register = <T, A extends unknown[], E, R>(
+    emitter: T & {
+      on: Function;
+      once?: Function;
+    },
+    event: string,
+    handler: (...args: A) => Effect.Effect<void, E, R>,
+    once = false,
+  ) => {
+    const cb = (...args: A) =>
+      Runtime.runFork(runtime)(
+        Effect.catchAllCause(handler(...args) as Effect.Effect<void, E, never>, (cause) =>
+          Effect.logError(`Unhandled error in ${event} handler`, cause),
         ),
-      ),
-    );
-  });
+      );
+    if (once && emitter.once) {
+      emitter.once(event, cb);
+    } else {
+      emitter.on(event, cb);
+    }
+  };
 
-  // Register Clash API event listeners.
-  clash.on(ClientEvents.ClanMember, (o, n) => {
-    Runtime.runFork(runtime)(
-      onClanMemberUpdate(o, n).pipe(
-        Effect.catchAllCause((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logError('Error in clanMemberUpdate handler', cause);
-          }),
-        ),
-      ),
-    );
-  });
-
-  clash.on(PollingEvents.Error, (error) => {
-    Runtime.runFork(runtime)(
-      Effect.gen(function* () {
-        yield* Effect.logError('Clash API Error', error);
-      }),
-    );
-  });
+  register(discord, Events.ClientReady, onReady, true);
+  register(discord, Events.MessageCreate, onMessageCreate);
+  register(clash, ClientEvents.ClanMember, onClanMemberUpdate);
+  register(clash, PollingEvents.Error, (error) => Effect.logError('Clash API Error', error));
 });
 
 export const EventHandlerLayer = Layer.effectDiscard(EventHandler);

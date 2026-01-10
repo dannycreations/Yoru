@@ -50,18 +50,20 @@ const createClash = Effect.gen(function* () {
       catch: (error) => new ClashError({ message: 'Failed to login to Clash API', cause: error }),
     });
 
-  // Override internal library methods to provide custom behavior.
+  // Overriding internal library methods allows for the implementation of custom behavior.
   client.rest.requestHandler['reValidateKeys'] = () => Promise.resolve();
 
+  // Maintenance of internal request state enables retry logic and prevents infinite loops during persistent API issues.
   let ipFromError: string | undefined;
   let requestState = 0;
 
   const requestHandler = client.rest.requestHandler;
 
+  // Internal IP detection uses addresses extracted from previous authentication errors to facilitate faster recovery during IP changes.
   const getIpOrig = requestHandler['getIp'].bind(requestHandler);
   requestHandler['getIp'] = (token: string) => {
-    if (ipFromError) {
-      const ip = ipFromError;
+    const ip = ipFromError;
+    if (ip) {
       ipFromError = undefined;
       return ip;
     }
@@ -70,25 +72,22 @@ const createClash = Effect.gen(function* () {
 
   const requestOrig = requestHandler.request.bind(requestHandler);
 
+  // The internal request method is wrapped with Effect-based logic to provide robust error handling, connection monitoring, and automated retries.
   requestHandler.request = async <T>(path: string, options: RequestOptions = {}) =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const res = yield* Effect.tryPromise(() => requestOrig<T>(path, options)).pipe(
+        return yield* Effect.tryPromise(() => requestOrig<T>(path, options)).pipe(
           Effect.tap(() => {
             requestState = 0;
           }),
           Effect.catchAll((error) => {
+            // Capping retry attempts for non-transient failures prevents excessive resource consumption.
             if (requestState > 2) {
               requestState = 2;
-              return Effect.fail(
-                new ClashError({
-                  message: 'API problem, please check back later!',
-                  cause: error,
-                }),
-              );
+              return Effect.fail(new ClashError({ message: 'API problem, please check back later!', cause: error }));
             }
 
-            // Handle network-level errors (e.g., DNS, timeouts) by waiting for connection recovery.
+            // Monitoring network connectivity ensures recovery before retrying network-level failures.
             if (isErrorLike(error) && ERROR_CODES.includes(error.code)) {
               requestState = 0;
               return waitForConnection().pipe(
@@ -97,22 +96,18 @@ const createClash = Effect.gen(function* () {
             }
 
             if (error instanceof HTTPError) {
-              // 503 is standard for Clash API maintenance.
+              // Terminal handling of service maintenance (503) avoids unnecessary retries during the current request cycle.
               if (error.status === 503) {
                 requestState = 0;
-                return Effect.fail(
-                  new ClashError({
-                    message: 'Service is temporarily unavailable because of maintenance!',
-                    status: 503,
-                  }),
-                );
+                return Effect.fail(new ClashError({ message: 'Service is temporarily unavailable because of maintenance!', status: 503 }));
               }
 
-              // Handle "accessDenied.invalidIp" by clearing the current key and re-logging in to get a new one.
+              // IP-related access denials trigger key rotation and re-authentication with the new IP address.
               if (error.status === 403 && error.reason === 'accessDenied.invalidIp') {
                 requestHandler['keys'].shift();
-                // Extract IP from error message to potentially use it in the next request if the library supports it.
-                ipFromError = error.message.match(/(\d{1,3}\.){3}\d+/)![0];
+                const ipMatch = error.message.match(/(\d{1,3}\.){3}\d+/);
+                // Selective extraction of the IP address from the error message ensures that re-authentication uses the correct origin for new keys.
+                if (ipMatch) ipFromError = ipMatch[0];
                 return login().pipe(
                   Effect.flatMap(() => {
                     requestState++;
@@ -121,14 +116,12 @@ const createClash = Effect.gen(function* () {
                 );
               }
 
-              // Handle other transient HTTP status codes defined in HttpService.
               if (ERROR_STATUS_CODES.includes(error.status)) {
                 requestState = 0;
                 return Effect.fail(new ClashError({ message: 'Transient API error', status: error.status, cause: error }));
               }
             }
 
-            // Catch malformed JSON responses which can happen during partial outages.
             if (error instanceof SyntaxError && error.message.includes('not valid JSON')) {
               return Effect.fail(new ClashError({ message: 'Invalid JSON response', status: 500, cause: error }));
             }
@@ -140,8 +133,6 @@ const createClash = Effect.gen(function* () {
             schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
           }),
         );
-
-        return res;
       }).pipe(Effect.provideService(HttpTag, http), Effect.orDie),
     );
 

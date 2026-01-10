@@ -1,8 +1,14 @@
+import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
 import { Effect, Option } from 'effect';
 
 import { DiscordHandlerTag } from '../workflows/DiscordHandler';
 
 import type { Guild, GuildMember } from 'discord.js';
+
+export const parseMentionOrSnowflake = (input?: string | null): string | null => {
+  if (!input) return null;
+  return input.match(UserOrMemberMentionRegex)?.[1] || (SnowflakeRegex.test(input) ? input : null);
+};
 
 export const getGuild = (userId: string) =>
   Effect.gen(function* () {

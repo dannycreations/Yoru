@@ -1,9 +1,8 @@
-import { isErrorLike } from '@vegapunk/utilities/result';
-import { HTTPError } from 'clashofclans.js';
 import { Context, Effect, Layer } from 'effect';
 
 import { ConfigStoreTag } from '../core/schemas';
-import { ClashError, ClashLayer } from '../services/ClashService';
+import { replyWithError } from '../helpers/error.helper';
+import { ClashLayer } from '../services/ClashService';
 import { SqliteTag } from '../services/database';
 import { checkCommand } from './commands/CheckCommand';
 import { linkCommand } from './commands/LinkCommand';
@@ -26,7 +25,7 @@ export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/C
 export const CommandHandler = Effect.gen(function* () {
   const configStore = yield* ConfigStoreTag;
 
-  // Mapping of command names and aliases to their respective handler functions.
+  // Command names and aliases are mapped to their respective handler functions for efficient dispatching.
   const commandMap: Record<
     string,
     (message: Message<true>, args: string[]) => Effect.Effect<void, unknown, SqliteTag | DiscordHandler | ConfigStoreTag | ClashLayer>
@@ -44,42 +43,20 @@ export const CommandHandler = Effect.gen(function* () {
       const config = yield* configStore.get;
       const prefix = config.prefix;
 
-      // Ensure the message starts with the configured prefix.
+      // Messages must start with the configured prefix to be recognized as commands.
       if (!message.content.startsWith(prefix)) return;
 
-      // Parse the message into command name and arguments.
+      // The message content is parsed into a command name and an array of arguments.
       const parts = message.content.slice(prefix.length).trim().split(/\s+/);
       const commandName = parts.shift()?.toLowerCase();
       const args = parts;
 
-      // Check if the command exists in our map.
-      if (!commandName || !commandMap[commandName]) return;
+      // Command existence is verified within the mapping before execution.
+      if (commandName === undefined || commandMap[commandName] === undefined) return;
 
-      // Execute the command and handle any errors.
+      // Commands are executed with error handling delegated to a specialized helper to maintain a clean handler loop.
       yield* commandMap[commandName](message, args).pipe(
-        Effect.catchAll((error) =>
-          Effect.gen(function* () {
-            let field = `> ${message.content}\nUnhandled Rejection, please contact owner!`;
-
-            const cause = error instanceof ClashError ? error.cause : error;
-
-            if (cause instanceof HTTPError) {
-              field = `> ${message.content}\n${cause.message}`;
-              // Specific handling for common Clash API errors to provide more user-friendly messages.
-              if (cause.reason === 'notFound' && cause.path.includes('/players/')) {
-                field = `> ${message.content}\nError, Player tag not found!`;
-              }
-            } else if (error instanceof ClashError) {
-              field = `> ${message.content}\n${error.message}`;
-            } else if (isErrorLike(error) && 'message' in error) {
-              field = `> ${message.content}\n${error.message}`;
-            } else {
-              // Log unexpected errors for debugging while keeping the user informed of a general failure.
-              yield* Effect.logError('Unexpected command error', error);
-            }
-            yield* Effect.tryPromise(() => message.reply(field));
-          }),
-        ),
+        Effect.catchAll((error) => replyWithError(message, error)),
         Effect.ignore,
       );
     });

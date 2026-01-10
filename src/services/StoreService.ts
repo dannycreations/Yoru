@@ -26,7 +26,7 @@ const loadStore = <A>(filePath: string, initialData: A): Effect.Effect<A, StoreE
     Effect.flatMap((content) => Effect.sync(() => parseJsonc<A>(content))),
     Effect.map((data) => defaultsDeep({}, data, initialData)),
     Effect.catchAll((error) => {
-      // Handle missing file by creating it with initial data.
+      // Missing files are handled by creating them with the provided initial data.
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
         return ensureDir(filePath).pipe(
           Effect.flatMap(() => Effect.tryPromise(() => writeFile(filePath, JSON.stringify(initialData)))),
@@ -91,7 +91,7 @@ export const createStore = <A extends object, I, R>(
 
     const autoSaveFiber = yield* Effect.forkDaemon(autoSaveLoop);
 
-    // Ensure data is saved when the scope is closed.
+    // Closing the scope triggers a final save operation to ensure data persistence.
     yield* Effect.addFinalizer(() => Effect.zipRight(Fiber.interrupt(autoSaveFiber), save).pipe(Effect.catchAllCause(() => Effect.void)));
 
     return {

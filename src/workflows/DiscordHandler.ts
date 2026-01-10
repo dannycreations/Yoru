@@ -35,16 +35,22 @@ const createDiscordClient = Effect.gen(function* () {
     intents: [...Object.values(GatewayIntentBits)] as GatewayIntentBits[],
   });
 
-  client.logger.trace = (...v) => Runtime.runSync(runtime)(Effect.logTrace(...v));
-  client.logger.debug = (...v) => Runtime.runSync(runtime)(Effect.logDebug(...v));
-  client.logger.info = (...v) => Runtime.runSync(runtime)(Effect.logInfo(...v));
-  client.logger.warn = (...v) => Runtime.runSync(runtime)(Effect.logWarning(...v));
-  client.logger.error = (...v) => Runtime.runSync(runtime)(Effect.logError(...v));
-  client.logger.fatal = (...v) => Runtime.runSync(runtime)(Effect.logFatal(...v));
+  // The Sapphire client's internal logger bridges to the Effect runtime's logger to centralize logs and adhere to project-wide logging configurations.
+  const bridgeLogger =
+    (effect: (...args: unknown[]) => Effect.Effect<void>) =>
+    (...args: unknown[]) =>
+      Runtime.runSync(runtime)(effect(...args));
 
-  // Set a timeout for the initial login attempt to prevent hanging.
+  client.logger.trace = bridgeLogger(Effect.logTrace);
+  client.logger.debug = bridgeLogger(Effect.logDebug);
+  client.logger.info = bridgeLogger(Effect.logInfo);
+  client.logger.warn = bridgeLogger(Effect.logWarning);
+  client.logger.error = bridgeLogger(Effect.logError);
+  client.logger.fatal = bridgeLogger(Effect.logFatal);
+
+  // A timeout mechanism for the initial connection prevents the process from hanging indefinitely if the Discord gateway is unresponsive.
   let loginTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
-    Runtime.runSync(runtime)(Effect.logInfo('YoruClient login timeout.'));
+    Runtime.runSync(runtime)(Effect.logWarning('Discord client login timed out after 60 seconds.'));
     client.destroy();
   }, 60_000).unref();
 
@@ -54,6 +60,9 @@ const createDiscordClient = Effect.gen(function* () {
       loginTimeout = undefined;
     }
   };
+
+  // The login timeout clears automatically once the client is ready to ensure the watchdog does not trigger after a successful connection.
+  client.once('ready', () => clearLoginTimeout());
 
   const login = () =>
     Effect.tryPromise({

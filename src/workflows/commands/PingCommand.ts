@@ -11,6 +11,7 @@ export const pingCommand = (message: Message<true>) =>
     const botLatency = Math.round(discord.ws.ping);
     const apiLatency = msg.createdTimestamp - message.createdTimestamp;
 
-    // Update the message with calculated latencies.
-    yield* Effect.tryPromise(() => msg.edit(`Pong! BOT Latency ${botLatency}ms. API Latency ${apiLatency}ms.`));
+    // The message is updated with calculated latencies to provide performance feedback.
+    const latencyReport = `Pong! BOT Latency ${botLatency}ms. API Latency ${apiLatency}ms.`;
+    yield* Effect.tryPromise(() => msg.edit(latencyReport));
   });

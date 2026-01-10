@@ -1,10 +1,17 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { HTTPError, PollingClient } from 'clashofclans.js';
-import { Context, Data, Effect, Layer, Schedule } from 'effect';
+import { Client, HTTPError } from 'clashofclans.js';
+import { Context, Data, Effect, Layer, PubSub, Ref, Schedule } from 'effect';
 
+import { ClientEvents } from '../core/constants';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpTag, waitForConnection } from './HttpService';
 
-import type { RequestOptions } from 'clashofclans.js';
+import type { Clan, RequestOptions } from 'clashofclans.js';
+
+export type ClashEvent = {
+  readonly _tag: typeof ClientEvents.ClanMember;
+  readonly oldClan: Clan;
+  readonly newClan: Clan;
+};
 
 export class ClashError extends Data.TaggedError('ClashError')<{
   readonly message: string;
@@ -24,7 +31,9 @@ export interface ClashConfig {
 export const ClashConfigTag = Context.GenericTag<ClashConfig>('@config/ClashConfig');
 
 export interface ClashLayer {
-  readonly client: PollingClient;
+  readonly client: Client;
+  readonly addClans: (tags: string[]) => Effect.Effect<void>;
+  readonly events: PubSub.PubSub<ClashEvent>;
 }
 
 export const ClashTag = Context.GenericTag<ClashLayer>('@layer/ClashLayer');
@@ -33,10 +42,13 @@ const createClash = Effect.gen(function* () {
   const http = yield* HttpTag;
   const config = yield* ClashConfigTag;
 
-  const client = new PollingClient({
+  const client = new Client({
     keys: [],
-    pollingInterval: config.pollingInterval ?? 60_000,
   });
+
+  const clanTags = yield* Ref.make(new Set<string>());
+  const clanCache = yield* Ref.make(new Map<string, Clan>());
+  const events = yield* PubSub.unbounded<ClashEvent>();
 
   const login = () =>
     Effect.tryPromise({
@@ -47,7 +59,11 @@ const createClash = Effect.gen(function* () {
           keyName: config.keyName ?? 'Yoru',
           keyCount: config.keyCount ?? 1,
         }),
-      catch: (error) => new ClashError({ message: 'Failed to login to Clash API', cause: error }),
+      catch: (error) =>
+        new ClashError({
+          message: 'Failed to login to Clash API',
+          cause: error,
+        }),
     });
 
   // Overriding internal library methods allows for the implementation of custom behavior.
@@ -77,9 +93,7 @@ const createClash = Effect.gen(function* () {
     Effect.runPromise(
       Effect.gen(function* () {
         return yield* Effect.tryPromise(() => requestOrig<T>(path, options)).pipe(
-          Effect.tap(() => {
-            requestState = 0;
-          }),
+          Effect.tap(() => (requestState = 0)),
           Effect.catchAll((error) => {
             // Capping retry attempts for non-transient failures prevents excessive resource consumption.
             if (requestState > 2) {
@@ -134,18 +148,47 @@ const createClash = Effect.gen(function* () {
             schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
           }),
         );
-      }).pipe(Effect.provideService(HttpTag, http), Effect.orDie),
+      }).pipe(Effect.provideService(HttpTag, http)),
     );
 
   yield* login();
 
-  yield* Effect.tryPromise({
-    try: () => client.init(),
-    catch: (error) => new ClashError({ message: 'Failed to initialize polling client', cause: error }),
-  });
+  const poll = Effect.gen(function* () {
+    const tags = yield* Ref.get(clanTags);
+    for (const tag of tags) {
+      const newClan = yield* Effect.tryPromise({
+        try: () => client.getClan(tag),
+        catch: () => null,
+      });
+
+      if (!newClan) continue;
+
+      const cache = yield* Ref.get(clanCache);
+      const oldClan = cache.get(tag);
+
+      if (oldClan) {
+        yield* PubSub.publish(events, { _tag: ClientEvents.ClanMember, oldClan, newClan } as const);
+      }
+
+      yield* Ref.update(clanCache, (map) => new Map(map).set(tag, newClan));
+    }
+  }).pipe(
+    Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
+    Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),
+    Effect.forkDaemon,
+  );
+
+  yield* poll;
 
   return {
     client,
+    addClans: (tags: string[]) =>
+      Ref.update(clanTags, (set) => {
+        const next = new Set(set);
+        for (const tag of tags) next.add(tag);
+        return next;
+      }),
+    events,
   } as const;
 });
 

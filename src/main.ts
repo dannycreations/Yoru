@@ -2,7 +2,6 @@ import 'dotenv/config';
 
 import { Effect, Layer, Logger } from 'effect';
 
-import { ClientEvents } from './core/constants';
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
 import { sqliteConfig } from './database';
 import { MemberManagerLayer } from './domain/MemberManager';
@@ -17,15 +16,13 @@ import { EventHandlerLayer } from './workflows/EventHandler';
 
 const program = Effect.gen(function* () {
   const discord = yield* DiscordHandlerTag;
-  const { client } = yield* ClashTag;
+  const clash = yield* ClashTag;
   const store = yield* ConfigStoreTag;
   const config = yield* store.get;
 
   if (config.clanTags.length > 0) {
-    client.addClans(config.clanTags as string[]);
+    yield* clash.addClans(config.clanTags as string[]);
   }
-
-  client.setClanEvent({ name: ClientEvents.ClanMember, filter: Boolean });
 
   yield* discord.login();
   yield* cycleMidnightRestart;

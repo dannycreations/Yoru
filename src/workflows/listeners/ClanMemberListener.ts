@@ -1,4 +1,4 @@
-import { Effect, Queue, Scope } from 'effect';
+import { Effect, PubSub, Queue, Scope } from 'effect';
 
 import { ClientEvents } from '../../core/constants';
 import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
@@ -10,9 +10,9 @@ import { createStore, Store } from '../../services/StoreService';
 
 import type { ClanMember } from 'clashofclans.js';
 
-export const createClanMemberListener = (register: Function) =>
+export const createClanMemberListener = () =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashTag;
+    const { events } = yield* ClashTag;
     const sessionStore = yield* SessionStoreTag;
     const memberManager = yield* MemberManagerTag;
     const scope = yield* Effect.scope;
@@ -91,5 +91,20 @@ export const createClanMemberListener = (register: Function) =>
         }),
       );
 
-    register(clash, ClientEvents.ClanMember, onClanMemberUpdate);
+    yield* PubSub.subscribe(events).pipe(
+      Effect.flatMap((queue) =>
+        Effect.gen(function* () {
+          while (true) {
+            const event = yield* queue.take;
+            if (event._tag === ClientEvents.ClanMember) {
+              // The event handler is executed within a dedicated loop to ensure that clan member updates are processed sequentially and do not interfere with other system events.
+              yield* onClanMemberUpdate(event.oldClan as any, event.newClan as any).pipe(
+                Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
+              );
+            }
+          }
+        }),
+      ),
+      Effect.forkDaemon,
+    );
   });

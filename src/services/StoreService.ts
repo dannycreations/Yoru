@@ -19,10 +19,7 @@ export interface Store<T> {
 }
 
 const loadStore = <A>(filePath: string, initialData: A): Effect.Effect<A, StoreError> =>
-  Effect.tryPromise({
-    try: () => readFile(filePath, 'utf-8'),
-    catch: (error) => error,
-  }).pipe(
+  Effect.tryPromise(() => readFile(filePath, 'utf-8')).pipe(
     Effect.flatMap((content) => Effect.sync(() => parseJsonc<A>(content))),
     Effect.map((data) => defaultsDeep({}, data, initialData)),
     Effect.catchAll((error) => {

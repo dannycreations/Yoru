@@ -1,3 +1,4 @@
+import { isErrorLike } from '@vegapunk/utilities/result';
 import { Cause, Logger, LogLevel } from 'effect';
 import pino from 'pino';
 import pinoPretty from 'pino-pretty';
@@ -119,7 +120,13 @@ export const LoggerLayer = (self: Logger.Logger<unknown, void>, logger: pino.Log
       const payload = Array.isArray(message) ? [...message] : [message];
 
       if (cause && cause._tag !== 'Empty') {
-        payload.push({ cause: Cause.pretty(cause) });
+        const [failure] = Cause.failures(cause);
+        const causePretty = { cause: Cause.pretty(cause) };
+        if (isErrorLike<{ cause: unknown }>(failure) && failure.cause) {
+          payload.push(Object.assign(failure.cause, causePretty));
+        } else {
+          payload.push(causePretty);
+        }
       }
 
       (logger[level] as Function)(...payload);

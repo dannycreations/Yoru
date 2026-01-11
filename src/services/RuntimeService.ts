@@ -37,7 +37,6 @@ export const cycleWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, optio
       restartTimes.push(...recentRestarts);
 
       if (restartTimes.length >= maxRestarts) {
-        // Logging the fatal cause alongside the termination message ensures that the final state of the system is preserved for post-mortem analysis.
         yield* Effect.logFatal(chalk`{bold.red System crashed too many times (${maxRestarts}+ in ${intervalMs / 1000}s). Shutting down...}`, cause);
         process.exit(1);
       }

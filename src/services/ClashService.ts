@@ -5,7 +5,7 @@ import { Context, Data, Effect, Layer, PubSub, Ref, Schedule } from 'effect';
 import { ClientEvents } from '../core/constants';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpTag, waitForConnection } from './HttpService';
 
-import type { Clan, RequestOptions } from 'clashofclans.js';
+import type { Clan, Player, RequestOptions } from 'clashofclans.js';
 
 export type ClashEvent = {
   readonly _tag: typeof ClientEvents.ClanMember;
@@ -34,6 +34,8 @@ export interface ClashLayer {
   readonly client: Client;
   readonly events: PubSub.PubSub<ClashEvent>;
   readonly addClans: (tags: string[]) => Effect.Effect<void>;
+  readonly getClan: (tag: string) => Effect.Effect<Clan, ClashError>;
+  readonly getPlayer: (tag: string) => Effect.Effect<Player, ClashError>;
 }
 
 export const ClashTag = Context.GenericTag<ClashLayer>('@layer/ClashLayer');
@@ -155,27 +157,37 @@ const createClash = Effect.gen(function* () {
 
   const poll = Effect.gen(function* () {
     const tags = yield* Ref.get(clanTags);
-    for (const tag of tags) {
-      const newClan = yield* Effect.tryPromise({
-        try: () => client.getClan(tag),
-        catch: () => null,
-      });
+    const cache = yield* Ref.get(clanCache);
 
-      if (!newClan) continue;
+    const updates = yield* Effect.all(
+      Array.from(tags).map((tag) =>
+        Effect.tryPromise({
+          try: () => client.getClan(tag),
+          catch: () => null,
+        }).pipe(
+          Effect.flatMap((newClan) => {
+            if (!newClan) return Effect.succeed(null);
+            const oldClan = cache.get(tag);
+            const publish = oldClan
+              ? PubSub.publish(events, {
+                  _tag: ClientEvents.ClanMember,
+                  oldClan,
+                  newClan,
+                } as const)
+              : Effect.void;
+            return publish.pipe(Effect.as({ tag, newClan }));
+          }),
+        ),
+      ),
+      { concurrency: 'unbounded' },
+    );
 
-      const cache = yield* Ref.get(clanCache);
-      const oldClan = cache.get(tag);
-
-      if (oldClan) {
-        yield* PubSub.publish(events, {
-          _tag: ClientEvents.ClanMember,
-          oldClan,
-          newClan,
-        } as const);
-      }
-
-      yield* Ref.update(clanCache, (map) => new Map(map).set(tag, newClan));
-    }
+    // Updating the clan cache with the latest data from the polling cycle ensures that subsequent comparisons use the most recent state.
+    yield* Ref.update(clanCache, (prev) => {
+      const next = new Map(prev);
+      for (const update of updates) if (update) next.set(update.tag, update.newClan);
+      return next;
+    });
   }).pipe(
     Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
     Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),
@@ -183,6 +195,18 @@ const createClash = Effect.gen(function* () {
   );
 
   yield* poll;
+
+  const getClan = (tag: string) =>
+    Effect.tryPromise({
+      try: () => client.getClan(tag),
+      catch: (error) => (error instanceof ClashError ? error : new ClashError({ message: `Failed to fetch clan ${tag}`, cause: error })),
+    });
+
+  const getPlayer = (tag: string) =>
+    Effect.tryPromise({
+      try: () => client.getPlayer(tag),
+      catch: (error) => (error instanceof ClashError ? error : new ClashError({ message: `Failed to fetch player ${tag}`, cause: error })),
+    });
 
   return {
     client,
@@ -193,6 +217,8 @@ const createClash = Effect.gen(function* () {
         for (const tag of tags) next.add(tag);
         return next;
       }),
+    getClan,
+    getPlayer,
   } as const;
 });
 

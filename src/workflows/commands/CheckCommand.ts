@@ -1,4 +1,3 @@
-import { isErrorLike } from '@vegapunk/utilities/result';
 import { Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
 import { Effect, Option } from 'effect';
@@ -6,6 +5,7 @@ import { Effect, Option } from 'effect';
 import { emoji } from '../../core/emojis';
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountAdapter, UserAdapter } from '../../database';
+import { MemberManagerTag } from '../../domain/MemberManager';
 import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/clash.helper';
 import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
 import { ClashTag } from '../../services/ClashService';
@@ -15,12 +15,13 @@ import type { AccountTable } from '../../database/schema';
 
 const checkProfile = (message: Message<true>, ownerId: string, accounts: AccountTable[]) =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashTag;
-    const member = message.guild.members.cache.get(ownerId);
-    if (!member) {
+    const memberManager = yield* MemberManagerTag;
+    const memberOpt = yield* getGuildMember(ownerId, message.guild);
+    if (Option.isNone(memberOpt)) {
       yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUser leaving discord server!`));
       return;
     }
+    const member = memberOpt.value;
 
     const embed = new EmbedBuilder()
       .setColor('#0099ff')
@@ -31,20 +32,9 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
     // Parallelizing player data retrieval significantly reduces the total response time for profiles with multiple linked accounts.
     const results = yield* Effect.all(
       accounts.map((account) =>
-        Effect.gen(function* () {
-          if (account.bannedAt) return { tag: account.tag, banned: true as const, player: null };
-
-          return yield* Effect.tryPromise(() => clash.getPlayer(account.tag)).pipe(
-            Effect.map((player) => ({ player, banned: false as const, tag: account.tag })),
-            Effect.catchIf(
-              (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
-              () =>
-                AccountAdapter.update({ ...account, bannedAt: Date.now() }).pipe(
-                  Effect.as({ tag: account.tag, banned: true as const, player: null }),
-                ),
-            ),
-          );
-        }).pipe(Effect.either),
+        (account.bannedAt ? Effect.succeed({ tag: account.tag, banned: true as const, player: null }) : memberManager.getPlayer(account)).pipe(
+          Effect.either,
+        ),
       ),
       { concurrency: 'unbounded' },
     );
@@ -75,8 +65,8 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
 
 const checkPlayer = (message: Message<true>, tag: string) =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashTag;
-    const player = yield* Effect.tryPromise(() => clash.getPlayer(tag));
+    const clash = yield* ClashTag;
+    const player = yield* clash.getPlayer(tag);
     const embed = createPlayerEmbed(player);
 
     const account = yield* AccountAdapter.findOne({ tag });
@@ -151,13 +141,13 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
 
 const checkMembers = (message: Message<true>, page = 1) =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashTag;
+    const clash = yield* ClashTag;
     const configStore = yield* ConfigStoreTag;
     const config = yield* configStore.get;
     const clanTags = config.clanTags;
     const index = Math.max(0, Math.min(page - 1, clanTags.length - 1));
 
-    const clan = yield* Effect.tryPromise(() => clash.getClan(clanTags[index]));
+    const clan = yield* clash.getClan(clanTags[index]);
     const guildMap = new Map<string, string[]>();
     const leave: string[] = [];
     const unknown: string[] = [];
@@ -172,31 +162,35 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
     const userMap = new Map(users.map((u) => [u.id, u]));
 
-    // Parallel resolution of Discord member status for all clan members optimizes the generation of the summary embed.
-    yield* Effect.all(
+    // Parallel resolution of Discord member status for all clan members optimizes the generation of the summary embed while maintaining thread-safe result aggregation.
+    const memberResults = yield* Effect.all(
       clan.members.map((member) =>
         Effect.gen(function* () {
           const field = `**${member.name}** ${member.tag}\n`;
           const account = accountMap.get(member.tag);
           const user = account?.userId ? userMap.get(account.userId) : null;
+          if (!user) return { type: 'unknown' as const, field };
 
-          if (!user) {
-            unknown.push(field);
-            return;
-          }
+          const memberOpt = yield* getGuildMember(user.ownerId, message.guild);
+          if (Option.isNone(memberOpt)) return { type: 'leave' as const, field };
 
-          const memberOpt = yield* getGuildMember(user.ownerId);
-          if (Option.isNone(memberOpt)) {
-            leave.push(field);
-            return;
-          }
-
-          if (!guildMap.has(user.ownerId)) guildMap.set(user.ownerId, []);
-          guildMap.get(user.ownerId)!.push(field);
+          return { type: 'guild' as const, ownerId: user.ownerId, field };
         }),
       ),
       { concurrency: 'unbounded' },
     );
+
+    for (const result of memberResults) {
+      if (result.type === 'unknown') {
+        unknown.push(result.field);
+      } else if (result.type === 'leave') {
+        leave.push(result.field);
+      } else {
+        const list = guildMap.get(result.ownerId) ?? [];
+        if (!guildMap.has(result.ownerId)) guildMap.set(result.ownerId, list);
+        list.push(result.field);
+      }
+    }
 
     const embed = new EmbedBuilder()
       .setColor('#0099ff')

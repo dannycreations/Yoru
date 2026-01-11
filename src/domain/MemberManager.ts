@@ -11,6 +11,7 @@ import { SqliteTag } from '../services/database';
 
 import type { Player } from 'clashofclans.js';
 import type { GuildMember } from 'discord.js';
+import type { AccountTable } from '../database/schema';
 
 export interface MemberManager {
   readonly updatePresence: (member: GuildMember, player: Player | null) => Effect.Effect<void, never, SessionStoreTag | ConfigStoreTag>;
@@ -18,6 +19,9 @@ export interface MemberManager {
     userId: number,
     currentTag: string,
   ) => Effect.Effect<Player | null, never, SqliteTag | typeof ClashTag | ConfigStoreTag>;
+  readonly getPlayer: (
+    account: AccountTable,
+  ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteTag>;
 }
 
 export const MemberManagerTag = Context.GenericTag<MemberManager>('@domain/MemberManager');
@@ -25,9 +29,20 @@ export const MemberManagerTag = Context.GenericTag<MemberManager>('@domain/Membe
 export const MemberManagerLayer = Layer.effect(
   MemberManagerTag,
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashTag;
+    const clash = yield* ClashTag;
     const configStore = yield* ConfigStoreTag;
     const sessionStore = yield* SessionStoreTag;
+
+    const getPlayer = (account: AccountTable) =>
+      clash.getPlayer(account.tag).pipe(
+        Effect.map((player) => ({ player, banned: false as const, tag: account.tag })),
+        Effect.catchIf(
+          (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
+          () =>
+            AccountAdapter.update({ ...account, bannedAt: Date.now() }).pipe(Effect.as({ player: null, banned: true as const, tag: account.tag })),
+        ),
+        Effect.catchAll(() => Effect.succeed({ player: null, banned: false as const, tag: account.tag })),
+      );
 
     const findActiveAccount = (userId: number, currentTag: string) =>
       Effect.gen(function* () {
@@ -37,14 +52,7 @@ export const MemberManagerLayer = Layer.effect(
 
         const results = yield* Effect.all(
           otherAccounts.map((account) =>
-            Effect.tryPromise(() => clash.getPlayer(account.tag)).pipe(
-              Effect.map((p) => (p.clan && config.clanTags.includes(p.clan.tag) ? p : null)),
-              Effect.catchIf(
-                (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
-                () => AccountAdapter.update({ ...account, bannedAt: Date.now() }).pipe(Effect.as(null)),
-              ),
-              Effect.catchAll(() => Effect.succeed(null)),
-            ),
+            getPlayer(account).pipe(Effect.map(({ player: p }) => (p && p.clan && config.clanTags.includes(p.clan.tag) ? p : null))),
           ),
           { concurrency: 'unbounded' },
         );
@@ -93,6 +101,7 @@ export const MemberManagerLayer = Layer.effect(
     return {
       findActiveAccount,
       updatePresence,
+      getPlayer,
     };
   }),
 );

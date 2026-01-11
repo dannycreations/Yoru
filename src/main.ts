@@ -27,27 +27,29 @@ const program = Effect.gen(function* () {
   yield* discord.login();
   yield* cycleMidnightRestart;
 });
+
 const logger = createLogger({ exception: false, rejection: false });
 
-const ClashConfigLayer = Layer.effect(
-  ClashConfigTag,
-  Effect.gen(function* () {
-    const env = yield* EnvTag;
-    return {
-      email: env.CLASH_EMAIL,
-      password: env.CLASH_PASSWORD,
-    };
-  }),
+const MainLayer = EventHandlerLayer.pipe(
+  Layer.provideMerge(DiscordHandlerLayer),
+  Layer.provideMerge(CommandHandlerLayer),
+  Layer.provideMerge(MemberManagerLayer),
+  Layer.provideMerge(ClashLayer),
+  Layer.provideMerge(
+    Layer.effect(
+      ClashConfigTag,
+      Effect.gen(function* () {
+        const env = yield* EnvTag;
+        return {
+          email: env.CLASH_EMAIL,
+          password: env.CLASH_PASSWORD,
+        };
+      }),
+    ),
+  ),
+  Layer.provideMerge(Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(sqliteConfig))),
 );
 
-const InfraLayer = Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(sqliteConfig));
-
-const ServicesLayer = DiscordHandlerLayer.pipe(Layer.merge(CommandHandlerLayer), Layer.merge(MemberManagerLayer), Layer.provideMerge(ClashLayer));
-
-const MainLayer = ServicesLayer.pipe(Layer.provide(ClashConfigLayer), Layer.provide(InfraLayer), Layer.merge(InfraLayer));
-
-const AppLayer = EventHandlerLayer.pipe(Layer.provide(MainLayer), Layer.merge(MainLayer));
-
-const runnable = program.pipe(Effect.provide(AppLayer));
-
-runForkWithCleanUp(cycleWithRestart(runnable.pipe(Effect.scoped)).pipe(Effect.provide(LoggerLayer(Logger.defaultLogger, logger))));
+runForkWithCleanUp(
+  cycleWithRestart(program.pipe(Effect.provide(MainLayer), Effect.scoped)).pipe(Effect.provide(LoggerLayer(Logger.defaultLogger, logger))),
+);

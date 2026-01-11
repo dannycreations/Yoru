@@ -1,4 +1,4 @@
-import { Effect, PubSub, Queue, Scope } from 'effect';
+import { Effect, Option, PubSub, Queue, Scope } from 'effect';
 
 import { ClientEvents } from '../../core/constants';
 import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
@@ -43,7 +43,7 @@ export const createClanMemberListener = () =>
         const otherAccountInClan = yield* memberManager.findActiveAccount(user.id, player.tag);
         const memberOpt = yield* getGuildMember(user.ownerId);
 
-        if (memberOpt._tag === 'Some') {
+        if (Option.isSome(memberOpt)) {
           yield* memberManager.updatePresence(memberOpt.value, otherAccountInClan);
           for (const acc of userAccounts) pendingLeavers.delete(acc.tag);
         }

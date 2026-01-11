@@ -20,20 +20,14 @@ export interface CommandHandler {
 
 export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/CommandHandler');
 
-// Defining the command mapping outside the service factory prevents redundant object allocations during each service resolution.
-const commandMap: Record<
-  string,
-  (
-    message: Message<true>,
-    args: string[],
-  ) => Effect.Effect<void, unknown, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberManagerTag.Service>
-> = {
-  ping: (message) => pingCommand(message),
-  p: (message) => pingCommand(message),
-  check: (message, args) => checkCommand(message, args),
-  c: (message, args) => checkCommand(message, args),
-  link: (message, args) => linkCommand(message, args),
-  l: (message, args) => linkCommand(message, args),
+// Centralized command mapping facilitates easy addition of new commands and aliases while maintaining a single point of reference for command execution.
+const commandMap: Record<string, (message: Message<true>, args: string[]) => Effect.Effect<void, any, any>> = {
+  ping: pingCommand,
+  p: pingCommand,
+  check: checkCommand,
+  c: checkCommand,
+  link: linkCommand,
+  l: linkCommand,
 };
 
 export const CommandHandler = Effect.gen(function* () {
@@ -53,10 +47,11 @@ export const CommandHandler = Effect.gen(function* () {
       const args = parts;
 
       // Command existence is verified within the mapping before execution.
-      if (commandName === undefined || commandMap[commandName] === undefined) return;
+      const command = commandName ? commandMap[commandName] : undefined;
+      if (!command) return;
 
       // Commands are executed with error handling delegated to a specialized helper to maintain a clean handler loop.
-      yield* commandMap[commandName](message, args).pipe(
+      yield* command(message, args).pipe(
         Effect.catchAll((error) => replyWithError(message, error)),
         Effect.ignore,
       );

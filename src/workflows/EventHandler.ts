@@ -10,6 +10,7 @@ export const EventHandler = Effect.gen(function* () {
   const { client } = yield* ClashTag;
   const runtime = yield* Effect.runtime<any>();
 
+  // Abstracting event registration into a reusable utility ensures consistent error handling and execution context across different event emitters.
   const register = (
     emitter: { on: Function; once?: Function },
     event: string,
@@ -18,6 +19,7 @@ export const EventHandler = Effect.gen(function* () {
   ) => {
     const cb = (...args: any[]) =>
       Runtime.runFork(runtime)(Effect.catchAllCause(handler(...args), (cause) => Effect.logError(`Unhandled error in ${event} handler`, cause)));
+
     if (once && emitter.once) {
       emitter.once(event, cb);
     } else {

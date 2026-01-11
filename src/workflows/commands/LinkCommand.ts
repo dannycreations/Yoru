@@ -1,36 +1,32 @@
 import { Util } from 'clashofclans.js';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountAdapter, UserAdapter } from '../../database';
 import { MemberManagerTag } from '../../domain/MemberManager';
 import { createPlayerEmbed, formatPlayerStats } from '../../helpers/clash.helper';
-import { parseMentionOrSnowflake } from '../../helpers/discord.helper';
+import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
 import { isModeratorRole } from '../../helpers/role.helper';
 import { ClashTag } from '../../services/ClashService';
-import { DiscordHandlerTag } from '../DiscordHandler';
 
 import type { Player } from 'clashofclans.js';
-import type { User as DiscordUser, Message, MessageReaction } from 'discord.js';
+import type { User as DiscordUser, Guild, Message, MessageReaction } from 'discord.js';
 
-// The local linkedTag function is replaced by a call to MemberManager to ensure that role and nickname updates are handled consistently across the system.
-const linkedTag = (ownerId: string, player: Player) =>
+// Localizing the presence update logic within a helper that utilizes robust member resolution ensures that player roles and nicknames are consistently synchronized upon linking.
+const linkedTag = (guild: Guild, ownerId: string, player: Player) =>
   Effect.gen(function* () {
-    const { client: discord } = yield* DiscordHandlerTag;
     const memberManager = yield* MemberManagerTag;
+    const memberOpt = yield* getGuildMember(ownerId, guild);
+    if (Option.isNone(memberOpt)) return;
 
-    const guild = discord.guilds.cache.first();
-    const member = guild?.members.cache.get(ownerId);
-    if (!member) return;
-
-    yield* memberManager.updatePresence(member, player);
+    yield* memberManager.updatePresence(memberOpt.value, player);
   });
 
 const linkQueue = new Set<string>();
 
 export const linkCommand = (message: Message<true>, args: string[]) =>
   Effect.gen(function* () {
-    const { client: clash } = yield* ClashTag;
+    const clash = yield* ClashTag;
     const tag = args[0];
     const mention = args[1];
 
@@ -61,7 +57,7 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
       if (!isAuthorized) return;
 
       // Player data is fetched from the API to populate the confirmation embed with accurate information.
-      const player = yield* Effect.tryPromise(() => clash.getPlayer(tag));
+      const player = yield* clash.getPlayer(tag);
       // The player embed is initialized with default formatting, including clan footers, through a centralized helper.
       const embed = createPlayerEmbed(player);
 
@@ -75,7 +71,7 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
 
         if (user && user.ownerId === mentionId) {
           // Tags already linked to the target user trigger a refresh of roles and nicknames via the centralized MemberManager.
-          yield* linkedTag(mentionId, player);
+          yield* linkedTag(message.guild, mentionId, player);
           embed.setDescription(`${titleField}Re-linked to **${member?.user.tag || mentionId}**.`);
         } else if (user) {
           // Tags linked to different users are handled according to the current owner's server status.
@@ -85,7 +81,7 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
           } else {
             // Absence of the current owner from the server permits the transfer of ownership to a new user.
             yield* UserAdapter.update({ ...user, ownerId: mentionId });
-            yield* linkedTag(mentionId, player);
+            yield* linkedTag(message.guild, mentionId, player);
             const newMember = message.guild.members.cache.get(mentionId);
             embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag || mentionId}**.`);
           }
@@ -112,7 +108,7 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
         // Confirmed requests result in the upserting of user and account records followed by a role update.
         const user = yield* UserAdapter.findOneAndUpdate({ ownerId: mentionId }, { ownerId: mentionId }, { upsert: true });
         yield* AccountAdapter.findOneAndUpdate({ tag }, { tag, userId: user!.id }, { upsert: true });
-        yield* linkedTag(mentionId, player);
+        yield* linkedTag(message.guild, mentionId, player);
         const member = message.guild.members.cache.get(mentionId);
         embed.setDescription(`${titleField}Linked to **${member?.user.tag || mentionId}**.`);
       } else {

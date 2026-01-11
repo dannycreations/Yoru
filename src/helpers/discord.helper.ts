@@ -10,30 +10,31 @@ export const parseMentionOrSnowflake = (input?: string | null): string | null =>
   return input.match(UserOrMemberMentionRegex)?.[1] || (SnowflakeRegex.test(input) ? input : null);
 };
 
-export const getGuild = (userId: string) =>
+// Retrieving a member directly from a specified guild or searching across all cached guilds ensures that the correct member context is identified with minimal REST API overhead.
+export const getGuildMember = (userId: string, guild?: Guild) =>
   Effect.gen(function* () {
-    const { client } = yield* DiscordHandlerTag;
-    const cache = client.guilds.cache.find((guild) => guild.members.cache.has(userId));
-    if (cache) return Option.some(cache);
+    if (guild) {
+      const cached = guild.members.cache.get(userId);
+      if (cached) return Option.some(cached);
+      return yield* Effect.tryPromise(() => guild.members.fetch(userId)).pipe(Effect.option);
+    }
 
-    // Parallelizing member lookups across all cached guilds ensures that the correct guild context is identified quickly when the member is not present in the local cache.
+    const { client } = yield* DiscordHandlerTag;
+
+    for (const g of client.guilds.cache.values()) {
+      const cachedMember = g.members.cache.get(userId);
+      if (cachedMember) return Option.some(cachedMember);
+    }
+
     const results = yield* Effect.all(
-      Array.from(client.guilds.cache.values()).map((guild) =>
-        Effect.tryPromise(() => guild.members.fetch(userId)).pipe(
-          Effect.map(() => Option.some(guild)),
-          Effect.catchAll(() => Effect.succeed(Option.none<Guild>())),
+      Array.from(client.guilds.cache.values()).map((g) =>
+        Effect.tryPromise(() => g.members.fetch(userId)).pipe(
+          Effect.map(Option.some),
+          Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())),
         ),
       ),
       { concurrency: 'unbounded' },
     );
 
     return Option.fromNullable(results.find(Option.isSome)?.value);
-  });
-
-export const getGuildMember = (userId: string) =>
-  Effect.gen(function* () {
-    const guildOpt = yield* getGuild(userId);
-    if (Option.isNone(guildOpt)) return Option.none<GuildMember>();
-    const member = yield* Effect.tryPromise(() => guildOpt.value.members.fetch(userId)).pipe(Effect.option);
-    return member;
   });

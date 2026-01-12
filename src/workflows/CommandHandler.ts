@@ -1,13 +1,13 @@
 import { Context, Effect, Layer } from 'effect';
 
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
-import { MemberManagerTag } from '../domain/MemberManager';
 import { replyWithError } from '../helpers/error.helper';
 import { ClashLayer } from '../services/ClashService';
 import { SqliteTag } from '../services/database';
 import { checkCommand } from './commands/CheckCommand';
 import { linkCommand } from './commands/LinkCommand';
 import { pingCommand } from './commands/PingCommand';
+import { MemberHandlerTag } from './MemberManager';
 
 import type { Message } from 'discord.js';
 import type { DiscordHandler } from './DiscordHandler';
@@ -15,10 +15,10 @@ import type { DiscordHandler } from './DiscordHandler';
 export interface CommandHandler {
   readonly handleCommand: (
     message: Message<true>,
-  ) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberManagerTag.Service>;
+  ) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberHandlerTag.Service>;
 }
 
-export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/CommandHandler');
+export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/CommandHandlerLayer');
 
 // Centralized command mapping facilitates easy addition of new commands and aliases while maintaining a single point of reference for command execution.
 const commandMap: Record<string, (message: Message<true>, args: string[]) => Effect.Effect<void, any, any>> = {

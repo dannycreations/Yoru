@@ -14,7 +14,7 @@ import type { Player } from 'clashofclans.js';
 import type { GuildMember } from 'discord.js';
 import type { AccountTable } from '../database/schema';
 
-export interface MemberManager {
+export interface MemberHandler {
   readonly updatePresence: (member: GuildMember, player: Player | null) => Effect.Effect<void, never, SessionStoreTag | ConfigStoreTag>;
   readonly findActiveAccount: (
     userId: number,
@@ -25,10 +25,10 @@ export interface MemberManager {
   ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteTag | typeof AccountDatabaseTag>;
 }
 
-export const MemberManagerTag = Context.GenericTag<MemberManager>('@domain/MemberManager');
+export const MemberHandlerTag = Context.GenericTag<MemberHandler>('@workflow/MemberHandlerLayer');
 
-export const MemberManagerLayer = Layer.effect(
-  MemberManagerTag,
+export const MemberHandlerLayer = Layer.effect(
+  MemberHandlerTag,
   Effect.gen(function* () {
     const clash = yield* ClashTag;
     const configStore = yield* ConfigStoreTag;

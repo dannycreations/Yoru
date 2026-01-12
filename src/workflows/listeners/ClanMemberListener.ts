@@ -3,10 +3,10 @@ import { Effect, Option, PubSub, Queue, Scope } from 'effect';
 import { ClientEvents } from '../../core/constants';
 import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
-import { MemberManagerTag } from '../../domain/MemberManager';
 import { getGuildMember } from '../../helpers/discord.helper';
 import { ClashTag } from '../../services/ClashService';
 import { createStore, Store } from '../../services/StoreService';
+import { MemberHandlerTag } from '../MemberManager';
 
 import type { ClanMember } from 'clashofclans.js';
 
@@ -14,7 +14,7 @@ export const createClanMemberListener = () =>
   Effect.gen(function* () {
     const { events } = yield* ClashTag;
     const sessionStore = yield* SessionStoreTag;
-    const memberManager = yield* MemberManagerTag;
+    const memberManager = yield* MemberHandlerTag;
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
     const scope = yield* Effect.scope;

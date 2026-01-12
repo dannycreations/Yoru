@@ -4,7 +4,6 @@ import { Effect, Layer, Logger } from 'effect';
 
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
 import { AccountDatabaseLayer, sqliteConfig, UserDatabaseLayer } from './database';
-import { MemberManagerLayer } from './domain/MemberManager';
 import { ClashConfigTag, ClashLayer, ClashTag } from './services/ClashService';
 import { SqliteLayer } from './services/database';
 import { HttpLayer } from './services/HttpService';
@@ -13,6 +12,7 @@ import { cycleMidnightRestart, cycleWithRestart, runForkWithCleanUp } from './se
 import { CommandHandlerLayer } from './workflows/CommandHandler';
 import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandler';
 import { EventHandlerLayer } from './workflows/EventHandler';
+import { MemberHandlerLayer } from './workflows/MemberManager';
 
 const program = Effect.gen(function* () {
   const clash = yield* ClashTag;
@@ -33,7 +33,7 @@ const logger = createLogger({ exception: false, rejection: false });
 const MainLayer = EventHandlerLayer.pipe(
   Layer.provideMerge(DiscordHandlerLayer),
   Layer.provideMerge(CommandHandlerLayer),
-  Layer.provideMerge(MemberManagerLayer),
+  Layer.provideMerge(MemberHandlerLayer),
   Layer.provideMerge(ClashLayer),
   Layer.provideMerge(
     Layer.effect(

@@ -5,17 +5,17 @@ import { Effect, Option } from 'effect';
 import { emoji } from '../../core/emojis';
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
-import { MemberManagerTag } from '../../domain/MemberManager';
 import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/clash.helper';
 import { addSplitFields, getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
 import { ClashTag } from '../../services/ClashService';
+import { MemberHandlerTag } from '../MemberManager';
 
 import type { Message } from 'discord.js';
 import type { AccountTable } from '../../database/schema';
 
 const checkProfile = (message: Message<true>, ownerId: string, accounts: AccountTable[]) =>
   Effect.gen(function* () {
-    const memberManager = yield* MemberManagerTag;
+    const memberManager = yield* MemberHandlerTag;
     const memberOpt = yield* getGuildMember(ownerId, message.guild);
     if (Option.isNone(memberOpt)) {
       yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUser leaving discord server!`));

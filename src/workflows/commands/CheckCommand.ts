@@ -7,7 +7,7 @@ import { ConfigStoreTag } from '../../core/schemas';
 import { AccountAdapter, UserAdapter } from '../../database';
 import { MemberManagerTag } from '../../domain/MemberManager';
 import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/clash.helper';
-import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
+import { addSplitFields, getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
 import { ClashTag } from '../../services/ClashService';
 
 import type { Message } from 'discord.js';
@@ -89,21 +89,7 @@ const checkPlayer = (message: Message<true>, tag: string) =>
     const { categories, unknowns } = categorizeUnits(player);
 
     Object.entries(categories).forEach(([name, list]) => {
-      if (list.length) {
-        let value = '';
-        let count = 0;
-        // Distribution of unit lists across multiple embed fields prevents exceeding Discord's 1024-character limit per field.
-        for (const item of list) {
-          if (value.length + item.length + 1 > 1024) {
-            embed.addFields({ name: count === 0 ? name : `${name} (cont.)`, value });
-            value = item;
-            count++;
-          } else {
-            value = value ? `${value} ${item}` : item;
-          }
-        }
-        if (value) embed.addFields({ name: count === 0 ? name : `${name} (cont.)`, value });
-      }
+      if (list.length) addSplitFields(embed, name, list);
     });
 
     // Filtering for specific high-value achievements provides a concise summary of player activity without overwhelming the profile embed.

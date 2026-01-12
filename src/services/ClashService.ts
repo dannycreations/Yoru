@@ -235,7 +235,7 @@ const createClash = Effect.gen(function* () {
   }).pipe(
     Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
     Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),
-    Effect.forkDaemon,
+    Effect.fork,
   );
 
   yield* poll;
@@ -278,4 +278,4 @@ const createClash = Effect.gen(function* () {
   } as const;
 });
 
-export const ClashLayer = Layer.effect(ClashTag, createClash);
+export const ClashLayer = Layer.scoped(ClashTag, createClash);

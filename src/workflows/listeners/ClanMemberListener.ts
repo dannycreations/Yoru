@@ -49,7 +49,7 @@ export const createClanMemberListener = () =>
         }
       });
 
-    yield* Effect.forkDaemon(
+    yield* Effect.fork(
       Effect.forever(
         Effect.gen(function* () {
           const player = yield* Queue.take(leavingQueue);
@@ -105,6 +105,6 @@ export const createClanMemberListener = () =>
           }
         }),
       ),
-      Effect.forkDaemon,
+      Effect.fork,
     );
   });

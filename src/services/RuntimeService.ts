@@ -1,6 +1,6 @@
 import { chalk } from '@vegapunk/utilities';
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Cause, Data, Effect, Fiber, Schedule } from 'effect';
+import { Cause, Data, Effect, Fiber, Schedule, Scope } from 'effect';
 
 export class ScheduleRestart extends Data.TaggedError('ScheduleRestart') {}
 
@@ -16,11 +16,14 @@ export const runForkWithCleanUp = <A, E, R>(effect: Effect.Effect<A, E, R>): voi
   process.on('SIGTERM', () => Effect.runPromise(Fiber.interrupt(fiber)).then(() => process.exit(0)));
 };
 
-export const cycleWithRestart = <A, E, R>(program: Effect.Effect<A, E, R>, options: RuntimeOptions = {}): Effect.Effect<void, never, R> => {
+export const cycleWithRestart = <A, E, R>(
+  program: Effect.Effect<A, E, R | Scope.Scope>,
+  options: RuntimeOptions = {},
+): Effect.Effect<void, never, R> => {
   const { maxRestarts = 3, intervalMs = 60_000, restartDelayMs = 5_000 } = options;
   const restartTimes: number[] = [];
 
-  const loop = Effect.catchAllCause(program, (cause) =>
+  const loop = Effect.catchAllCause(Effect.scoped(program), (cause) =>
     Effect.gen(function* () {
       const failures = Array.from(Cause.failures(cause));
 

@@ -5,6 +5,7 @@ import { MemberRoles, RegisterRoles } from '../core/constants';
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
 import { AccountAdapter } from '../database';
 import { getPlayerNickname } from '../helpers/clash.helper';
+import { removeMemberRoles } from '../helpers/discord.helper';
 import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/role.helper';
 import { ClashTag } from '../services/ClashService';
 import { SqliteTag } from '../services/database';
@@ -68,17 +69,11 @@ export const MemberManagerLayer = Layer.effect(
         const config = yield* configStore.get;
         const session = yield* sessionStore.get;
 
-        // Encapsulating role removal logic into a local utility reduces duplication and simplifies the conditional branches for presence updates.
-        const removeRoles = (filter: (role: any) => boolean) => {
-          const roles = member.roles.cache.filter(filter);
-          return roles.size > 0 ? Effect.tryPromise(() => member.roles.remove(roles)) : Effect.void;
-        };
-
         if (player && player.clan && config.clanTags.includes(player.clan.tag)) {
           const nickname = getPlayerNickname(member, player);
           yield* Effect.tryPromise(() => member.setNickname(nickname));
 
-          yield* removeRoles(isRegisterRole);
+          yield* removeMemberRoles(member, isRegisterRole);
 
           const clanName = player.clan.name;
           const rolesToAdd = guild.roles.cache.filter((r) => r.name === clanName || r.name === MemberRoles.Elder);
@@ -86,12 +81,12 @@ export const MemberManagerLayer = Layer.effect(
         } else if (player) {
           yield* Effect.tryPromise(() => member.setNickname(`TH ${player.townHallLevel} - ${player.name}`));
 
-          yield* removeRoles(isRegisterRole);
+          yield* removeMemberRoles(member, isRegisterRole);
 
           const approvedRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Approved);
           if (approvedRole) yield* Effect.tryPromise(() => member.roles.add(approvedRole));
         } else {
-          yield* removeRoles((r) => isMemberRole(r) || isClanRole(r, session.clans));
+          yield* removeMemberRoles(member, (r) => isMemberRole(r) || isClanRole(r, session.clans));
 
           const reapplyRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Reapply);
           if (reapplyRole) yield* Effect.tryPromise(() => member.roles.add(reapplyRole));

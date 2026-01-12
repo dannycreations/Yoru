@@ -3,7 +3,27 @@ import { Effect, Option } from 'effect';
 
 import { DiscordHandlerTag } from '../workflows/DiscordHandler';
 
-import type { Guild, GuildMember } from 'discord.js';
+import type { EmbedBuilder, Guild, GuildMember, Role } from 'discord.js';
+
+export const addSplitFields = (embed: EmbedBuilder, name: string, list: string[], separator = ' ') => {
+  let value = '';
+  let count = 0;
+  for (const item of list) {
+    if (value.length + item.length + separator.length > 1024) {
+      embed.addFields({ name: count === 0 ? name : `${name} (cont.)`, value });
+      value = item;
+      count++;
+    } else {
+      value = value ? `${value}${separator}${item}` : item;
+    }
+  }
+  if (value) embed.addFields({ name: count === 0 ? name : `${name} (cont.)`, value });
+};
+
+export const removeMemberRoles = (member: GuildMember, filter: (role: Role) => boolean) => {
+  const roles = member.roles.cache.filter(filter);
+  return roles.size > 0 ? Effect.tryPromise(() => member.roles.remove(roles)) : Effect.void;
+};
 
 export const parseMentionOrSnowflake = (input?: string | null): string | null => {
   if (!input) return null;

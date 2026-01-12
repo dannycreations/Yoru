@@ -15,9 +15,9 @@ import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandl
 import { EventHandlerLayer } from './workflows/EventHandler';
 
 const program = Effect.gen(function* () {
-  const discord = yield* DiscordHandlerTag;
   const clash = yield* ClashTag;
   const store = yield* ConfigStoreTag;
+  const discord = yield* DiscordHandlerTag;
   const config = yield* store.get;
 
   if (config.clanTags.length > 0) {
@@ -50,6 +50,4 @@ const MainLayer = EventHandlerLayer.pipe(
   Layer.provideMerge(Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(sqliteConfig))),
 );
 
-runForkWithCleanUp(
-  cycleWithRestart(program.pipe(Effect.provide(MainLayer), Effect.scoped)).pipe(Effect.provide(LoggerLayer(Logger.defaultLogger, logger))),
-);
+runForkWithCleanUp(cycleWithRestart(program.pipe(Effect.provide(MainLayer))).pipe(Effect.provide(LoggerLayer(Logger.defaultLogger, logger))));

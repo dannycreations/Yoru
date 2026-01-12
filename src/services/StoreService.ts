@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { parseJsonc } from '@vegapunk/utilities';
 import { defaultsDeep } from '@vegapunk/utilities/common';
-import { Context, Data, Effect, Fiber, Layer, Ref, Schedule, Schema, Scope } from 'effect';
+import { Context, Data, Effect, Layer, Ref, Schedule, Schema, Scope } from 'effect';
 
 const ensureDir = (path: string) => Effect.tryPromise(() => mkdir(dirname(path), { recursive: true }));
 
@@ -89,10 +89,10 @@ export const createStore = <A extends object, I, R>(
       yield* save;
     }).pipe(Effect.repeat(Schedule.forever));
 
-    const autoSaveFiber = yield* Effect.forkDaemon(autoSaveLoop);
+    yield* Effect.fork(autoSaveLoop);
 
     // Closing the scope triggers a final save operation to ensure data persistence.
-    yield* Effect.addFinalizer(() => Effect.zipRight(Fiber.interrupt(autoSaveFiber), save).pipe(Effect.catchAllCause(() => Effect.void)));
+    yield* Effect.addFinalizer(() => save.pipe(Effect.catchAllCause(() => Effect.void)));
 
     return {
       get: Ref.get(dataRef),

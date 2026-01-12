@@ -3,7 +3,7 @@ import 'dotenv/config';
 import { Effect, Layer, Logger } from 'effect';
 
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
-import { sqliteConfig } from './database';
+import { AccountDatabaseLayer, sqliteConfig, UserDatabaseLayer } from './database';
 import { MemberManagerLayer } from './domain/MemberManager';
 import { ClashConfigTag, ClashLayer, ClashTag } from './services/ClashService';
 import { SqliteLayer } from './services/database';
@@ -47,7 +47,9 @@ const MainLayer = EventHandlerLayer.pipe(
       }),
     ),
   ),
-  Layer.provideMerge(Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(sqliteConfig))),
+  Layer.provideMerge(
+    Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(sqliteConfig), UserDatabaseLayer, AccountDatabaseLayer),
+  ),
 );
 
 runForkWithCleanUp(cycleWithRestart(program.pipe(Effect.provide(MainLayer))).pipe(Effect.provide(LoggerLayer(Logger.defaultLogger, logger))));

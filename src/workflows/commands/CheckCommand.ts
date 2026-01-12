@@ -4,7 +4,7 @@ import { Effect, Option } from 'effect';
 
 import { emoji } from '../../core/emojis';
 import { ConfigStoreTag } from '../../core/schemas';
-import { AccountAdapter, UserAdapter } from '../../database';
+import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { MemberManagerTag } from '../../domain/MemberManager';
 import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/clash.helper';
 import { addSplitFields, getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
@@ -69,10 +69,13 @@ const checkPlayer = (message: Message<true>, tag: string) =>
     const player = yield* clash.getPlayer(tag);
     const embed = createPlayerEmbed(player);
 
-    const account = yield* AccountAdapter.findOne({ tag });
+    const accountDatabase = yield* AccountDatabaseTag;
+    const userDatabase = yield* UserDatabaseTag;
+
+    const account = yield* accountDatabase.findOne({ tag });
     let isOwned = '';
     if (account) {
-      const user = yield* UserAdapter.findOne({ id: account.userId });
+      const user = yield* userDatabase.findOne({ id: account.userId });
       if (user) {
         const member = message.guild.members.cache.get(user.ownerId);
         isOwned = `👤 ${member ? member.user.tag : user.ownerId}\n`;
@@ -108,8 +111,11 @@ const checkPlayer = (message: Message<true>, tag: string) =>
 
 const checkUser = (message: Message<true>, ownerId: string, page: number) =>
   Effect.gen(function* () {
-    const user = yield* UserAdapter.findOne({ ownerId });
-    const accounts = user ? yield* AccountAdapter.find({ userId: user.id }) : [];
+    const accountDatabase = yield* AccountDatabaseTag;
+    const userDatabase = yield* UserDatabaseTag;
+
+    const user = yield* userDatabase.findOne({ ownerId });
+    const accounts = user ? yield* accountDatabase.find({ userId: user.id }) : [];
 
     // Verification of linked accounts ensures that users receive a clear error message when no data is available.
     if (!user || accounts.length === 0) {
@@ -145,12 +151,15 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const leave: string[] = [];
     const unknown: string[] = [];
 
+    const accountDatabase = yield* AccountDatabaseTag;
+    const userDatabase = yield* UserDatabaseTag;
+
     // Batch retrieval of account and user records for all clan members minimizes database round-trips and improves command response time.
     const tags = clan.members.map((m) => m.tag);
-    const accounts = yield* AccountAdapter.find({ tag: { $in: tags } });
+    const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
     // Deduplicating user IDs before querying the database reduces the load on the adapter and ensures a more efficient retrieval process.
     const userIds = [...new Set(accounts.map((acc) => acc.userId).filter((id): id is number => id !== null))];
-    const users = userIds.length > 0 ? yield* UserAdapter.find({ id: { $in: userIds } }) : [];
+    const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
 
     const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
     const userMap = new Map(users.map((u) => [u.id, u]));

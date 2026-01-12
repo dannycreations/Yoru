@@ -2,7 +2,7 @@ import { Util } from 'clashofclans.js';
 import { Effect, Option } from 'effect';
 
 import { ConfigStoreTag } from '../../core/schemas';
-import { AccountAdapter, UserAdapter } from '../../database';
+import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { MemberManagerTag } from '../../domain/MemberManager';
 import { createPlayerEmbed, formatPlayerStats } from '../../helpers/clash.helper';
 import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
@@ -27,6 +27,8 @@ const linkQueue = new Set<string>();
 export const linkCommand = (message: Message<true>, args: string[]) =>
   Effect.gen(function* () {
     const clash = yield* ClashTag;
+    const accountDatabase = yield* AccountDatabaseTag;
+    const userDatabase = yield* UserDatabaseTag;
     const tag = args[0];
     const mention = args[1];
 
@@ -64,9 +66,9 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
       const titleField = `${formatPlayerStats(player)}\n`;
 
       // Database lookups verify whether a tag is already associated with an existing account.
-      const account = yield* AccountAdapter.findOne({ tag });
+      const account = yield* accountDatabase.findOne({ tag });
       if (account) {
-        const user = yield* UserAdapter.findOne({ id: account.userId });
+        const user = yield* userDatabase.findOne({ id: account.userId });
         const member = message.guild.members.cache.get(user?.ownerId || '');
 
         if (user && user.ownerId === mentionId) {
@@ -80,7 +82,7 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
             embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`);
           } else {
             // Absence of the current owner from the server permits the transfer of ownership to a new user.
-            yield* UserAdapter.update({ ...user, ownerId: mentionId });
+            yield* userDatabase.update({ ...user, ownerId: mentionId });
             yield* linkedTag(message.guild, mentionId, player);
             const newMember = message.guild.members.cache.get(mentionId);
             embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag || mentionId}**.`);
@@ -106,8 +108,8 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
 
       if (collected?.first()?.emoji.name === '✅') {
         // Confirmed requests result in the upserting of user and account records followed by a role update.
-        const user = yield* UserAdapter.findOneAndUpdate({ ownerId: mentionId }, { ownerId: mentionId }, { upsert: true });
-        yield* AccountAdapter.findOneAndUpdate({ tag }, { tag, userId: user!.id }, { upsert: true });
+        const user = yield* userDatabase.findOneAndUpdate({ ownerId: mentionId }, { ownerId: mentionId }, { upsert: true });
+        yield* accountDatabase.findOneAndUpdate({ tag }, { tag, userId: user!.id }, { upsert: true });
         yield* linkedTag(message.guild, mentionId, player);
         const member = message.guild.members.cache.get(mentionId);
         embed.setDescription(`${titleField}Linked to **${member?.user.tag || mentionId}**.`);

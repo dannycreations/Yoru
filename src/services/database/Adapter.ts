@@ -58,7 +58,7 @@ const OPERATOR_MAP: Record<string, (col: SQL, val: SQL) => SQL> = {
   $null: (col, val) => (val ? isNull(col) : isNotNull(col)),
 };
 
-export interface Adapter<A extends Table, Select extends InferSelect<A>, Insert extends InferInsert<A>> {
+export interface Adapter<A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>> {
   readonly count: (filter?: QueryFilter<A>) => Effect.Effect<number, SqliteError, SqliteTag>;
   readonly find: <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter?: QueryFilter<A>,

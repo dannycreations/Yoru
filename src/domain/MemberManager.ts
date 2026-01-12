@@ -3,7 +3,7 @@ import { Context, Effect, Layer } from 'effect';
 
 import { MemberRoles, RegisterRoles } from '../core/constants';
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
-import { AccountAdapter } from '../database';
+import { AccountDatabaseTag } from '../database';
 import { getPlayerNickname } from '../helpers/clash.helper';
 import { removeMemberRoles } from '../helpers/discord.helper';
 import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/role.helper';
@@ -19,10 +19,10 @@ export interface MemberManager {
   readonly findActiveAccount: (
     userId: number,
     currentTag: string,
-  ) => Effect.Effect<Player | null, never, SqliteTag | typeof ClashTag | ConfigStoreTag>;
+  ) => Effect.Effect<Player | null, never, SqliteTag | typeof ClashTag | ConfigStoreTag | typeof AccountDatabaseTag>;
   readonly getPlayer: (
     account: AccountTable,
-  ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteTag>;
+  ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteTag | typeof AccountDatabaseTag>;
 }
 
 export const MemberManagerTag = Context.GenericTag<MemberManager>('@domain/MemberManager');
@@ -33,6 +33,7 @@ export const MemberManagerLayer = Layer.effect(
     const clash = yield* ClashTag;
     const configStore = yield* ConfigStoreTag;
     const sessionStore = yield* SessionStoreTag;
+    const accountDatabase = yield* AccountDatabaseTag;
 
     const getPlayer = (account: AccountTable) =>
       clash.getPlayer(account.tag).pipe(
@@ -40,7 +41,7 @@ export const MemberManagerLayer = Layer.effect(
         Effect.catchIf(
           (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
           () =>
-            AccountAdapter.update({ ...account, bannedAt: Date.now() }).pipe(Effect.as({ player: null, banned: true as const, tag: account.tag })),
+            accountDatabase.update({ ...account, bannedAt: Date.now() }).pipe(Effect.as({ player: null, banned: true as const, tag: account.tag })),
         ),
         Effect.catchAll(() => Effect.succeed({ player: null, banned: false as const, tag: account.tag })),
       );
@@ -48,7 +49,7 @@ export const MemberManagerLayer = Layer.effect(
     const findActiveAccount = (userId: number, currentTag: string) =>
       Effect.gen(function* () {
         const config = yield* configStore.get;
-        const userAccounts = yield* AccountAdapter.find({ userId });
+        const userAccounts = yield* accountDatabase.find({ userId });
         const otherAccounts = userAccounts.filter((acc) => !acc.bannedAt && acc.tag !== currentTag);
 
         const results = yield* Effect.all(

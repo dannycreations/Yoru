@@ -2,7 +2,7 @@ import { Effect, Option, PubSub, Queue, Scope } from 'effect';
 
 import { ClientEvents } from '../../core/constants';
 import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
-import { AccountAdapter, UserAdapter } from '../../database';
+import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { MemberManagerTag } from '../../domain/MemberManager';
 import { getGuildMember } from '../../helpers/discord.helper';
 import { ClashTag } from '../../services/ClashService';
@@ -15,6 +15,8 @@ export const createClanMemberListener = () =>
     const { events } = yield* ClashTag;
     const sessionStore = yield* SessionStoreTag;
     const memberManager = yield* MemberManagerTag;
+    const accountDatabase = yield* AccountDatabaseTag;
+    const userDatabase = yield* UserDatabaseTag;
     const scope = yield* Effect.scope;
 
     const clanStores = new Map<string, Store<ClanData>>();
@@ -26,20 +28,20 @@ export const createClanMemberListener = () =>
       Effect.gen(function* () {
         if (!pendingLeavers.has(player.tag)) return;
 
-        const account = yield* AccountAdapter.findOne({ tag: player.tag });
+        const account = yield* accountDatabase.findOne({ tag: player.tag });
 
         if (!account || !account.userId) {
           pendingLeavers.delete(player.tag);
           return;
         }
 
-        const user = yield* UserAdapter.findOne({ id: account.userId });
+        const user = yield* userDatabase.findOne({ id: account.userId });
         if (!user) {
           pendingLeavers.delete(player.tag);
           return;
         }
 
-        const userAccounts = yield* AccountAdapter.find({ userId: user.id });
+        const userAccounts = yield* accountDatabase.find({ userId: user.id });
         const otherAccountInClan = yield* memberManager.findActiveAccount(user.id, player.tag);
         const memberOpt = yield* getGuildMember(user.ownerId);
 

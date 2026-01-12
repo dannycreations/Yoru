@@ -73,16 +73,19 @@ export class ConfigStoreTag extends Context.Tag('@schema/ConfigStoreLayer')<Conf
 export const ConfigStoreLayer = StoreLayer(ConfigStoreTag, 'sessions/settings.json', ConfigSchema, { prefix: '?', ownerIds: [], clanTags: [] }, 5000);
 
 export const SessionSchema = Schema.Struct({
-  clans: Schema.Array(
-    Schema.Struct({
-      name: Schema.String,
-      tag: Schema.String,
-    }),
+  clans: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        tag: Schema.String,
+      }),
+    ),
   ),
+  leavers: Schema.optional(Schema.Array(Schema.String)),
 });
 
 export type Session = Schema.Schema.Type<typeof SessionSchema>;
 
 export class SessionStoreTag extends Context.Tag('@schema/SessionStoreLayer')<SessionStoreTag, Store<Session>>() {}
 
-export const SessionStoreLayer = StoreLayer(SessionStoreTag, 'sessions/sessions.json', SessionSchema, { clans: [] }, 5000);
+export const SessionStoreLayer = StoreLayer(SessionStoreTag, 'sessions/sessions.json', SessionSchema, { clans: [], leavers: [] }, 5000);

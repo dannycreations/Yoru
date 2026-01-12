@@ -87,7 +87,7 @@ export const MemberManagerLayer = Layer.effect(
           const approvedRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Approved);
           if (approvedRole) yield* Effect.tryPromise(() => member.roles.add(approvedRole));
         } else {
-          yield* removeMemberRoles(member, (r) => isMemberRole(r) || isClanRole(r, session.clans));
+          yield* removeMemberRoles(member, (r) => isMemberRole(r) || isClanRole(r, session.clans ?? []));
 
           const reapplyRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Reapply);
           if (reapplyRole) yield* Effect.tryPromise(() => member.roles.add(reapplyRole));

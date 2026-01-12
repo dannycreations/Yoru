@@ -20,24 +20,31 @@ export const createClanMemberListener = () =>
     const scope = yield* Effect.scope;
 
     const clanStores = new Map<string, Store<ClanData>>();
-    const pendingLeavers = new Set<string>();
     const leavingQueue = yield* Queue.unbounded<ClanMember>();
     const updateSemaphore = yield* Effect.makeSemaphore(1);
 
     const handleMemberLeave = (player: ClanMember) =>
       Effect.gen(function* () {
-        if (!pendingLeavers.has(player.tag)) return;
+        const session = yield* sessionStore.get;
+        const leavers = session.leavers ?? [];
+        if (!leavers.includes(player.tag)) return;
 
         const account = yield* accountDatabase.findOne({ tag: player.tag });
 
         if (!account || !account.userId) {
-          pendingLeavers.delete(player.tag);
+          yield* sessionStore.update((s) => ({
+            ...s,
+            leavers: (s.leavers ?? []).filter((t) => t !== player.tag),
+          }));
           return;
         }
 
         const user = yield* userDatabase.findOne({ id: account.userId });
         if (!user) {
-          pendingLeavers.delete(player.tag);
+          yield* sessionStore.update((s) => ({
+            ...s,
+            leavers: (s.leavers ?? []).filter((t) => t !== player.tag),
+          }));
           return;
         }
 
@@ -47,7 +54,11 @@ export const createClanMemberListener = () =>
 
         if (Option.isSome(memberOpt)) {
           yield* memberManager.updatePresence(memberOpt.value, otherAccountInClan);
-          for (const acc of userAccounts) pendingLeavers.delete(acc.tag);
+          const tagsToRemove = new Set(userAccounts.map((acc) => acc.tag));
+          yield* sessionStore.update((s) => ({
+            ...s,
+            leavers: (s.leavers ?? []).filter((t) => !tagsToRemove.has(t)),
+          }));
         }
       });
 
@@ -66,8 +77,9 @@ export const createClanMemberListener = () =>
       updateSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const session = yield* sessionStore.get;
-          if (!session.clans.some((r) => r.tag === oldClan.tag)) {
-            yield* sessionStore.update((s) => ({ ...s, clans: [...s.clans, { name: oldClan.name, tag: oldClan.tag }] }));
+          const clans = session.clans ?? [];
+          if (!clans.some((r) => r.tag === oldClan.tag)) {
+            yield* sessionStore.update((s) => ({ ...s, clans: [...(s.clans ?? []), { name: oldClan.name, tag: oldClan.tag }] }));
           }
 
           let clanStore = clanStores.get(oldClan.tag);
@@ -82,10 +94,23 @@ export const createClanMemberListener = () =>
           const newMemberTags = new Set(newClan.members.map((m) => m.tag));
           const leftMembers = storedClan.members.filter((m) => !newMemberTags.has(m.tag));
 
-          for (const player of leftMembers) {
-            if (!pendingLeavers.has(player.tag)) {
-              pendingLeavers.add(player.tag);
-              yield* Queue.offer(leavingQueue, player);
+          if (leftMembers.length > 0) {
+            const session = yield* sessionStore.get;
+            const currentPending = new Set(session.leavers ?? []);
+            const toAdd: string[] = [];
+
+            for (const player of leftMembers) {
+              if (!currentPending.has(player.tag)) {
+                toAdd.push(player.tag);
+                yield* Queue.offer(leavingQueue, player);
+              }
+            }
+
+            if (toAdd.length > 0) {
+              yield* sessionStore.update((s) => ({
+                ...s,
+                leavers: [...(s.leavers ?? []), ...toAdd],
+              }));
             }
           }
 

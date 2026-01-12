@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Cause, Logger, LogLevel } from 'effect';
 import pino from 'pino';
@@ -28,7 +29,7 @@ export interface LoggerOptions {
 
 export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
   const {
-    dir = `${process.cwd()}/logs`,
+    dir = join(process.cwd(), 'logs'),
     level = process.env.NODE_ENV === 'development' ? 'debug' : 'info',
     trace = false,
     pretty = true,

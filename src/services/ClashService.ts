@@ -44,9 +44,7 @@ const createClash = Effect.gen(function* () {
   const http = yield* HttpTag;
   const config = yield* ClashConfigTag;
 
-  const client = new Client({
-    keys: [],
-  });
+  const client = new Client({ keys: [] });
 
   const clanTags = yield* Ref.make(new Set<string>());
   const clanCache = yield* Ref.make(new Map<string, Clan>());
@@ -73,7 +71,6 @@ const createClash = Effect.gen(function* () {
 
   // Maintenance of internal request state enables retry logic and prevents infinite loops during persistent API issues.
   let ipFromError: string | undefined;
-  let requestState = 0;
 
   const requestHandler = client.rest.requestHandler;
 
@@ -91,8 +88,10 @@ const createClash = Effect.gen(function* () {
   const requestOrig = requestHandler.request.bind(requestHandler);
 
   // The internal request method is wrapped with Effect-based logic to provide robust error handling, connection monitoring, and automated retries.
-  requestHandler.request = async <T>(path: string, options: RequestOptions = {}) =>
-    Effect.runPromise(
+  requestHandler.request = async <T>(path: string, options: RequestOptions = {}) => {
+    // Encapsulating the request state within the function scope ensures that retry counters are isolated to each individual request and avoids race conditions in concurrent operations.
+    let requestState = 0;
+    return Effect.runPromise(
       Effect.gen(function* () {
         return yield* Effect.tryPromise(() => requestOrig<T>(path, options)).pipe(
           Effect.tap(() => (requestState = 0)),
@@ -100,14 +99,26 @@ const createClash = Effect.gen(function* () {
             // Capping retry attempts for non-transient failures prevents excessive resource consumption.
             if (requestState > 2) {
               requestState = 2;
-              return Effect.fail(new ClashError({ message: 'API problem, please check back later!', cause: error }));
+              return Effect.fail(
+                new ClashError({
+                  message: 'API problem, please check back later!',
+                  cause: error,
+                }),
+              );
             }
 
             // Monitoring network connectivity ensures recovery before retrying network-level failures.
             if (isErrorLike(error) && ERROR_CODES.includes(error.code)) {
               requestState = 0;
               return waitForConnection().pipe(
-                Effect.flatMap(() => Effect.fail(new ClashError({ message: 'Retrying after connection recovery', cause: error }))),
+                Effect.flatMap(() =>
+                  Effect.fail(
+                    new ClashError({
+                      message: 'Retrying after connection recovery',
+                      cause: error,
+                    }),
+                  ),
+                ),
               );
             }
 
@@ -115,7 +126,12 @@ const createClash = Effect.gen(function* () {
               // Terminal handling of service maintenance (503) avoids unnecessary retries during the current request cycle.
               if (error.status === 503) {
                 requestState = 0;
-                return Effect.fail(new ClashError({ message: 'Service is temporarily unavailable because of maintenance!', status: 503 }));
+                return Effect.fail(
+                  new ClashError({
+                    message: 'Service is temporarily unavailable because of maintenance!',
+                    status: 503,
+                  }),
+                );
               }
 
               // IP-related access denials trigger key rotation and re-authentication with the new IP address.
@@ -127,22 +143,45 @@ const createClash = Effect.gen(function* () {
                 return login().pipe(
                   Effect.flatMap(() => {
                     requestState++;
-                    return Effect.fail(new ClashError({ message: 'Retrying due to IP change', status: 403, cause: error }));
+                    return Effect.fail(
+                      new ClashError({
+                        message: 'Retrying due to IP change',
+                        status: 403,
+                        cause: error,
+                      }),
+                    );
                   }),
                 );
               }
 
               if (ERROR_STATUS_CODES.includes(error.status)) {
                 requestState = 0;
-                return Effect.fail(new ClashError({ message: 'Transient API error', status: error.status, cause: error }));
+                return Effect.fail(
+                  new ClashError({
+                    message: 'Transient API error',
+                    status: error.status,
+                    cause: error,
+                  }),
+                );
               }
             }
 
             if (error instanceof SyntaxError && error.message.includes('not valid JSON')) {
-              return Effect.fail(new ClashError({ message: 'Invalid JSON response', status: 500, cause: error }));
+              return Effect.fail(
+                new ClashError({
+                  message: 'Invalid JSON response',
+                  status: 500,
+                  cause: error,
+                }),
+              );
             }
 
-            return Effect.fail(new ClashError({ message: 'Request failed', cause: error }));
+            return Effect.fail(
+              new ClashError({
+                message: 'Request failed',
+                cause: error,
+              }),
+            );
           }),
           Effect.retry({
             while: (error) => error instanceof ClashError && error.status !== 503,
@@ -152,6 +191,7 @@ const createClash = Effect.gen(function* () {
         );
       }).pipe(Effect.provideService(HttpTag, http)),
     );
+  };
 
   yield* login();
 
@@ -161,10 +201,12 @@ const createClash = Effect.gen(function* () {
 
     const updates = yield* Effect.all(
       Array.from(tags).map((tag) =>
+        // Individual clan fetch failures are converted to null to prevent a single failing request from terminating the entire polling cycle.
         Effect.tryPromise({
           try: () => client.getClan(tag),
-          catch: () => null,
+          catch: (error) => error,
         }).pipe(
+          Effect.catchAll(() => Effect.succeed(null)),
           Effect.flatMap((newClan) => {
             if (!newClan) return Effect.succeed(null);
             const oldClan = cache.get(tag);
@@ -185,7 +227,9 @@ const createClash = Effect.gen(function* () {
     // Updating the clan cache with the latest data from the polling cycle ensures that subsequent comparisons use the most recent state.
     yield* Ref.update(clanCache, (prev) => {
       const next = new Map(prev);
-      for (const update of updates) if (update) next.set(update.tag, update.newClan);
+      for (const update of updates) {
+        if (update) next.set(update.tag, update.newClan);
+      }
       return next;
     });
   }).pipe(
@@ -199,13 +243,25 @@ const createClash = Effect.gen(function* () {
   const getClan = (tag: string) =>
     Effect.tryPromise({
       try: () => client.getClan(tag),
-      catch: (error) => (error instanceof ClashError ? error : new ClashError({ message: `Failed to fetch clan ${tag}`, cause: error })),
+      catch: (error) =>
+        error instanceof ClashError
+          ? error
+          : new ClashError({
+              message: `Failed to fetch clan ${tag}`,
+              cause: error,
+            }),
     });
 
   const getPlayer = (tag: string) =>
     Effect.tryPromise({
       try: () => client.getPlayer(tag),
-      catch: (error) => (error instanceof ClashError ? error : new ClashError({ message: `Failed to fetch player ${tag}`, cause: error })),
+      catch: (error) =>
+        error instanceof ClashError
+          ? error
+          : new ClashError({
+              message: `Failed to fetch player ${tag}`,
+              cause: error,
+            }),
     });
 
   return {

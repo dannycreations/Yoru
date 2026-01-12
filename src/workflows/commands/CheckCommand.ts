@@ -145,6 +145,13 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const configStore = yield* ConfigStoreTag;
     const config = yield* configStore.get;
     const clanTags = config.clanTags;
+
+    // Verifying that at least one clan is configured prevents index-out-of-bounds errors and provides immediate feedback to the user.
+    if (clanTags.length === 0) {
+      yield* Effect.tryPromise(() => message.reply('No clans are currently configured.'));
+      return;
+    }
+
     const index = Math.max(0, Math.min(page - 1, clanTags.length - 1));
 
     const clan = yield* clash.getClan(clanTags[index]);
@@ -222,7 +229,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
 export const checkCommand = (message: Message<true>, args: string[]) =>
   Effect.gen(function* () {
     const tag = args[0];
-    const page = parseInt(args[1] || '0', 10);
+    const page = parseInt(args[1], 10) || 0;
 
     // A guard clause for missing input reduces nesting and improves readability.
     if (tag === undefined || tag === '') {

@@ -40,8 +40,9 @@ const saveStore = <A>(filePath: string, data: A): Effect.Effect<void, StoreError
     yield* ensureDir(filePath);
 
     const tempPath = `${filePath}.tmp`;
-    yield* Effect.tryPromise(() => writeFile(tempPath, JSON.stringify(data)));
+    const content = JSON.stringify(data);
 
+    yield* Effect.tryPromise(() => writeFile(tempPath, content));
     yield* Effect.tryPromise(() => rename(tempPath, filePath));
   }).pipe(
     Effect.mapError((error) =>

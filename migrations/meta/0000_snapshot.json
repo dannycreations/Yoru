@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c45f1703-2e4d-4030-a203-3a5c8c58dbb4",
+  "id": "a8092a0b-0280-4dae-9165-38cf3667041b",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "account": {
@@ -30,13 +30,6 @@
         },
         "created_at": {
           "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "is_banned": {
-          "name": "is_banned",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

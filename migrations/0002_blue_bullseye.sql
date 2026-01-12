@@ -1,1 +1,0 @@
-ALTER TABLE `account` DROP COLUMN `is_banned`;

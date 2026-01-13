@@ -28,7 +28,7 @@ export interface ClashConfig {
   readonly pollingInterval?: number;
 }
 
-export const ClashConfigTag = Context.GenericTag<ClashConfig>('@config/ClashConfig');
+export class ClashConfigTag extends Context.Tag('@config/ClashConfig')<ClashConfigTag, ClashConfig>() {}
 
 export interface ClashLayer {
   readonly client: Client;
@@ -38,7 +38,7 @@ export interface ClashLayer {
   readonly getPlayer: (tag: string) => Effect.Effect<Player, ClashError>;
 }
 
-export const ClashTag = Context.GenericTag<ClashLayer>('@layer/ClashLayer');
+export class ClashTag extends Context.Tag('@layer/ClashLayer')<ClashTag, ClashLayer>() {}
 
 const createClash = Effect.gen(function* () {
   const http = yield* HttpTag;

@@ -16,7 +16,7 @@ export interface DiscordHandler {
   readonly clearLoginTimeout: () => void;
 }
 
-export const DiscordHandlerTag = Context.GenericTag<DiscordHandler>('@workflow/DiscordHandlerLayer');
+export class DiscordHandlerTag extends Context.Tag('@workflow/DiscordHandlerLayer')<DiscordHandlerTag, DiscordHandler>() {}
 
 const createDiscordClient = Effect.gen(function* () {
   const env = yield* EnvTag;

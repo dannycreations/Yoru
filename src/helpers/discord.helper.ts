@@ -41,10 +41,10 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
 
     const { client } = yield* DiscordHandlerTag;
 
-    for (const g of client.guilds.cache.values()) {
-      const cachedMember = g.members.cache.get(userId);
-      if (cachedMember) return Option.some(cachedMember);
-    }
+    const cachedMember = Array.from(client.guilds.cache.values())
+      .find((g) => g.members.cache.has(userId))
+      ?.members.cache.get(userId);
+    if (cachedMember) return Option.some(cachedMember);
 
     const results = yield* Effect.all(
       Array.from(client.guilds.cache.values()).map((g) =>
@@ -56,5 +56,6 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
       { concurrency: 'unbounded' },
     );
 
-    return Option.fromNullable(results.find(Option.isSome)?.value);
+    const found = results.find(Option.isSome);
+    return found ?? Option.none<GuildMember>();
   });

@@ -1,6 +1,10 @@
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Data, Effect, Layer, Schema } from 'effect';
 
 import { Store, StoreLayer } from '../services/StoreService';
+
+export class EnvError extends Data.TaggedError('EnvError')<{
+  readonly message: string;
+}> {}
 
 export const EnvSchema = Schema.Struct({
   NODE_ENV: Schema.optional(Schema.Literal('development', 'production', 'test')).pipe(
@@ -21,8 +25,9 @@ export class EnvTag extends Context.Tag('@schema/EnvLayer')<EnvTag, Env>() {}
 export const EnvLayer = Layer.effect(
   EnvTag,
   Effect.gen(function* () {
-    const decode = Schema.decodeUnknown(EnvSchema);
-    return yield* decode(process.env).pipe(Effect.mapError((error) => new Error(`Invalid environment variables: ${error.message}`)));
+    return yield* Schema.decodeUnknown(EnvSchema)(process.env).pipe(
+      Effect.mapError((error) => new EnvError({ message: `Invalid environment variables: ${error.message}` })),
+    );
   }),
 );
 

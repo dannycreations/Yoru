@@ -1,6 +1,6 @@
 import { Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
-import { Effect, Option } from 'effect';
+import { Effect, Either, Option } from 'effect';
 
 import { emoji } from '../../core/emojis';
 import { ConfigStoreTag } from '../../core/schemas';
@@ -41,7 +41,7 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
 
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
-      if (result._tag === 'Left') continue;
+      if (Either.isLeft(result)) continue;
 
       const data = result.right;
       const count = i + 1;

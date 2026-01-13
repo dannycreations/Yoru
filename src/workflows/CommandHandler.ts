@@ -18,7 +18,7 @@ export interface CommandHandler {
   ) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberHandlerTag.Service>;
 }
 
-export const CommandHandlerTag = Context.GenericTag<CommandHandler>('@workflow/CommandHandlerLayer');
+export class CommandHandlerTag extends Context.Tag('@workflow/CommandHandlerLayer')<CommandHandlerTag, CommandHandler>() {}
 
 // Centralized command mapping facilitates easy addition of new commands and aliases while maintaining a single point of reference for command execution.
 const commandMap: Record<string, (message: Message<true>, args: string[]) => Effect.Effect<void, any, any>> = {

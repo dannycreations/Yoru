@@ -44,7 +44,7 @@ export interface HttpLayer {
   readonly waitForConnection: (total?: number) => Effect.Effect<void, HttpRequestError>;
 }
 
-export const HttpTag = Context.GenericTag<HttpLayer>('@layer/HttpLayer');
+export class HttpTag extends Context.Tag('@layer/HttpLayer')<HttpTag, HttpLayer>() {}
 
 const gotInstance: Got = got.bind(got);
 const userAgent = new UserAgent({ deviceCategory: 'desktop' });

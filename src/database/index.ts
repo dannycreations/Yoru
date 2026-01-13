@@ -15,8 +15,8 @@ export const sqliteConfig = createConfig({
   schema: isDrizzleKit ? schema : join(projectDir, schema),
 });
 
-export const UserDatabaseTag = Context.GenericTag<Adapter<typeof userTable>>('@layer/UserDatabaseLayer');
+export class UserDatabaseTag extends Context.Tag('@layer/UserDatabaseLayer')<UserDatabaseTag, Adapter<typeof userTable>>() {}
 export const UserDatabaseLayer = Layer.succeed(UserDatabaseTag, Adapter(userTable));
 
-export const AccountDatabaseTag = Context.GenericTag<Adapter<typeof accountTable>>('@layer/AccountDatabaseLayer');
+export class AccountDatabaseTag extends Context.Tag('@layer/AccountDatabaseLayer')<AccountDatabaseTag, Adapter<typeof accountTable>>() {}
 export const AccountDatabaseLayer = Layer.succeed(AccountDatabaseTag, Adapter(accountTable));

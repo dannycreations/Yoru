@@ -25,7 +25,7 @@ export interface MemberHandler {
   ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteTag | typeof AccountDatabaseTag>;
 }
 
-export const MemberHandlerTag = Context.GenericTag<MemberHandler>('@workflow/MemberHandlerLayer');
+export class MemberHandlerTag extends Context.Tag('@workflow/MemberHandlerLayer')<MemberHandlerTag, MemberHandler>() {}
 
 export const MemberHandlerLayer = Layer.effect(
   MemberHandlerTag,

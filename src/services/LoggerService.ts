@@ -120,7 +120,7 @@ export const LoggerLayer = (self: Logger.Logger<unknown, void>, logger: pino.Log
       const level = LOG_LEVEL_MAP[logLevel._tag] ?? 'info';
       const payload = Array.isArray(message) ? [...message] : [message];
 
-      if (cause && cause._tag !== 'Empty') {
+      if (cause && !Cause.isEmptyType(cause)) {
         const [failure] = Cause.failures(cause);
         const causePretty = { cause: Cause.pretty(cause) };
         if (isErrorLike<{ cause: unknown }>(failure) && failure.cause) {

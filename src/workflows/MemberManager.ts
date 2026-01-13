@@ -8,7 +8,7 @@ import { getPlayerNickname } from '../helpers/clash.helper';
 import { removeMemberRoles } from '../helpers/discord.helper';
 import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/role.helper';
 import { ClashTag } from '../services/ClashService';
-import { SqliteTag } from '../services/database';
+import { SqliteClientTag } from '../structures/database';
 
 import type { Player } from 'clashofclans.js';
 import type { GuildMember } from 'discord.js';
@@ -19,13 +19,13 @@ export interface MemberHandler {
   readonly findActiveAccount: (
     userId: number,
     currentTag: string,
-  ) => Effect.Effect<Player | null, never, SqliteTag | typeof ClashTag | ConfigStoreTag | typeof AccountDatabaseTag>;
+  ) => Effect.Effect<Player | null, never, SqliteClientTag | typeof ClashTag | ConfigStoreTag | typeof AccountDatabaseTag>;
   readonly getPlayer: (
     account: AccountTable,
-  ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteTag | typeof AccountDatabaseTag>;
+  ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteClientTag | typeof AccountDatabaseTag>;
 }
 
-export class MemberHandlerTag extends Context.Tag('@workflow/MemberHandlerLayer')<MemberHandlerTag, MemberHandler>() {}
+export class MemberHandlerTag extends Context.Tag('@workflows/MemberHandler')<MemberHandlerTag, MemberHandler>() {}
 
 export const MemberHandlerLayer = Layer.effect(
   MemberHandlerTag,

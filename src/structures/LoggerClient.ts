@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Cause, Logger, LogLevel } from 'effect';
+import { Cause, Layer, Logger, LogLevel } from 'effect';
 import pino from 'pino';
 import pinoPretty from 'pino-pretty';
 
@@ -113,7 +113,7 @@ export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
   return instance;
 };
 
-export const LoggerLayer = (self: Logger.Logger<unknown, void>, logger: pino.Logger) =>
+export const LoggerClientLayer = (self: Logger.Logger<unknown, void>, logger: pino.Logger): Layer.Layer<never> =>
   Logger.replace(
     self,
     Logger.make(({ logLevel, message, cause }) => {
@@ -124,12 +124,12 @@ export const LoggerLayer = (self: Logger.Logger<unknown, void>, logger: pino.Log
         const [failure] = Cause.failures(cause);
         const causePretty = { cause: Cause.pretty(cause) };
         if (isErrorLike<{ cause: unknown }>(failure) && failure.cause) {
-          payload.push(Object.assign(failure.cause, causePretty));
+          payload.push(Object.assign({}, failure.cause, causePretty));
         } else {
           payload.push(causePretty);
         }
       }
 
-      (logger[level] as Function)(...payload);
+      (logger[level] as (...args: unknown[]) => void)(...payload);
     }),
   );

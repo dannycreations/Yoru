@@ -5,10 +5,12 @@ import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { getGuildMember } from '../../helpers/discord.helper';
 import { ClashTag } from '../../services/ClashService';
-import { createStore, Store } from '../../services/StoreService';
+import { createStore, StoreClient } from '../../structures/StoreClient';
 import { MemberHandlerTag } from '../MemberManager';
 
 import type { ClanMember } from 'clashofclans.js';
+
+type ClanMemberTag = Pick<ClanMember, 'name' | 'tag'>;
 
 export const createClanMemberListener = () =>
   Effect.gen(function* () {
@@ -19,11 +21,11 @@ export const createClanMemberListener = () =>
     const userDatabase = yield* UserDatabaseTag;
     const scope = yield* Effect.scope;
 
-    const clanStores = new Map<string, Store<ClanData>>();
-    const leavingQueue = yield* Queue.unbounded<ClanMember>();
+    const clanStores = new Map<string, StoreClient<ClanData>>();
+    const leavingQueue = yield* Queue.unbounded<ClanMemberTag>();
     const updateSemaphore = yield* Effect.makeSemaphore(1);
 
-    const handleMemberLeave = (player: ClanMember) =>
+    const handleMemberLeave = (player: ClanMemberTag) =>
       Effect.gen(function* () {
         const session = yield* sessionStore.get;
         const leavers = session.leavers ?? [];
@@ -125,7 +127,7 @@ export const createClanMemberListener = () =>
             const event = yield* queue.take;
             if (event._tag === ClientEvents.ClanMember) {
               // The event handler is executed within a dedicated loop to ensure that clan member updates are processed sequentially and do not interfere with other system events.
-              yield* onClanMemberUpdate(event.oldClan as any, event.newClan as any).pipe(
+              yield* onClanMemberUpdate(event.oldClan, event.newClan).pipe(
                 Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
               );
             }

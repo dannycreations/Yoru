@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path';
 import { Context, Layer } from 'effect';
 
-import { Adapter, createConfig } from '../services/database';
+import { Adapter, createConfig } from '../structures/database';
 import { accountTable, userTable } from './schema';
 
 const isDrizzleKit = process.argv.toString().includes('drizzle-kit');
@@ -15,8 +15,10 @@ export const sqliteConfig = createConfig({
   schema: isDrizzleKit ? schema : join(projectDir, schema),
 });
 
-export class UserDatabaseTag extends Context.Tag('@layer/UserDatabaseLayer')<UserDatabaseTag, Adapter<typeof userTable>>() {}
+export class UserDatabaseTag extends Context.Tag('@database/User')<UserDatabaseTag, Adapter<typeof userTable>>() {}
+
 export const UserDatabaseLayer = Layer.succeed(UserDatabaseTag, Adapter(userTable));
 
-export class AccountDatabaseTag extends Context.Tag('@layer/AccountDatabaseLayer')<AccountDatabaseTag, Adapter<typeof accountTable>>() {}
+export class AccountDatabaseTag extends Context.Tag('@database/Account')<AccountDatabaseTag, Adapter<typeof accountTable>>() {}
+
 export const AccountDatabaseLayer = Layer.succeed(AccountDatabaseTag, Adapter(accountTable));

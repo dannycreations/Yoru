@@ -5,7 +5,7 @@ import { DiscordHandlerTag } from '../workflows/DiscordHandler';
 
 import type { EmbedBuilder, Guild, GuildMember, Role } from 'discord.js';
 
-export const addSplitFields = (embed: EmbedBuilder, name: string, list: string[], separator = ' ') => {
+export const addSplitFields = (embed: EmbedBuilder, name: string, list: readonly string[], separator = ' '): void => {
   let value = '';
   let count = 0;
   for (const item of list) {
@@ -17,12 +17,14 @@ export const addSplitFields = (embed: EmbedBuilder, name: string, list: string[]
       value = value ? `${value}${separator}${item}` : item;
     }
   }
-  if (value) embed.addFields({ name: count === 0 ? name : `${name} (cont.)`, value });
+  if (value) {
+    embed.addFields({ name: count === 0 ? name : `${name} (cont.)`, value });
+  }
 };
 
-export const removeMemberRoles = (member: GuildMember, filter: (role: Role) => boolean) => {
+export const removeMemberRoles = (member: GuildMember, filter: (role: Role) => boolean): Effect.Effect<void, Error> => {
   const roles = member.roles.cache.filter(filter);
-  return roles.size > 0 ? Effect.tryPromise(() => member.roles.remove(roles)) : Effect.void;
+  return roles.size > 0 ? Effect.tryPromise(() => member.roles.remove(roles)).pipe(Effect.asVoid) : Effect.void;
 };
 
 export const parseMentionOrSnowflake = (input?: string | null): string | null => {
@@ -35,19 +37,23 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
   Effect.gen(function* () {
     if (guild) {
       const cached = guild.members.cache.get(userId);
-      if (cached) return Option.some(cached);
+      if (cached) {
+        return Option.some(cached);
+      }
       return yield* Effect.tryPromise(() => guild.members.fetch(userId)).pipe(Effect.option);
     }
 
     const { client } = yield* DiscordHandlerTag;
 
-    const cachedMember = Array.from(client.guilds.cache.values())
-      .find((g) => g.members.cache.has(userId))
-      ?.members.cache.get(userId);
-    if (cachedMember) return Option.some(cachedMember);
+    const guilds = Array.from(client.guilds.cache.values());
+
+    const cachedMember = guilds.find((g) => g.members.cache.has(userId))?.members.cache.get(userId);
+    if (cachedMember) {
+      return Option.some(cachedMember);
+    }
 
     const results = yield* Effect.all(
-      Array.from(client.guilds.cache.values()).map((g) =>
+      guilds.map((g) =>
         Effect.tryPromise(() => g.members.fetch(userId)).pipe(
           Effect.map(Option.some),
           Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())),
@@ -56,6 +62,5 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
       { concurrency: 'unbounded' },
     );
 
-    const found = results.find(Option.isSome);
-    return found ?? Option.none<GuildMember>();
+    return results.find(Option.isSome) ?? Option.none<GuildMember>();
   });

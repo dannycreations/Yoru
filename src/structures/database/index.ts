@@ -5,13 +5,13 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { Effect, Layer } from 'effect';
 
-import { Adapter, SqliteError, SqliteTag } from './Adapter';
+import { Adapter, SqliteClientError, SqliteClientTag } from './Adapter';
 
 import type { PatchedDialect } from './types';
 
 export * from 'drizzle-orm/better-sqlite3';
 export * from 'drizzle-orm/sqlite-core';
-export { Adapter, Database, SqliteError, SqliteTag };
+export { Adapter, Database, SqliteClientError, SqliteClientTag };
 
 export interface SqliteOptions {
   out: string;
@@ -53,9 +53,9 @@ export const patchDialect = (dialect: PatchedDialect): void => {
 
 export const createConfig = (options: Partial<SqliteOptions> = {}): SqliteOptions => defaultsDeep({}, options, baseOptions);
 
-export const SqliteLayer = (options: SqliteOptions): Layer.Layer<SqliteTag, SqliteError, never> =>
+export const SqliteClientLayer = (options: SqliteOptions): Layer.Layer<SqliteClientTag, SqliteClientError, never> =>
   Layer.scoped(
-    SqliteTag,
+    SqliteClientTag,
     Effect.acquireRelease(
       Effect.try({
         try: () => {
@@ -75,7 +75,7 @@ export const SqliteLayer = (options: SqliteOptions): Layer.Layer<SqliteTag, Sqli
           return { db, client };
         },
         catch: (error) =>
-          new SqliteError({
+          new SqliteClientError({
             message: 'Failed to initialize SQLite database',
             cause: error,
           }),

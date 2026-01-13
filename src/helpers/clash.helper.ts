@@ -13,23 +13,26 @@ const CLAN_ROLE_MAP: Record<string, ValueOf<typeof MemberRoles>> = {
   elder: MemberRoles.Elder,
 };
 
-const getThumbnailUrl = (name: string) => emoji.thumbnail.replace('{0}', name);
+const getThumbnailUrl = (name: string): string => emoji.thumbnail.replace('{0}', name);
 
 // Standardization of nickname generation logic across the system ensures that player identity is represented consistently within Discord.
-export const getPlayerNickname = (member: GuildMember, player: { name: string; tag: string }) =>
-  member.user.username.toLowerCase() === player.name.toLowerCase() ? `${player.name} ${player.tag}` : player.name;
+export const getPlayerNickname = (member: GuildMember, player: { name: string; tag: string }): string => {
+  const isSameName = member.user.username.toLowerCase() === player.name.toLowerCase();
+  return isSameName ? `${player.name} ${player.tag}` : player.name;
+};
 
 export const parseClan = (player: Player): EmbedFooterOptions => {
   if (player.clan) {
-    const role = CLAN_ROLE_MAP[player.role!] ?? MemberRoles.Member;
+    const role = (player.role && CLAN_ROLE_MAP[player.role]) ?? MemberRoles.Member;
     const text = `${role} of ${player.clan.name}\n(${player.clan.tag})`;
     const iconURL = player.clan.badge.url;
     return { text, iconURL };
   }
 
-  const text = 'Player is clanless';
-  const iconURL = getThumbnailUrl('badges/noclan.png');
-  return { text, iconURL };
+  return {
+    text: 'Player is clanless',
+    iconURL: getThumbnailUrl('badges/noclan.png'),
+  };
 };
 
 export const formatPlayerStats = (player: Player): string => {
@@ -97,9 +100,13 @@ export const categorizeUnits = (player: Player) => {
   };
   const unknowns: unknown[] = [];
 
+  const units = [...player.troops, ...player.spells, ...player.heroes];
+
   // Categorizing player units by their respective types allows for a structured and readable presentation of their progression in the profile embed.
-  for (const unit of [...player.troops, ...player.spells, ...player.heroes]) {
-    if (unit.village !== 'home') continue;
+  for (const unit of units) {
+    if (unit.village !== 'home') {
+      continue;
+    }
 
     const mapping = UNIT_LOOKUP.get(unit.name);
     if (mapping) {

@@ -1,6 +1,6 @@
 import { Context, Data, Effect, Layer, Schema } from 'effect';
 
-import { Store, StoreLayer } from '../services/StoreService';
+import { StoreClient, StoreClientLayer } from '../structures/StoreClient';
 
 export class EnvError extends Data.TaggedError('EnvError')<{
   readonly message: string;
@@ -9,8 +9,8 @@ export class EnvError extends Data.TaggedError('EnvError')<{
 export const EnvSchema = Schema.Struct({
   NODE_ENV: Schema.optional(Schema.Literal('development', 'production', 'test')).pipe(
     Schema.withDefaults({
-      constructor: () => 'development' as const,
-      decoding: () => 'development' as const,
+      constructor: () => 'development',
+      decoding: () => 'development',
     }),
   ),
   DISCORD_TOKEN: Schema.NonEmptyString,
@@ -20,15 +20,13 @@ export const EnvSchema = Schema.Struct({
 
 export type Env = Schema.Schema.Type<typeof EnvSchema>;
 
-export class EnvTag extends Context.Tag('@schema/EnvLayer')<EnvTag, Env>() {}
+export class EnvTag extends Context.Tag('@core/Env')<EnvTag, Env>() {}
 
 export const EnvLayer = Layer.effect(
   EnvTag,
-  Effect.gen(function* () {
-    return yield* Schema.decodeUnknown(EnvSchema)(process.env).pipe(
-      Effect.mapError((error) => new EnvError({ message: `Invalid environment variables: ${error.message}` })),
-    );
-  }),
+  Schema.decodeUnknown(EnvSchema)(process.env).pipe(
+    Effect.mapError((error) => new EnvError({ message: `Invalid environment variables: ${error.message}` })),
+  ),
 );
 
 export const EmojiSchema = Schema.Struct({
@@ -60,7 +58,12 @@ export type Emoji = Schema.Schema.Type<typeof EmojiSchema>;
 export const ClanSchema = Schema.Struct({
   tag: Schema.String,
   name: Schema.String,
-  members: Schema.Array(Schema.Any),
+  members: Schema.Array(
+    Schema.Struct({
+      tag: Schema.String,
+      name: Schema.String,
+    }),
+  ),
 });
 
 export type ClanData = Schema.Schema.Type<typeof ClanSchema>;
@@ -73,9 +76,15 @@ export const ConfigSchema = Schema.Struct({
 
 export type Config = Schema.Schema.Type<typeof ConfigSchema>;
 
-export class ConfigStoreTag extends Context.Tag('@schema/ConfigStoreLayer')<ConfigStoreTag, Store<Config>>() {}
+export class ConfigStoreTag extends Context.Tag('@core/ConfigStore')<ConfigStoreTag, StoreClient<Config>>() {}
 
-export const ConfigStoreLayer = StoreLayer(ConfigStoreTag, 'sessions/settings.json', ConfigSchema, { prefix: '?', ownerIds: [], clanTags: [] }, 5000);
+export const ConfigStoreLayer = StoreClientLayer(
+  ConfigStoreTag,
+  'sessions/settings.json',
+  ConfigSchema,
+  { prefix: '?', ownerIds: [], clanTags: [] },
+  5000,
+);
 
 export const SessionSchema = Schema.Struct({
   clans: Schema.optional(
@@ -91,6 +100,6 @@ export const SessionSchema = Schema.Struct({
 
 export type Session = Schema.Schema.Type<typeof SessionSchema>;
 
-export class SessionStoreTag extends Context.Tag('@schema/SessionStoreLayer')<SessionStoreTag, Store<Session>>() {}
+export class SessionStoreTag extends Context.Tag('@core/SessionStore')<SessionStoreTag, StoreClient<Session>>() {}
 
-export const SessionStoreLayer = StoreLayer(SessionStoreTag, 'sessions/sessions.json', SessionSchema, { clans: [], leavers: [] }, 5000);
+export const SessionStoreLayer = StoreClientLayer(SessionStoreTag, 'sessions/sessions.json', SessionSchema, { clans: [], leavers: [] }, 5000);

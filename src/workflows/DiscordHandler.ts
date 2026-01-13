@@ -16,7 +16,7 @@ export interface DiscordHandler {
   readonly clearLoginTimeout: () => void;
 }
 
-export class DiscordHandlerTag extends Context.Tag('@workflow/DiscordHandlerLayer')<DiscordHandlerTag, DiscordHandler>() {}
+export class DiscordHandlerTag extends Context.Tag('@workflows/DiscordHandler')<DiscordHandlerTag, DiscordHandler>() {}
 
 const createDiscordClient = Effect.gen(function* () {
   const env = yield* EnvTag;
@@ -64,7 +64,7 @@ const createDiscordClient = Effect.gen(function* () {
   // The login timeout clears automatically once the client is ready to ensure the watchdog does not trigger after a successful connection.
   client.once('ready', () => clearLoginTimeout());
 
-  const login = () =>
+  const login = (): Effect.Effect<void, DiscordError> =>
     Effect.tryPromise({
       try: () => client.login(env.DISCORD_TOKEN),
       catch: (error) => new DiscordError({ message: 'Failed to login to Discord', cause: error }),

@@ -3,7 +3,7 @@ import { Context, Effect, Layer } from 'effect';
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
 import { replyWithError } from '../helpers/error.helper';
 import { ClashLayer } from '../services/ClashService';
-import { SqliteTag } from '../services/database';
+import { SqliteClientTag } from '../structures/database';
 import { checkCommand } from './commands/CheckCommand';
 import { linkCommand } from './commands/LinkCommand';
 import { pingCommand } from './commands/PingCommand';
@@ -15,13 +15,13 @@ import type { DiscordHandler } from './DiscordHandler';
 export interface CommandHandler {
   readonly handleCommand: (
     message: Message<true>,
-  ) => Effect.Effect<void, never, SqliteTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberHandlerTag.Service>;
+  ) => Effect.Effect<void, never, SqliteClientTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberHandlerTag.Service>;
 }
 
-export class CommandHandlerTag extends Context.Tag('@workflow/CommandHandlerLayer')<CommandHandlerTag, CommandHandler>() {}
+export class CommandHandlerTag extends Context.Tag('@workflows/CommandHandler')<CommandHandlerTag, CommandHandler>() {}
 
 // Centralized command mapping facilitates easy addition of new commands and aliases while maintaining a single point of reference for command execution.
-const commandMap: Record<string, (message: Message<true>, args: string[]) => Effect.Effect<void, any, any>> = {
+const commandMap: Record<string, (message: Message<true>, args: string[]) => Effect.Effect<void, unknown, any>> = {
   ping: pingCommand,
   p: pingCommand,
   check: checkCommand,
@@ -39,7 +39,9 @@ export const CommandHandler = Effect.gen(function* () {
       const prefix = config.prefix;
 
       // Messages must start with the configured prefix to be recognized as commands.
-      if (!message.content.startsWith(prefix)) return;
+      if (!message.content.startsWith(prefix)) {
+        return;
+      }
 
       // The message content is parsed into a command name and an array of arguments.
       const parts = message.content.slice(prefix.length).trim().split(/\s+/);
@@ -48,7 +50,9 @@ export const CommandHandler = Effect.gen(function* () {
 
       // Command existence is verified within the mapping before execution.
       const command = commandName ? commandMap[commandName] : undefined;
-      if (!command) return;
+      if (!command) {
+        return;
+      }
 
       // Commands are executed with error handling delegated to a specialized helper to maintain a clean handler loop.
       yield* command(message, args).pipe(

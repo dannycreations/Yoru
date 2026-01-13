@@ -5,10 +5,10 @@ import { Effect, Layer, Logger } from 'effect';
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
 import { AccountDatabaseLayer, sqliteConfig, UserDatabaseLayer } from './database';
 import { ClashConfigTag, ClashLayer, ClashTag } from './services/ClashService';
-import { SqliteLayer } from './services/database';
-import { HttpLayer } from './services/HttpService';
-import { createLogger, LoggerLayer } from './services/LoggerService';
-import { cycleMidnightRestart, cycleWithRestart, runForkWithCleanUp } from './services/RuntimeService';
+import { SqliteClientLayer } from './structures/database';
+import { HttpClientLayer } from './structures/HttpClient';
+import { createLogger, LoggerClientLayer } from './structures/LoggerClient';
+import { cycleMidnightRestart, cycleWithRestart, runForkWithCleanUp } from './structures/RuntimeClient';
 import { CommandHandlerLayer } from './workflows/CommandHandler';
 import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandler';
 import { EventHandlerLayer } from './workflows/EventHandler';
@@ -21,7 +21,7 @@ const program = Effect.gen(function* () {
   const config = yield* store.get;
 
   if (config.clanTags.length > 0) {
-    yield* clash.addClans(config.clanTags as string[]);
+    yield* clash.addClans(config.clanTags);
   }
 
   yield* discord.login();
@@ -48,8 +48,16 @@ const MainLayer = EventHandlerLayer.pipe(
     ),
   ),
   Layer.provideMerge(
-    Layer.mergeAll(EnvLayer, HttpLayer, ConfigStoreLayer, SessionStoreLayer, SqliteLayer(sqliteConfig), UserDatabaseLayer, AccountDatabaseLayer),
+    Layer.mergeAll(
+      EnvLayer,
+      HttpClientLayer,
+      ConfigStoreLayer,
+      SessionStoreLayer,
+      SqliteClientLayer(sqliteConfig),
+      UserDatabaseLayer,
+      AccountDatabaseLayer,
+    ),
   ),
 );
 
-runForkWithCleanUp(cycleWithRestart(program.pipe(Effect.provide(MainLayer))).pipe(Effect.provide(LoggerLayer(Logger.defaultLogger, logger))));
+runForkWithCleanUp(cycleWithRestart(program.pipe(Effect.provide(MainLayer))).pipe(Effect.provide(LoggerClientLayer(Logger.defaultLogger, logger))));

@@ -4,12 +4,12 @@ import { integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 import { Effect, Exit } from 'effect';
 import { afterAll, beforeAll, beforeEach, describe, expect, expectTypeOf } from 'vitest';
 
-import { Adapter, BetterSQLite3Database, Database, drizzle, patchDialect, SqliteTag } from '.';
+import { Adapter, BetterSQLite3Database, Database, drizzle, patchDialect, SqliteClientTag } from '.';
 
 const it = Object.assign((...args: Parameters<typeof itBase>) => itBase(...args), itBase) as any;
 
 it.effect = (name: string, self: () => Effect.Effect<void, never>, timeout?: number) =>
-  itBase.effect(name, () => Effect.provideService(self(), SqliteTag, db), timeout);
+  itBase.effect(name, () => Effect.provideService(self(), SqliteClientTag, db), timeout);
 
 const officesTable = sqliteTable('offices', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -149,9 +149,9 @@ beforeEach(() => {
   postAdapter = Adapter(postsTable);
   uniquePairAdapter = Adapter(uniquePairTable);
 
-  Effect.runSync(Effect.provideService(officeAdapter.insert(sampleOffices), SqliteTag, db));
-  Effect.runSync(Effect.provideService(userAdapter.insert(sampleUsers), SqliteTag, db));
-  Effect.runSync(Effect.provideService(postAdapter.insert(samplePosts), SqliteTag, db));
+  Effect.runSync(Effect.provideService(officeAdapter.insert(sampleOffices), SqliteClientTag, db));
+  Effect.runSync(Effect.provideService(userAdapter.insert(sampleUsers), SqliteClientTag, db));
+  Effect.runSync(Effect.provideService(postAdapter.insert(samplePosts), SqliteClientTag, db));
 });
 
 afterAll(() => {
@@ -1235,7 +1235,7 @@ describe('Adapter insert()', () => {
               yield* userAdapter.update({ ...alice, bio: null });
             }
           }),
-          SqliteTag,
+          SqliteClientTag,
           db,
         ),
       );

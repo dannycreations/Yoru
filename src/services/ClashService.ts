@@ -3,7 +3,7 @@ import { Client, HTTPError } from 'clashofclans.js';
 import { Context, Data, Effect, Layer, PubSub, Ref, Schedule } from 'effect';
 
 import { ClientEvents } from '../core/constants';
-import { ERROR_CODES, ERROR_STATUS_CODES, HttpTag, waitForConnection } from './HttpService';
+import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient';
 
 import type { Clan, Player, RequestOptions } from 'clashofclans.js';
 
@@ -28,20 +28,20 @@ export interface ClashConfig {
   readonly pollingInterval?: number;
 }
 
-export class ClashConfigTag extends Context.Tag('@config/ClashConfig')<ClashConfigTag, ClashConfig>() {}
+export class ClashConfigTag extends Context.Tag('@services/ClashConfig')<ClashConfigTag, ClashConfig>() {}
 
 export interface ClashLayer {
   readonly client: Client;
   readonly events: PubSub.PubSub<ClashEvent>;
-  readonly addClans: (tags: string[]) => Effect.Effect<void>;
+  readonly addClans: (tags: readonly string[]) => Effect.Effect<void>;
   readonly getClan: (tag: string) => Effect.Effect<Clan, ClashError>;
   readonly getPlayer: (tag: string) => Effect.Effect<Player, ClashError>;
 }
 
-export class ClashTag extends Context.Tag('@layer/ClashLayer')<ClashTag, ClashLayer>() {}
+export class ClashTag extends Context.Tag('@services/Clash')<ClashTag, ClashLayer>() {}
 
 const createClash = Effect.gen(function* () {
-  const http = yield* HttpTag;
+  const http = yield* HttpClientTag;
   const config = yield* ClashConfigTag;
 
   const client = new Client({ keys: [] });
@@ -64,7 +64,7 @@ const createClash = Effect.gen(function* () {
           message: 'Failed to login to Clash API',
           cause: error,
         }),
-    });
+    }).pipe(Effect.asVoid);
 
   // Overriding internal library methods allows for the implementation of custom behavior.
   client.rest.requestHandler['reValidateKeys'] = () => Promise.resolve();
@@ -189,7 +189,7 @@ const createClash = Effect.gen(function* () {
             schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
           }),
         );
-      }).pipe(Effect.provideService(HttpTag, http)),
+      }).pipe(Effect.provideService(HttpClientTag, http)),
     );
   };
 
@@ -215,7 +215,7 @@ const createClash = Effect.gen(function* () {
                   _tag: ClientEvents.ClanMember,
                   oldClan,
                   newClan,
-                } as const)
+                })
               : Effect.void;
             return publish.pipe(Effect.as({ tag, newClan }));
           }),
@@ -267,15 +267,17 @@ const createClash = Effect.gen(function* () {
   return {
     client,
     events,
-    addClans: (tags: string[]) =>
+    addClans: (tags: readonly string[]) =>
       Ref.update(clanTags, (set) => {
         const next = new Set(set);
-        for (const tag of tags) next.add(tag);
+        for (const tag of tags) {
+          next.add(tag);
+        }
         return next;
       }),
     getClan,
     getPlayer,
-  } as const;
+  };
 });
 
 export const ClashLayer = Layer.scoped(ClashTag, createClash);

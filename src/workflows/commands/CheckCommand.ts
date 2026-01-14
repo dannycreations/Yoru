@@ -8,14 +8,14 @@ import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/clash.helper';
 import { addSplitFields, getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
 import { ClashTag } from '../../services/ClashService';
-import { MemberHandlerTag } from '../MemberManager';
+import { MemberHandlerTag } from '../MemberHandler';
 
 import type { Message } from 'discord.js';
 import type { AccountTable } from '../../database/schema';
 
 const checkProfile = (message: Message<true>, ownerId: string, accounts: AccountTable[]) =>
   Effect.gen(function* () {
-    const memberManager = yield* MemberHandlerTag;
+    const memberHandler = yield* MemberHandlerTag;
     const memberOpt = yield* getGuildMember(ownerId, message.guild);
     if (Option.isNone(memberOpt)) {
       yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUser leaving discord server!`));
@@ -32,7 +32,7 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
     // Parallelizing player data retrieval significantly reduces the total response time for profiles with multiple linked accounts.
     const results = yield* Effect.all(
       accounts.map((account) =>
-        (account.bannedAt ? Effect.succeed({ tag: account.tag, banned: true as const, player: null }) : memberManager.getPlayer(account)).pipe(
+        (account.bannedAt ? Effect.succeed({ tag: account.tag, banned: true as const, player: null }) : memberHandler.getPlayer(account)).pipe(
           Effect.either,
         ),
       ),

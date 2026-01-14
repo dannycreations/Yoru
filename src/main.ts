@@ -12,7 +12,7 @@ import { cycleMidnightRestart, cycleWithRestart, runForkWithCleanUp } from './st
 import { CommandHandlerLayer } from './workflows/CommandHandler';
 import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandler';
 import { EventHandlerLayer } from './workflows/EventHandler';
-import { MemberHandlerLayer } from './workflows/MemberManager';
+import { MemberHandlerLayer } from './workflows/MemberHandler';
 
 const program = Effect.gen(function* () {
   const clash = yield* ClashTag;

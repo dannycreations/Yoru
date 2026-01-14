@@ -7,7 +7,7 @@ import { createPlayerEmbed, formatPlayerStats } from '../../helpers/clash.helper
 import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
 import { isModeratorRole } from '../../helpers/role.helper';
 import { ClashTag } from '../../services/ClashService';
-import { MemberHandlerTag } from '../MemberManager';
+import { MemberHandlerTag } from '../MemberHandler';
 
 import type { Player } from 'clashofclans.js';
 import type { User as DiscordUser, Guild, Message, MessageReaction } from 'discord.js';
@@ -15,11 +15,11 @@ import type { User as DiscordUser, Guild, Message, MessageReaction } from 'disco
 // Localizing the presence update logic within a helper that utilizes robust member resolution ensures that player roles and nicknames are consistently synchronized upon linking.
 const linkedTag = (guild: Guild, ownerId: string, player: Player) =>
   Effect.gen(function* () {
-    const memberManager = yield* MemberHandlerTag;
+    const memberHandler = yield* MemberHandlerTag;
     const memberOpt = yield* getGuildMember(ownerId, guild);
     if (Option.isNone(memberOpt)) return;
 
-    yield* memberManager.updatePresence(memberOpt.value, player);
+    yield* memberHandler.updatePresence(memberOpt.value, player);
   });
 
 const linkQueue = new Set<string>();

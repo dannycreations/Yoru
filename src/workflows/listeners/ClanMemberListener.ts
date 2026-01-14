@@ -6,7 +6,7 @@ import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { getGuildMember } from '../../helpers/discord.helper';
 import { ClashTag } from '../../services/ClashService';
 import { createStore, StoreClient } from '../../structures/StoreClient';
-import { MemberHandlerTag } from '../MemberManager';
+import { MemberHandlerTag } from '../MemberHandler';
 
 import type { ClanMember } from 'clashofclans.js';
 
@@ -16,7 +16,7 @@ export const createClanMemberListener = () =>
   Effect.gen(function* () {
     const { events } = yield* ClashTag;
     const sessionStore = yield* SessionStoreTag;
-    const memberManager = yield* MemberHandlerTag;
+    const memberHandler = yield* MemberHandlerTag;
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
     const scope = yield* Effect.scope;
@@ -51,11 +51,11 @@ export const createClanMemberListener = () =>
         }
 
         const userAccounts = yield* accountDatabase.find({ userId: user.id });
-        const otherAccountInClan = yield* memberManager.findActiveAccount(user.id, player.tag);
+        const otherAccountInClan = yield* memberHandler.findActiveAccount(user.id, player.tag);
         const memberOpt = yield* getGuildMember(user.ownerId);
 
         if (Option.isSome(memberOpt)) {
-          yield* memberManager.updatePresence(memberOpt.value, otherAccountInClan);
+          yield* memberHandler.updatePresence(memberOpt.value, otherAccountInClan);
           const tagsToRemove = new Set(userAccounts.map((acc) => acc.tag));
           yield* sessionStore.update((s) => ({
             ...s,

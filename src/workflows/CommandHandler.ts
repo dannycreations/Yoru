@@ -7,7 +7,7 @@ import { SqliteClientTag } from '../structures/database';
 import { checkCommand } from './commands/CheckCommand';
 import { linkCommand } from './commands/LinkCommand';
 import { pingCommand } from './commands/PingCommand';
-import { MemberHandlerTag } from './MemberManager';
+import { MemberHandlerTag } from './MemberHandler';
 
 import type { Message } from 'discord.js';
 import type { DiscordHandler } from './DiscordHandler';

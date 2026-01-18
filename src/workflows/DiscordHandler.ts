@@ -35,7 +35,6 @@ const makeDiscordClient = Effect.gen(function* () {
     intents: [...Object.values(GatewayIntentBits)] as GatewayIntentBits[],
   });
 
-  // The Sapphire client's internal logger bridges to the Effect runtime's logger to centralize logs and adhere to project-wide logging configurations.
   const bridgeLogger =
     (effect: (...args: unknown[]) => Effect.Effect<void>) =>
     (...args: unknown[]) =>
@@ -48,7 +47,6 @@ const makeDiscordClient = Effect.gen(function* () {
   client.logger.error = bridgeLogger(Effect.logError);
   client.logger.fatal = bridgeLogger(Effect.logFatal);
 
-  // A timeout mechanism for the initial connection prevents the process from hanging indefinitely if the Discord gateway is unresponsive.
   let loginTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
     Runtime.runSync(runtime)(Effect.logWarning('Discord client login timed out after 60 seconds.'));
     client.destroy();
@@ -61,7 +59,6 @@ const makeDiscordClient = Effect.gen(function* () {
     }
   };
 
-  // The login timeout clears automatically once the client is ready to ensure the watchdog does not trigger after a successful connection.
   client.once('ready', () => clearLoginTimeout());
 
   const login = (): Effect.Effect<void, DiscordError> =>

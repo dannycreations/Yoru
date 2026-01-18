@@ -66,15 +66,12 @@ const makeClashClient = Effect.gen(function* () {
         }),
     }).pipe(Effect.asVoid);
 
-  // Overriding internal library methods allows for the implementation of custom behavior.
   client.rest.requestHandler['reValidateKeys'] = () => Promise.resolve();
 
-  // Maintenance of internal request state enables retry logic and prevents infinite loops during persistent API issues.
   let ipFromError: string | undefined;
 
   const requestHandler = client.rest.requestHandler;
 
-  // Internal IP detection uses addresses extracted from previous authentication errors to facilitate faster recovery during IP changes.
   const getIpOrig = requestHandler['getIp'].bind(requestHandler);
   requestHandler['getIp'] = (token: string) => {
     const ip = ipFromError;
@@ -87,16 +84,13 @@ const makeClashClient = Effect.gen(function* () {
 
   const requestOrig = requestHandler.request.bind(requestHandler);
 
-  // The internal request method is wrapped with Effect-based logic to provide robust error handling, connection monitoring, and automated retries.
   requestHandler.request = async <T>(path: string, options: RequestOptions = {}) => {
-    // Encapsulating the request state within the function scope ensures that retry counters are isolated to each individual request and avoids race conditions in concurrent operations.
     let requestState = 0;
     return Effect.runPromise(
       Effect.gen(function* () {
         return yield* Effect.tryPromise(() => requestOrig<T>(path, options)).pipe(
           Effect.tap(() => (requestState = 0)),
           Effect.catchAll((error) => {
-            // Capping retry attempts for non-transient failures prevents excessive resource consumption.
             if (requestState > 2) {
               requestState = 2;
               return Effect.fail(
@@ -107,7 +101,6 @@ const makeClashClient = Effect.gen(function* () {
               );
             }
 
-            // Monitoring network connectivity ensures recovery before retrying network-level failures.
             if (isErrorLike(error) && ERROR_CODES.includes(error.code)) {
               requestState = 0;
               return waitForConnection().pipe(
@@ -123,7 +116,6 @@ const makeClashClient = Effect.gen(function* () {
             }
 
             if (error instanceof HTTPError) {
-              // Terminal handling of service maintenance (503) avoids unnecessary retries during the current request cycle.
               if (error.status === 503) {
                 requestState = 0;
                 return Effect.fail(
@@ -134,11 +126,9 @@ const makeClashClient = Effect.gen(function* () {
                 );
               }
 
-              // IP-related access denials trigger key rotation and re-authentication with the new IP address.
               if (error.status === 403 && error.reason === 'accessDenied.invalidIp') {
                 requestHandler['keys'].shift();
                 const ipMatch = error.message.match(/(\d{1,3}\.){3}\d+/);
-                // Selective extraction of the IP address from the error message ensures that re-authentication uses the correct origin for new keys.
                 if (ipMatch) ipFromError = ipMatch[0];
                 return login().pipe(
                   Effect.flatMap(() => {
@@ -185,7 +175,6 @@ const makeClashClient = Effect.gen(function* () {
           }),
           Effect.retry({
             while: (error) => error instanceof ClashError && error.status !== 503,
-            // Retrying at fixed intervals ensures that transient API or network issues are given time to resolve before the request is considered failed.
             schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
           }),
         );
@@ -201,7 +190,6 @@ const makeClashClient = Effect.gen(function* () {
 
     const updates = yield* Effect.all(
       Array.from(tags).map((tag) =>
-        // Individual clan fetch failures are converted to null to prevent a single failing request from terminating the entire polling cycle.
         Effect.tryPromise({
           try: () => client.getClan(tag),
           catch: (error) => error,
@@ -224,7 +212,6 @@ const makeClashClient = Effect.gen(function* () {
       { concurrency: 'unbounded' },
     );
 
-    // Updating the clan cache with the latest data from the polling cycle ensures that subsequent comparisons use the most recent state.
     yield* Ref.update(clanCache, (prev) => {
       const next = new Map(prev);
       for (const update of updates) {

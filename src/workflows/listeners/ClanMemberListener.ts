@@ -126,7 +126,6 @@ export const createClanMemberListener = () =>
           while (true) {
             const event = yield* queue.take;
             if (event._tag === ClientEvents.ClanMember) {
-              // The event handler is executed within a dedicated loop to ensure that clan member updates are processed sequentially and do not interfere with other system events.
               yield* onClanMemberUpdate(event.oldClan, event.newClan).pipe(
                 Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
               );

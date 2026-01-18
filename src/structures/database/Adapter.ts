@@ -127,9 +127,7 @@ const withTrace = <A>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL
           try {
             // @ts-expect-error Internal drizzle access.
             query = db.dialect.sqlToQuery(trace.value());
-          } catch {
-            // Ignore error
-          }
+          } catch {}
         }
         return new SqliteClientError({
           message: error instanceof Error ? error.message : String(error),
@@ -144,19 +142,16 @@ const withTrace = <A>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL
 export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>>(
   table: A,
 ): Adapter<A, Select, Insert> => {
-  // A strict requirement for an "id" primary key across all tables simplifies generic CRUD operations and ensures consistent identity tracking.
   const tableWithId = table as A & { id: { primary: boolean } };
   if (!('id' in tableWithId && tableWithId.id.primary)) {
     throw new Error(`Table "${getTableName(table)}" must have a primary key "id"`);
   }
 
-  // A flat cache of columns from the main table and all joined tables facilitates rapid lookup during query building.
   const buildColumnCache = <B extends Array<Table>>(joins?: JoinClause<A, B>): Record<string, unknown> => {
     if (!joins || joins.length === 0) {
       return table as unknown as Record<string, unknown>;
     }
 
-    // Backwards iteration through joins ensures that columns from the primary table take precedence during name collisions.
     const cache = joins.reduceRight((acc, join) => Object.assign(acc, join.table), {} as Record<string, unknown>);
     return Object.assign(cache, table);
   };
@@ -212,7 +207,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         const nested = Array.isArray(value) ? (value as QueryFilter<A>[]).flatMap((v) => buildWhereLogical(v)) : [];
         const isPositive = key === '$and' || key === '$nor';
 
-        // Logical operators with empty or non-matching conditions default to a vacuously true or false state based on their SQL semantics.
         if (nested.length === 0) {
           result.push(sql.raw(isPositive ? '1' : '0'));
           continue;
@@ -261,7 +255,6 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     const columns: Record<string, unknown> = {};
     const selectObj = select as unknown as Record<string, number>;
 
-    // Explicitly including the primary key unless it is specifically excluded ensures that record identity is preserved in all query results.
     if (selectObj['id'] !== 0 && columnCache['id']) {
       columns['id'] = columnCache['id'];
     }

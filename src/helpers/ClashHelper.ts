@@ -15,7 +15,6 @@ const CLAN_ROLE_MAP: Record<string, ValueOf<typeof MemberRoles>> = {
 
 const getThumbnailUrl = (name: string): string => emoji.thumbnail.replace('{0}', name);
 
-// Standardization of nickname generation logic across the system ensures that player identity is represented consistently within Discord.
 export const getPlayerNickname = (member: GuildMember, player: { name: string; tag: string }): string => {
   const isSameName = member.user.username.toLowerCase() === player.name.toLowerCase();
   return isSameName ? `${player.name} ${player.tag}` : player.name;
@@ -42,7 +41,6 @@ export const formatPlayerStats = (player: Player): string => {
   return `${level} ${trophies} ${attacks}`;
 };
 
-// Standardized summaries of player status, including tags, basic statistics, and clan affiliations, ensure consistent presentation across commands.
 export const formatPlayerField = (player: Player): string => {
   const stats = formatPlayerStats(player);
   const clanInfo = player.clan ? `${emoji.isclan.true} ${player.clan.name}` : `${emoji.isclan.false} Player is clanless`;
@@ -59,13 +57,11 @@ export const createPlayerEmbed = (player: Player): EmbedBuilder => {
   embed.setAuthor({ name: `${player.name} (${player.tag})`, iconURL: thumbLeague });
   embed.setThumbnail(getThumbnailUrl(`townhalls/townhall-${player.townHallLevel}.png`));
 
-  // Pre-configuring the footer with clan information reduces boilerplate in command handlers that display player profiles.
   embed.setFooter(parseClan(player));
 
   return embed;
 };
 
-// A pre-computed mapping of unit names to their respective categories and emojis improves lookup performance during player profile generation.
 const UNIT_LOOKUP = (() => {
   const lookup = new Map<string, { category: string; emoji: string }>();
   const add = (data: Record<string, string>, category: string) => {
@@ -86,7 +82,6 @@ const UNIT_LOOKUP = (() => {
   return lookup;
 })();
 
-// Unit categorization and formatting with corresponding emojis and levels provide a detailed overview of player progression.
 export const categorizeUnits = (player: Player) => {
   const categories: Record<string, string[]> = {
     Troops: [],
@@ -102,7 +97,6 @@ export const categorizeUnits = (player: Player) => {
 
   const units = [...player.troops, ...player.spells, ...player.heroes];
 
-  // Categorizing player units by their respective types allows for a structured and readable presentation of their progression in the profile embed.
   for (const unit of units) {
     if (unit.village !== 'home') {
       continue;

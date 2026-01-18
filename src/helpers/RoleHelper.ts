@@ -2,7 +2,6 @@ import { MemberRoles, ModeratorRoles, RegisterRoles } from '../core/constants';
 
 import type { Role } from 'discord.js';
 
-// Pre-calculated sets avoid repeated Object.values calls and provide O(1) lookup performance.
 const MODERATOR_ROLE_NAMES = new Set<string>(Object.values(ModeratorRoles));
 const REGISTER_ROLE_NAMES = new Set<string>(Object.values(RegisterRoles));
 const MEMBER_ROLE_NAMES = new Set<string>(Object.values(MemberRoles));

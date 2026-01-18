@@ -32,7 +32,6 @@ export const parseMentionOrSnowflake = (input?: string | null): string | null =>
   return input.match(UserOrMemberMentionRegex)?.[1] || (SnowflakeRegex.test(input) ? input : null);
 };
 
-// Retrieving a member directly from a specified guild or searching across all cached guilds ensures that the correct member context is identified with minimal REST API overhead.
 export const getGuildMember = (userId: string, guild?: Guild) =>
   Effect.gen(function* () {
     if (guild) {

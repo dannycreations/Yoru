@@ -5,12 +5,10 @@ import { ClashTag } from '../services/ClashService';
 import { createClanMemberListener } from './listeners/ClanMemberListener';
 import { createDiscordListener } from './listeners/DiscordListener';
 
-// The EventHandler orchestrates the registration of all system listeners, providing a centralized runtime and registration utility for both Discord and Clash of Clans event emitters.
 export const EventHandler = Effect.gen(function* () {
   const { client } = yield* ClashTag;
   const runtime = yield* Effect.runtime();
 
-  // Abstracting event registration into a reusable utility ensures consistent error handling and execution context across different event emitters.
   const register = (
     emitter: { on: (event: string, cb: (...args: any[]) => void) => void; once?: (event: string, cb: (...args: any[]) => void) => void },
     event: string,

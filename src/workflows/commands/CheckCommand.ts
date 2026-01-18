@@ -29,7 +29,6 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
       .setDescription(`Joined <t:${Math.floor(member.joinedTimestamp! / 1000)}:R>`)
       .setThumbnail(member.user.displayAvatarURL());
 
-    // Parallelizing player data retrieval significantly reduces the total response time for profiles with multiple linked accounts.
     const results = yield* Effect.all(
       accounts.map((account) =>
         (account.bannedAt ? Effect.succeed({ tag: account.tag, banned: true as const, player: null }) : memberHandler.getPlayer(account)).pipe(
@@ -82,7 +81,6 @@ const checkPlayer = (message: Message<true>, tag: string) =>
       }
     }
 
-    // Ownership status and basic player statistics serve as the primary profile information.
     const statsValue = `${isOwned}${formatPlayerStats(player)}`;
     embed.addFields({
       name: 'Profiles',
@@ -95,7 +93,6 @@ const checkPlayer = (message: Message<true>, tag: string) =>
       if (list.length) addSplitFields(embed, name, list);
     });
 
-    // Filtering for specific high-value achievements provides a concise summary of player activity without overwhelming the profile embed.
     const achievements = player.achievements
       .filter((r) => ['Friend in Need', 'Games Champion'].includes(r.name))
       .map((a) => `${emoji.stars[a.stars]} **${a.name}** ${a.value.toLocaleString()}\n`)
@@ -105,7 +102,6 @@ const checkPlayer = (message: Message<true>, tag: string) =>
 
     if (unknowns.length) yield* Effect.logWarning('Unknown assets detected', unknowns);
 
-    // Default embed formatting, including the clan footer, is applied during creation to ensure consistent presentation.
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
   });
 
@@ -117,13 +113,11 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
     const user = yield* userDatabase.findOne({ ownerId });
     const accounts = user ? yield* accountDatabase.find({ userId: user.id }) : [];
 
-    // Verification of linked accounts ensures that users receive a clear error message when no data is available.
     if (!user || accounts.length === 0) {
       yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nThere is no tag linked to this user!`));
       return;
     }
 
-    // Provision of a valid page number triggers a detailed player view, while the absence of one defaults to the profile summary.
     if (page > 0 && page <= accounts.length) {
       yield* checkPlayer(message, accounts[page - 1].tag);
     } else {
@@ -138,7 +132,6 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const config = yield* configStore.get;
     const clanTags = config.clanTags;
 
-    // Verifying that at least one clan is configured prevents index-out-of-bounds errors and provides immediate feedback to the user.
     if (clanTags.length === 0) {
       yield* Effect.tryPromise(() => message.reply('No clans are currently configured.'));
       return;
@@ -154,17 +147,14 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
 
-    // Batch retrieval of account and user records for all clan members minimizes database round-trips and improves command response time.
     const tags = clan.members.map((m) => m.tag);
     const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
-    // Deduplicating user IDs before querying the database reduces the load on the adapter and ensures a more efficient retrieval process.
     const userIds = [...new Set(accounts.map((acc) => acc.userId).filter((id): id is number => id !== null))];
     const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
 
     const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
     const userMap = new Map(users.map((u) => [u.id, u]));
 
-    // Parallel resolution of Discord member status for all clan members optimizes the generation of the summary embed while maintaining thread-safe result aggregation.
     const memberResults = yield* Effect.all(
       clan.members.map((member) =>
         Effect.gen(function* () {
@@ -226,13 +216,11 @@ export const checkCommand = (message: Message<true>, args: string[]) =>
     const tag = args[0];
     const page = parseInt(args[1], 10) || 0;
 
-    // A guard clause for missing input reduces nesting and improves readability.
     if (tag === undefined || tag === '') {
       yield* Effect.tryPromise(() => message.reply('Please provide a player tag or mention a user.'));
       return;
     }
 
-    // The requested check type is identified as clan members, a specific player tag, or a Discord user.
     if (/member/i.test(tag)) {
       yield* checkMembers(message, page);
     } else if (Util.isValidTag(tag)) {
@@ -244,8 +232,6 @@ export const checkCommand = (message: Message<true>, args: string[]) =>
         const config = yield* configStore.get;
         const isOwner = config.ownerIds.includes(message.author.id);
 
-        // Authorization check: only owners can look up users by raw ID.
-        // Direct mentions are allowed for everyone to facilitate ease of use.
         if (isOwner || tag.includes('<@')) {
           yield* checkUser(message, mentionId, page);
         } else {

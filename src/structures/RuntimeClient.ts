@@ -1,6 +1,6 @@
 import { chalk } from '@vegapunk/utilities';
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Cause, Data, Effect, Fiber, Layer, Runtime, Schedule, Scope } from 'effect';
+import { Cause, Chunk, Data, Effect, Fiber, Layer, Runtime, Schedule, Scope } from 'effect';
 
 export class RuntimeRestart extends Data.TaggedError('RuntimeRestart') {}
 
@@ -76,9 +76,9 @@ export const cycleWithRestart = <A, E, R>(
 
   const loop = Effect.catchAllCause(Effect.scoped(program), (cause) =>
     Effect.gen(function* () {
-      const failures = Array.from(Cause.failures(cause));
+      const failures = Cause.failures(cause);
 
-      if (failures.some((error) => isErrorLike<{ readonly _tag: string }>(error) && error._tag === 'RuntimeRestart')) {
+      if (Chunk.some(failures, (error) => isErrorLike<{ readonly _tag: string }>(error) && error._tag === 'RuntimeRestart')) {
         return;
       }
 

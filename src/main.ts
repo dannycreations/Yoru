@@ -3,7 +3,7 @@ import 'dotenv/config';
 import { Effect, Layer, Logger } from 'effect';
 
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
-import { AccountDatabaseLayer, sqliteConfig, UserDatabaseLayer } from './database';
+import { AccountDatabaseLayer, UserDatabaseLayer } from './database';
 import { ClashConfigTag, ClashLayer, ClashTag } from './services/ClashService';
 import { SqliteClientLayer } from './structures/database';
 import { HttpClientLayer } from './structures/HttpClient';
@@ -35,10 +35,19 @@ const BaseLayer = Layer.mergeAll(
   HttpClientLayer,
   ConfigStoreLayer,
   SessionStoreLayer,
-  SqliteClientLayer(sqliteConfig),
   UserDatabaseLayer,
   AccountDatabaseLayer,
   LoggerClientLayer(Logger.defaultLogger, logger),
+).pipe(
+  Layer.provideMerge(
+    Layer.unwrapEffect(
+      Effect.gen(function* () {
+        const { sqliteConfig } = yield* Effect.promise(() => import('./database/index.js'));
+        const config = yield* sqliteConfig;
+        return SqliteClientLayer(config);
+      }),
+    ),
+  ),
 );
 
 const MainLayer = EventHandlerLayer.pipe(

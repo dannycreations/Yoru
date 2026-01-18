@@ -1,11 +1,13 @@
 import { Effect, Option, PubSub, Queue, Scope } from 'effect';
 
 import { ClientEvents } from '../../core/constants';
-import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
+import { ClanData, ClanSchema, ConfigStoreTag, SessionStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { getGuildMember } from '../../helpers/DiscordHelper';
 import { ClashTag } from '../../services/ClashService';
+import { SqliteClientTag } from '../../structures/database';
 import { makeStoreClient, StoreClient } from '../../structures/StoreClient';
+import { DiscordHandlerTag } from '../DiscordHandler';
 import { MemberHandlerTag } from '../MemberHandler';
 
 import type { ClanMember } from 'clashofclans.js';
@@ -25,15 +27,21 @@ export const createClanMemberListener = () =>
     const leavingQueue = yield* Queue.unbounded<ClanMemberTag>();
     const updateSemaphore = yield* Effect.makeSemaphore(1);
 
-    const handleMemberLeave = (player: ClanMemberTag) =>
+    const handleMemberLeave = (
+      player: ClanMemberTag,
+    ): Effect.Effect<
+      void,
+      unknown,
+      SessionStoreTag | AccountDatabaseTag | UserDatabaseTag | MemberHandlerTag | DiscordHandlerTag | ConfigStoreTag | ClashTag | SqliteClientTag
+    > =>
       Effect.gen(function* () {
         const session = yield* sessionStore.get;
         const leavers = session.leavers ?? [];
         if (!leavers.includes(player.tag)) return;
 
-        const account = yield* accountDatabase.findOne({ tag: player.tag });
+        const accountOpt = yield* accountDatabase.findOne({ tag: player.tag });
 
-        if (!account || !account.userId) {
+        if (Option.isNone(accountOpt) || !accountOpt.value.userId) {
           yield* sessionStore.update((s) => ({
             ...s,
             leavers: (s.leavers ?? []).filter((t) => t !== player.tag),
@@ -41,8 +49,9 @@ export const createClanMemberListener = () =>
           return;
         }
 
-        const user = yield* userDatabase.findOne({ id: account.userId });
-        if (!user) {
+        const account = accountOpt.value;
+        const userOpt = yield* userDatabase.findOne({ id: account.userId });
+        if (Option.isNone(userOpt)) {
           yield* sessionStore.update((s) => ({
             ...s,
             leavers: (s.leavers ?? []).filter((t) => t !== player.tag),
@@ -50,6 +59,7 @@ export const createClanMemberListener = () =>
           return;
         }
 
+        const user = userOpt.value;
         const userAccounts = yield* accountDatabase.find({ userId: user.id });
         const otherAccountInClan = yield* memberHandler.findActiveAccount(user.id, player.tag);
         const memberOpt = yield* getGuildMember(user.ownerId);
@@ -122,16 +132,23 @@ export const createClanMemberListener = () =>
 
     yield* PubSub.subscribe(events).pipe(
       Effect.flatMap((queue) =>
-        Effect.gen(function* () {
-          while (true) {
-            const event = yield* queue.take;
-            if (event._tag === ClientEvents.ClanMember) {
-              yield* onClanMemberUpdate(event.oldClan, event.newClan).pipe(
-                Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
-              );
-            }
-          }
-        }),
+        Effect.forever(
+          Effect.gen(function* () {
+            const events = yield* Queue.takeAll(queue);
+            yield* Effect.forEach(
+              events,
+              (event) =>
+                Effect.gen(function* () {
+                  if (event._tag === ClientEvents.ClanMember) {
+                    yield* onClanMemberUpdate(event.oldClan, event.newClan).pipe(
+                      Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
+                    );
+                  }
+                }),
+              { concurrency: 'unbounded' },
+            );
+          }),
+        ),
       ),
       Effect.fork,
     );

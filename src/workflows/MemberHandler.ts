@@ -1,5 +1,5 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Option } from 'effect';
 
 import { MemberRoles, RegisterRoles } from '../core/constants';
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
@@ -15,14 +15,18 @@ import type { GuildMember } from 'discord.js';
 import type { AccountTable } from '../database/schema';
 
 export interface MemberHandler {
-  readonly updatePresence: (member: GuildMember, player: Player | null) => Effect.Effect<void, never, typeof SessionStoreTag | typeof ConfigStoreTag>;
+  readonly updatePresence: (member: GuildMember, player: Option.Option<Player>) => Effect.Effect<void, never, SessionStoreTag | ConfigStoreTag>;
   readonly findActiveAccount: (
     userId: number,
     currentTag: string,
-  ) => Effect.Effect<Player | null, never, SqliteClientTag | typeof ClashTag | typeof ConfigStoreTag | typeof AccountDatabaseTag>;
+  ) => Effect.Effect<Option.Option<Player>, never, SqliteClientTag | ClashTag | ConfigStoreTag | AccountDatabaseTag>;
   readonly getPlayer: (
     account: AccountTable,
-  ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteClientTag | typeof AccountDatabaseTag>;
+  ) => Effect.Effect<
+    { readonly player: Option.Option<Player>; readonly banned: boolean; readonly tag: string },
+    never,
+    ClashTag | SqliteClientTag | AccountDatabaseTag
+  >;
 }
 
 export class MemberHandlerTag extends Context.Tag('@workflows/MemberHandler')<MemberHandlerTag, MemberHandler>() {}
@@ -38,13 +42,15 @@ export const MemberHandlerLayer = Layer.effect(
     const getPlayer = (account: AccountTable) =>
       Effect.gen(function* () {
         return yield* clash.getPlayer(account.tag).pipe(
-          Effect.map((player) => ({ player, banned: false as const, tag: account.tag })),
+          Effect.map((player) => ({ player: Option.some(player), banned: false as const, tag: account.tag })),
           Effect.catchIf(
             (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
             () =>
-              accountDatabase.update({ ...account, bannedAt: Date.now() }).pipe(Effect.as({ player: null, banned: true as const, tag: account.tag })),
+              accountDatabase
+                .update({ ...account, bannedAt: Date.now() })
+                .pipe(Effect.as({ player: Option.none(), banned: true as const, tag: account.tag })),
           ),
-          Effect.catchAll(() => Effect.succeed({ player: null, banned: false as const, tag: account.tag })),
+          Effect.catchAll(() => Effect.succeed({ player: Option.none(), banned: false as const, tag: account.tag })),
         );
       });
 
@@ -56,15 +62,15 @@ export const MemberHandlerLayer = Layer.effect(
 
         const results = yield* Effect.all(
           otherAccounts.map((account) =>
-            getPlayer(account).pipe(Effect.map(({ player: p }) => (p && p.clan && config.clanTags.includes(p.clan.tag) ? p : null))),
+            getPlayer(account).pipe(Effect.map(({ player: pOpt }) => Option.filter(pOpt, (p) => !!p.clan && config.clanTags.includes(p.clan!.tag)))),
           ),
           { concurrency: 'unbounded' },
         );
 
-        return results.find((p) => p !== null) ?? null;
-      }).pipe(Effect.catchAllCause(() => Effect.succeed(null)));
+        return Option.fromNullable(results.find(Option.isSome)).pipe(Option.flatten);
+      }).pipe(Effect.catchAllCause(() => Effect.succeed(Option.none())));
 
-    const updatePresence = (member: GuildMember, player: Player | null) =>
+    const updatePresence = (member: GuildMember, playerOpt: Option.Option<Player>) =>
       Effect.gen(function* () {
         if (member.roles.cache.some(isModeratorRole)) return;
 
@@ -72,22 +78,25 @@ export const MemberHandlerLayer = Layer.effect(
         const config = yield* configStore.get;
         const session = yield* sessionStore.get;
 
-        if (player && player.clan && config.clanTags.includes(player.clan.tag)) {
-          const nickname = getPlayerNickname(member, player);
-          yield* Effect.tryPromise(() => member.setNickname(nickname));
+        if (Option.isSome(playerOpt)) {
+          const player = playerOpt.value;
+          if (player.clan && config.clanTags.includes(player.clan.tag)) {
+            const nickname = getPlayerNickname(member, player);
+            yield* Effect.tryPromise(() => member.setNickname(nickname));
 
-          yield* removeMemberRoles(member, isRegisterRole);
+            yield* removeMemberRoles(member, isRegisterRole);
 
-          const clanName = player.clan.name;
-          const rolesToAdd = guild.roles.cache.filter((r) => r.name === clanName || r.name === MemberRoles.Elder);
-          if (rolesToAdd.size > 0) yield* Effect.tryPromise(() => member.roles.add(rolesToAdd));
-        } else if (player) {
-          yield* Effect.tryPromise(() => member.setNickname(`TH ${player.townHallLevel} - ${player.name}`));
+            const clanName = player.clan.name;
+            const rolesToAdd = guild.roles.cache.filter((r) => r.name === clanName || r.name === MemberRoles.Elder);
+            if (rolesToAdd.size > 0) yield* Effect.tryPromise(() => member.roles.add(rolesToAdd));
+          } else {
+            yield* Effect.tryPromise(() => member.setNickname(`TH ${player.townHallLevel} - ${player.name}`));
 
-          yield* removeMemberRoles(member, isRegisterRole);
+            yield* removeMemberRoles(member, isRegisterRole);
 
-          const approvedRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Approved);
-          if (approvedRole) yield* Effect.tryPromise(() => member.roles.add(approvedRole));
+            const approvedRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Approved);
+            if (approvedRole) yield* Effect.tryPromise(() => member.roles.add(approvedRole));
+          }
         } else {
           yield* removeMemberRoles(member, (r) => isMemberRole(r) || isClanRole(r, session.clans ?? []));
 

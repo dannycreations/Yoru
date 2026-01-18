@@ -1,6 +1,8 @@
 import { Config, Context, Data, Effect, Layer, Schema } from 'effect';
 
-import { StoreClient, StoreClientLayer } from '../structures/StoreClient';
+import { StoreClientLayer } from '../structures/StoreClient';
+
+import type { StoreClient } from '../structures/StoreClient';
 
 export class EnvError extends Data.TaggedError('EnvError')<{
   readonly message: string;

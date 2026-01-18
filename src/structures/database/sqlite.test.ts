@@ -1,8 +1,8 @@
 import { it as itBase } from '@effect/vitest';
 import { sql } from 'drizzle-orm';
 import { integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
-import { Effect, Exit } from 'effect';
-import { afterAll, beforeAll, beforeEach, describe, expect, expectTypeOf } from 'vitest';
+import { Effect, Exit, Option } from 'effect';
+import { afterAll, assert, beforeAll, beforeEach, describe, expect, expectTypeOf } from 'vitest';
 
 import { Adapter, BetterSQLite3Database, Database, drizzle, patchDialect, SqliteClientTag } from '.';
 
@@ -194,11 +194,12 @@ describe('Adapter find()', () => {
   describe('filter options', () => {
     it.effect('equality: should find users by name', () =>
       Effect.gen(function* () {
-        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
-        expect(alice).not.toBeNull();
+        const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(aliceOpt));
+        const alice = aliceOpt.value;
         const users = yield* userAdapter.find({ name: 'Alice' });
         expectTypeOf(users).toEqualTypeOf<User[]>();
-        expect(users).toEqual([expect.objectContaining({ id: alice!.id, name: 'Alice' })]);
+        expect(users).toEqual([expect.objectContaining({ id: alice.id, name: 'Alice' })]);
       }),
     );
 
@@ -852,23 +853,25 @@ describe('Adapter find()', () => {
         );
         expectTypeOf(joinedResult).toEqualTypeOf<Array<{ users: User; offices: Office }>>;
         expect(joinedResult).toHaveLength(1);
-        const aliceFromDb = yield* userAdapter.findOne({ email: alice.email });
-        expect(aliceFromDb).not.toBeNull();
+        const aliceFromDbOpt = yield* userAdapter.findOne({ email: alice.email });
+        assert(Option.isSome(aliceFromDbOpt));
+        const aliceFromDb = aliceFromDbOpt.value;
 
-        expect(joinedResult[0].users.id).toBe(aliceFromDb!.id);
+        expect(joinedResult[0].users.id).toBe(aliceFromDb.id);
         expect(joinedResult[0].offices.name).toBe('HQ');
       }),
     );
 
     it.effect('join with filter on main table (FK) that implies a filter on joined table', () =>
       Effect.gen(function* () {
-        const hqOffice = yield* officeAdapter.findOne({ name: 'HQ' });
-        expect(hqOffice).not.toBeNull();
+        const hqOfficeOpt = yield* officeAdapter.findOne({ name: 'HQ' });
+        assert(Option.isSome(hqOfficeOpt), 'Expected HQ office to be found');
+        const hqOffice = hqOfficeOpt.value;
 
-        const usersInHQCount = sampleUsers.filter((u) => u.officeId === hqOffice!.id).length;
+        const usersInHQCount = sampleUsers.filter((u) => u.officeId === hqOffice.id).length;
 
         const joinedResult = yield* userAdapter.find(
-          { officeId: hqOffice!.id },
+          { officeId: hqOffice.id },
           {
             joins: [{ table: officesTable, on: { officeId: 'id' } }],
           },
@@ -1048,17 +1051,17 @@ describe('Adapter findOne()', () => {
     Effect.gen(function* () {
       const aliceSample = sampleUsers.find((u) => u.email === 'alice@example.com')!;
       const foundUser = yield* userAdapter.findOne({ email: 'alice@example.com' });
-      expectTypeOf(foundUser).toEqualTypeOf<User | null>();
-      expect(foundUser).not.toBeNull();
-      expect(foundUser).toEqual(expect.objectContaining({ name: aliceSample.name, email: aliceSample.email }));
+      expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(foundUser)).toBe(true);
+      expect(foundUser).toEqual(Option.some(expect.objectContaining({ name: aliceSample.name, email: aliceSample.email })));
     }),
   );
 
   it.effect('should return null if no user matches the filter', () =>
     Effect.gen(function* () {
       const foundUser = yield* userAdapter.findOne({ email: 'nonexistent@example.com' });
-      expectTypeOf(foundUser).toEqualTypeOf<User | null>();
-      expect(foundUser).toBeNull();
+      expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isNone(foundUser)).toBe(true);
     }),
   );
 
@@ -1066,8 +1069,8 @@ describe('Adapter findOne()', () => {
     Effect.gen(function* () {
       client.exec('DELETE FROM users;');
       const foundUser = yield* userAdapter.findOne({ name: 'Alice' });
-      expectTypeOf(foundUser).toEqualTypeOf<User | null>();
-      expect(foundUser).toBeNull();
+      expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isNone(foundUser)).toBe(true);
     }),
   );
 
@@ -1075,10 +1078,11 @@ describe('Adapter findOne()', () => {
     Effect.gen(function* () {
       const aliceSample = sampleUsers.find((u) => u.email === 'alice@example.com')!;
       const user = yield* userAdapter.findOne({ email: 'alice@example.com' }, { select: { name: 1 } });
-      expectTypeOf(user).toEqualTypeOf<{ id: number; name: string } | null>();
-      expect(user).not.toBeNull();
-      expect(user).toEqual({ id: expect.any(Number), name: aliceSample.name });
-      expect(Object.keys(user!).sort()).toEqual(['id', 'name'].sort());
+      assert(Option.isSome(user));
+      expectTypeOf(user.value).toEqualTypeOf<{ id: number; name: string }>();
+      expect(Option.isSome(user)).toBe(true);
+      expect(user).toEqual(Option.some({ id: expect.any(Number), name: aliceSample.name }));
+      expect(Object.keys(user.value).sort()).toEqual(['id', 'name'].sort());
     }),
   );
 
@@ -1091,14 +1095,18 @@ describe('Adapter findOne()', () => {
       const maxIdAge30 = usersAge30[usersAge30.length - 1].id;
 
       const userAsc = yield* userAdapter.findOne({ age: 30 }, { order: { id: 'asc' } });
-      expectTypeOf(userAsc).toEqualTypeOf<User | null>();
-      expect(userAsc).not.toBeNull();
-      expect(userAsc!.id).toBe(minIdAge30);
+      expectTypeOf(userAsc).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(userAsc)).toBe(true);
+      if (Option.isSome(userAsc)) {
+        expect(userAsc.value.id).toBe(minIdAge30);
+      }
 
       const userDesc = yield* userAdapter.findOne({ age: 30 }, { order: { id: 'desc' } });
-      expectTypeOf(userDesc).toEqualTypeOf<User | null>();
-      expect(userDesc).not.toBeNull();
-      expect(userDesc!.id).toBe(maxIdAge30);
+      expectTypeOf(userDesc).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(userDesc)).toBe(true);
+      if (Option.isSome(userDesc)) {
+        expect(userDesc.value.id).toBe(maxIdAge30);
+      }
     }),
   );
 
@@ -1111,10 +1119,11 @@ describe('Adapter findOne()', () => {
           joins: [{ table: officesTable, on: { officeId: 'id' } }],
         },
       );
-      expectTypeOf(joinedResult).toEqualTypeOf<{ users: User; offices: Office } | null>;
-      expect(joinedResult).not.toBeNull();
-      expect(joinedResult!.users.email).toBe(aliceSample.email);
-      expect(joinedResult!.offices.name).toBe(sampleOffices.find((o) => o.name === 'HQ')!.name);
+      expect(Option.isSome(joinedResult)).toBe(true);
+      if (Option.isSome(joinedResult)) {
+        expect(joinedResult.value.users.email).toBe(aliceSample.email);
+        expect(joinedResult.value.offices.name).toBe(sampleOffices.find((o) => o.name === 'HQ')!.name);
+      }
     }),
   );
 });
@@ -1229,10 +1238,10 @@ describe('Adapter insert()', () => {
       Effect.runSync(
         Effect.provideService(
           Effect.gen(function* () {
-            const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+            const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
 
-            if (alice && alice.bio !== null) {
-              yield* userAdapter.update({ ...alice, bio: null });
+            if (Option.isSome(aliceOpt) && aliceOpt.value.bio !== null) {
+              yield* userAdapter.update(aliceOpt.value as User & { bio: null });
             }
           }),
           SqliteClientTag,
@@ -1243,8 +1252,9 @@ describe('Adapter insert()', () => {
 
     it.effect('onConflictDoNothing (ignore): should not insert or update if email conflicts, returns empty for conflicted row', () =>
       Effect.gen(function* () {
-        const originalAlice = yield* userAdapter.findOne({ email: 'alice@example.com' });
-        expect(originalAlice).not.toBeNull();
+        const originalAliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(originalAliceOpt));
+        const originalAlice = originalAliceOpt.value;
 
         const conflictingUser: Omit<InsertUser, 'id'> = { name: 'New Alice', email: 'alice@example.com', age: 31 };
 
@@ -1255,10 +1265,12 @@ describe('Adapter insert()', () => {
         expect(users).toEqual([]);
 
         const found = yield* userAdapter.findOne({ email: 'alice@example.com' });
-        expectTypeOf(found).toEqualTypeOf<User | null>();
-        expect(found).not.toBeNull();
-        expect(found!.name).toBe(originalAlice!.name);
-        expect(found!.age).toBe(originalAlice!.age);
+        expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(found)).toBe(true);
+        if (Option.isSome(found)) {
+          expect(found.value.name).toBe(originalAlice.name);
+          expect(found.value.age).toBe(originalAlice.age);
+        }
       }),
     );
 
@@ -1280,17 +1292,19 @@ describe('Adapter insert()', () => {
         expect(updated[0].age).toBe(32);
         expect(updated[0].email).toBe(aliceEmail);
 
-        const originalAlice = yield* userAdapter.findOne({ email: aliceEmail });
-        expectTypeOf(originalAlice).toEqualTypeOf<User | null>();
-        expect(originalAlice).not.toBeNull();
+        const originalAliceOpt = yield* userAdapter.findOne({ email: aliceEmail });
+        expectTypeOf(originalAliceOpt).toEqualTypeOf<Option.Option<User>>();
+        assert(Option.isSome(originalAliceOpt));
 
-        expect(originalAlice!.role).not.toBe('attemptedRole');
+        expect(originalAliceOpt.value.role).not.toBe('attemptedRole');
 
         const found = yield* userAdapter.findOne({ email: aliceEmail });
-        expect(found).not.toBeNull();
+        expect(Option.isSome(found)).toBe(true);
 
-        expect(found!.name).toBe('Updated Alice by Conflict');
-        expect(found!.age).toBe(32);
+        if (Option.isSome(found)) {
+          expect(found.value.name).toBe('Updated Alice by Conflict');
+          expect(found.value.age).toBe(32);
+        }
       }),
     );
 
@@ -1312,8 +1326,11 @@ describe('Adapter insert()', () => {
         expect(updatedPair[0].valC).toBe('Initial C updated by SQL');
 
         const foundPair = yield* uniquePairAdapter.findOne({ id: insertedInitial.id });
-        expectTypeOf(foundPair).toEqualTypeOf<UniquePair | null>();
-        expect(foundPair?.valC).toBe('Initial C updated by SQL');
+        expectTypeOf(foundPair).toEqualTypeOf<Option.Option<UniquePair>>();
+        expect(Option.isSome(foundPair)).toBe(true);
+        if (Option.isSome(foundPair)) {
+          expect(foundPair.value.valC).toBe('Initial C updated by SQL');
+        }
       }),
     );
 
@@ -1345,21 +1362,27 @@ describe('Adapter insert()', () => {
           expect(updated[0].email).toBe(aliceEmail);
 
           const found = yield* userAdapter.findOne({ email: aliceEmail });
-          expectTypeOf(found).toEqualTypeOf<User | null>();
-          expect(found).not.toBeNull();
+          expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
+          expect(Option.isSome(found)).toBe(true);
 
-          expect(found!.name).toBe('Implicit Update Alice');
-          expect(found!.age).toBe(33);
-          expect(found!.role).toBe('superadmin');
+          if (Option.isSome(found)) {
+            expect(found.value.name).toBe('Implicit Update Alice');
+            expect(found.value.age).toBe(33);
+            expect(found.value.role).toBe('superadmin');
+          }
         }),
     );
 
     it.effect('onConflictDoUpdate (merge behavior): should update existing NULL fields with new values, keep existing non-NULL fields', () =>
       Effect.gen(function* () {
-        const aliceOriginal = (yield* userAdapter.findOne({ email: 'alice@example.com' }))!;
+        const aliceOriginalOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(aliceOriginalOpt));
+        const aliceOriginal = aliceOriginalOpt.value;
 
         yield* userAdapter.update({ ...aliceOriginal, bio: null, age: 30 });
-        const aliceAfterBioNull = (yield* userAdapter.findOne({ email: 'alice@example.com' }))!;
+        const aliceAfterBioNullOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(aliceAfterBioNullOpt));
+        const aliceAfterBioNull = aliceAfterBioNullOpt.value;
         expect(aliceAfterBioNull.bio).toBeNull();
         expect(aliceAfterBioNull.role).toBe('admin');
         expect(aliceAfterBioNull.age).toBe(30);
@@ -1392,7 +1415,9 @@ describe('Adapter insert()', () => {
         expect(updated[0].role).toBe(aliceAfterBioNull.role);
         expect(updated[0].age).toBe(aliceAfterBioNull.age);
 
-        const found = (yield* userAdapter.findOne({ email: 'alice@example.com' }))!;
+        const foundOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(foundOpt));
+        const found = foundOpt.value;
 
         expect(found.name).toBe(aliceAfterBioNull.name);
         expect(found.bio).toBe('Merged Bio From New Value');
@@ -1419,8 +1444,11 @@ describe('Adapter insert()', () => {
         expect(updatedRecords[0].valC).toBe('explicitlyUpdatedC');
 
         const found = yield* uniquePairAdapter.findOne({ valA: 'testA', valB: 'testB' });
-        expectTypeOf(found).toEqualTypeOf<UniquePair | null>();
-        expect(found?.valC).toBe('explicitlyUpdatedC');
+        expectTypeOf(found).toEqualTypeOf<Option.Option<UniquePair>>();
+        expect(Option.isSome(found)).toBe(true);
+        if (Option.isSome(found)) {
+          expect(found.value.valC).toBe('explicitlyUpdatedC');
+        }
       }),
     );
   });
@@ -1429,7 +1457,9 @@ describe('Adapter insert()', () => {
     it.effect('onConflictDoUpdate (implicit from new values) should update all non-PK, non-conflict-target fields provided in new data', () =>
       Effect.gen(function* () {
         const bobEmail = 'bob@example.com';
-        const originalBob = (yield* userAdapter.findOne({ email: bobEmail }))!;
+        const originalBobOpt = yield* userAdapter.findOne({ email: bobEmail });
+        assert(Option.isSome(originalBobOpt), 'Expected Bob to be found');
+        const originalBob = originalBobOpt.value;
 
         const conflictingUser: Omit<InsertUser, 'id'> = {
           name: 'Updated Bob Implicitly Full',
@@ -1464,7 +1494,7 @@ describe('Adapter insert()', () => {
         expect(updatedBob.id).toBe(originalBob.id);
 
         const foundBob = yield* userAdapter.findOne({ id: originalBob.id });
-        expect(foundBob).toEqual(updatedBob);
+        expect(foundBob).toEqual(Option.some(updatedBob));
       }),
     );
 
@@ -1482,8 +1512,11 @@ describe('Adapter insert()', () => {
         expectTypeOf(inserted).toEqualTypeOf<User[]>();
         expect(inserted[0].email).toBe('uniquebatchignore@example.com');
 
-        const alice = (yield* userAdapter.findOne({ email: 'alice@example.com' }))!;
-        const bob = (yield* userAdapter.findOne({ email: 'bob@example.com' }))!;
+        const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
+        assert(Option.isSome(aliceOpt) && Option.isSome(bobOpt), 'Expected users to be found');
+        const alice = aliceOpt.value;
+        const bob = bobOpt.value;
         expect(alice.age).not.toBe(100);
         expect(bob.age).not.toBe(101);
       }),
@@ -1529,7 +1562,9 @@ describe('Adapter insert()', () => {
 describe('Adapter update()', () => {
   it.effect('should update an existing user and return the updated record', () =>
     Effect.gen(function* () {
-      const alice = (yield* userAdapter.findOne({ email: 'alice@example.com' }))!;
+      const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+      assert(Option.isSome(aliceOpt));
+      const alice = aliceOpt.value;
 
       const updatedData: User = { ...alice, name: 'Alice Smith', age: 31 };
 
@@ -1541,15 +1576,19 @@ describe('Adapter update()', () => {
       expect(updatedUsers[0].id).toBe(alice.id);
 
       const found = yield* userAdapter.findOne({ id: alice.id });
-      expectTypeOf(found).toEqualTypeOf<User | null>();
-      expect(found).not.toBeNull();
-      expect(found!.name).toBe('Alice Smith');
+      expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(found)).toBe(true);
+      if (Option.isSome(found)) {
+        expect(found.value.name).toBe('Alice Smith');
+      }
     }),
   );
 
   it.effect('should allow updating a field to null', () =>
     Effect.gen(function* () {
-      const bob = (yield* userAdapter.findOne({ email: 'bob@example.com' }))!;
+      const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
+      assert(Option.isSome(bobOpt), 'Expected Bob to be found');
+      const bob = bobOpt.value;
       expect(bob.bio).not.toBeNull();
 
       const updatedData: User = { ...bob, bio: null };
@@ -1558,14 +1597,18 @@ describe('Adapter update()', () => {
       expect(users[0].bio).toBeNull();
 
       const found = yield* userAdapter.findOne({ id: bob.id });
-      expectTypeOf(found).toEqualTypeOf<User | null>();
-      expect(found!.bio).toBeNull();
+      expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
+      if (Option.isSome(found)) {
+        expect(found.value.bio).toBeNull();
+      }
     }),
   );
 
   it.effect('should return selected fields if select option is provided', () =>
     Effect.gen(function* () {
-      const bob = (yield* userAdapter.findOne({ email: 'bob@example.com' }))!;
+      const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
+      assert(Option.isSome(bobOpt), 'Expected Bob to be found');
+      const bob = bobOpt.value;
 
       const updatedData: User = { ...bob, role: 'lead_user' };
 
@@ -1596,8 +1639,11 @@ describe('Adapter update()', () => {
 
   it.effect('should return Err if update violates UNIQUE constraint', () =>
     Effect.gen(function* () {
-      const alice = (yield* userAdapter.findOne({ email: 'alice@example.com' }))!;
-      const bob = (yield* userAdapter.findOne({ email: 'bob@example.com' }))!;
+      const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+      const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
+      assert(Option.isSome(aliceOpt) && Option.isSome(bobOpt), 'Expected users to be found');
+      const alice = aliceOpt.value;
+      const bob = bobOpt.value;
 
       const updatedBob: User = { ...bob, email: alice.email };
       const exit = yield* Effect.exit(userAdapter.update(updatedBob));
@@ -1609,7 +1655,9 @@ describe('Adapter update()', () => {
 
   it.effect('should return Err if update violates FOREIGN KEY constraint', () =>
     Effect.gen(function* () {
-      const charlie = (yield* userAdapter.findOne({ email: 'charlie@example.com' }))!;
+      const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
+      assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
+      const charlie = charlieOpt.value;
       const updatedCharlie: User = { ...charlie, officeId: 9999 };
       const exit = yield* Effect.exit(userAdapter.update(updatedCharlie));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1620,7 +1668,9 @@ describe('Adapter update()', () => {
 
   it.effect('attempting to change PK `id` via update payload should be ignored', () =>
     Effect.gen(function* () {
-      const charlie = (yield* userAdapter.findOne({ email: 'charlie@example.com' }))!;
+      const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
+      assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
+      const charlie = charlieOpt.value;
       const updateDataWithChangedIdField: User = {
         ...charlie,
         id: charlie.id + 1000,
@@ -1637,7 +1687,9 @@ describe('Adapter update()', () => {
 describe('Adapter delete()', () => {
   it.effect('should delete an existing user and return the deleted record', () =>
     Effect.gen(function* () {
-      const charlie = (yield* userAdapter.findOne({ email: 'charlie@example.com' }))!;
+      const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
+      assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
+      const charlie = charlieOpt.value;
 
       const deletedUsers = yield* userAdapter.delete(charlie);
       expectTypeOf(deletedUsers).toEqualTypeOf<User[]>();
@@ -1646,7 +1698,7 @@ describe('Adapter delete()', () => {
       expect(deletedUsers[0].name).toBe(charlie.name);
 
       const found = yield* userAdapter.findOne({ id: charlie.id });
-      expect(found).toBeNull();
+      expect(Option.isNone(found)).toBe(true);
 
       const count = yield* userAdapter.count();
       expect(count).toBe(sampleUsers.length - 1);
@@ -1655,7 +1707,9 @@ describe('Adapter delete()', () => {
 
   it.effect('should return selected fields if select option is provided', () =>
     Effect.gen(function* () {
-      const david = (yield* userAdapter.findOne({ email: 'david@example.com' }))!;
+      const davidOpt = yield* userAdapter.findOne({ email: 'david@example.com' });
+      assert(Option.isSome(davidOpt), 'Expected David to be found');
+      const david = davidOpt.value;
 
       const deletedUsers = yield* userAdapter.delete(david, { select: { name: 1 } });
       expectTypeOf(deletedUsers).toEqualTypeOf<Array<{ id: number; name: string }>>();
@@ -1688,23 +1742,29 @@ describe('Adapter delete()', () => {
 describe('Adapter findOneAndUpdate()', () => {
   it.effect('should find and update a user if filter matches', () =>
     Effect.gen(function* () {
-      const eveOriginal = (yield* userAdapter.findOne({ email: 'eve@example.com' }))!;
+      const eveOriginalOpt = yield* userAdapter.findOne({ email: 'eve@example.com' });
+      assert(Option.isSome(eveOriginalOpt), 'Expected Eve to be found');
+      const eveOriginal = eveOriginalOpt.value;
 
       const updatePayload = { age: 31, role: 'senior_manager' };
 
-      const updatedUser = yield* userAdapter.findOneAndUpdate({ email: 'eve@example.com' }, updatePayload);
+      const updatedUserOpt = yield* userAdapter.findOneAndUpdate({ email: 'eve@example.com' }, updatePayload);
 
-      expectTypeOf(updatedUser).toEqualTypeOf<User | null>();
-      expect(updatedUser).toBeDefined();
-      expect(updatedUser).not.toBeNull();
-      expect(updatedUser!.id).toBe(eveOriginal.id);
-      expect(updatedUser!.age).toBe(updatePayload.age);
-      expect(updatedUser!.role).toBe(updatePayload.role);
+      expectTypeOf(updatedUserOpt).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(updatedUserOpt)).toBe(true);
+      if (Option.isSome(updatedUserOpt)) {
+        const updatedUser = updatedUserOpt.value;
+        expect(updatedUser.id).toBe(eveOriginal.id);
+        expect(updatedUser.age).toBe(updatePayload.age);
+        expect(updatedUser.role).toBe(updatePayload.role);
+      }
 
       const found = yield* userAdapter.findOne({ id: eveOriginal.id });
-      expect(found).not.toBeNull();
-      expect(found!.age).toBe(updatePayload.age);
-      expect(found!.role).toBe(updatePayload.role);
+      expect(Option.isSome(found)).toBe(true);
+      if (Option.isSome(found)) {
+        expect(found.value.age).toBe(updatePayload.age);
+        expect(found.value.role).toBe(updatePayload.role);
+      }
     }),
   );
 
@@ -1715,22 +1775,25 @@ describe('Adapter findOneAndUpdate()', () => {
       const filterForUpsert: Partial<User> = { email: newUserEmail };
       const upsertPayload: Partial<Omit<InsertUser, 'id'>> = { name: 'New Upserted', age: 25, role: 'intern' };
 
-      const upsertedUser = yield* userAdapter.findOneAndUpdate(filterForUpsert, upsertPayload, { upsert: true });
+      const upsertedUserOpt = yield* userAdapter.findOneAndUpdate(filterForUpsert, upsertPayload, { upsert: true });
 
-      expectTypeOf(upsertedUser).toEqualTypeOf<User | null>();
-      expect(upsertedUser).toBeDefined();
-      expect(upsertedUser).not.toBeNull();
+      expectTypeOf(upsertedUserOpt).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(upsertedUserOpt)).toBe(true);
+      if (Option.isSome(upsertedUserOpt)) {
+        const upsertedUser = upsertedUserOpt.value;
 
-      expect(upsertedUser!.email).toBe(newUserEmail);
-      expect(upsertedUser!.name).toBe(upsertPayload.name);
-      expect(upsertedUser!.age).toBe(upsertPayload.age);
-      expect(upsertedUser!.role).toBe(upsertPayload.role);
-      expect(upsertedUser!.id).toBeTypeOf('number');
+        expect(upsertedUser.email).toBe(newUserEmail);
+        expect(upsertedUser.name).toBe(upsertPayload.name);
+        expect(upsertedUser.age).toBe(upsertPayload.age);
+        expect(upsertedUser.role).toBe(upsertPayload.role);
+        expect(upsertedUser.id).toBeTypeOf('number');
+      }
 
       const found = yield* userAdapter.findOne({ email: newUserEmail });
-      expect(found).toBeDefined();
-      expect(found).not.toBeNull();
-      expect(found!.name).toBe(upsertPayload.name);
+      expect(Option.isSome(found)).toBe(true);
+      if (Option.isSome(found)) {
+        expect(found.value.name).toBe(upsertPayload.name);
+      }
     }),
   );
 
@@ -1740,35 +1803,41 @@ describe('Adapter findOneAndUpdate()', () => {
       const filterData: Partial<User> = { email: newUserEmail, role: 'default_role_from_filter', name: 'Name From Filter (will be overwritten)' };
       const updateData: Partial<Omit<InsertUser, 'id'>> = { name: 'New Upserted Filter', age: 26 };
 
-      const upsertedUser = yield* userAdapter.findOneAndUpdate(filterData, updateData, { upsert: true });
+      const upsertedUserOpt = yield* userAdapter.findOneAndUpdate(filterData, updateData, { upsert: true });
 
-      expectTypeOf(upsertedUser).toEqualTypeOf<User | null>();
-      expect(upsertedUser).toBeDefined();
-      expect(upsertedUser).not.toBeNull();
-      expect(upsertedUser!.email).toBe(newUserEmail);
-      expect(upsertedUser!.name).toBe(updateData.name);
-      expect(upsertedUser!.age).toBe(updateData.age);
-      expect(upsertedUser!.role).toBe(filterData.role);
+      expectTypeOf(upsertedUserOpt).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(upsertedUserOpt)).toBe(true);
+      if (Option.isSome(upsertedUserOpt)) {
+        const upsertedUser = upsertedUserOpt.value;
+        expect(upsertedUser.email).toBe(newUserEmail);
+        expect(upsertedUser.name).toBe(updateData.name);
+        expect(upsertedUser.age).toBe(updateData.age);
+        expect(upsertedUser.role).toBe(filterData.role);
+      }
     }),
   );
 
   it.effect('should return null if filter does not match and upsert is false (or not specified)', () =>
     Effect.gen(function* () {
       const user = yield* userAdapter.findOneAndUpdate({ email: 'nosuchuser@example.com' }, { name: 'No Update' });
-      expect(user).toBeNull();
+      expect(Option.isNone(user)).toBe(true);
     }),
   );
 
   it.effect('should apply select option on returned record (update)', () =>
     Effect.gen(function* () {
-      const malloryOriginal = (yield* userAdapter.findOne({ email: 'mallory@example.com' }))!;
+      const malloryOriginalOpt = yield* userAdapter.findOne({ email: 'mallory@example.com' });
+      assert(Option.isSome(malloryOriginalOpt), 'Expected Mallory to be found');
+      const malloryOriginal = malloryOriginalOpt.value;
 
       const updatePayload = { bio: 'Updated Bio via FindOneAndUpdate' };
 
       const selectedUser = yield* userAdapter.findOneAndUpdate({ email: 'mallory@example.com' }, updatePayload, { select: { id: 1, bio: 1 } });
-      expectTypeOf(selectedUser).toEqualTypeOf<{ id: number; bio: string | null } | null>();
-      expect(selectedUser).not.toBeNull();
-      expect(selectedUser).toEqual({ id: malloryOriginal.id, bio: updatePayload.bio });
+      expectTypeOf(selectedUser).toEqualTypeOf<Option.Option<{ id: number; bio: string | null }>>();
+      expect(Option.isSome(selectedUser)).toBe(true);
+      if (Option.isSome(selectedUser)) {
+        expect(selectedUser.value).toEqual({ id: malloryOriginal.id, bio: updatePayload.bio });
+      }
     }),
   );
 
@@ -1781,25 +1850,31 @@ describe('Adapter findOneAndUpdate()', () => {
         { name: 'Select Upsert', age: 22 },
         { upsert: true, select: { name: 1, email: 1 } },
       );
-      expectTypeOf(unwrappedResult).toEqualTypeOf<{ id: number; name: string; email: string | null } | null>();
-      expect(unwrappedResult).not.toBeNull();
-      expect(unwrappedResult).toEqual(expect.objectContaining({ id: expect.any(Number), name: 'Select Upsert', email: newUserEmail }));
+      expectTypeOf(unwrappedResult).toEqualTypeOf<Option.Option<{ id: number; name: string; email: string | null }>>();
+      expect(Option.isSome(unwrappedResult)).toBe(true);
+      if (Option.isSome(unwrappedResult)) {
+        expect(unwrappedResult.value).toEqual(expect.objectContaining({ id: expect.any(Number), name: 'Select Upsert', email: newUserEmail }));
+      }
     }),
   );
 
   it.effect('should return the found record if filter matches but data for update is empty and record is unchanged', () =>
     Effect.gen(function* () {
-      const alice = (yield* userAdapter.findOne({ email: 'alice@example.com' }))!;
+      const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+      assert(Option.isSome(aliceOpt));
+      const alice = aliceOpt.value;
 
-      const returnedUser = yield* userAdapter.findOneAndUpdate({ email: 'alice@example.com' }, {});
+      const returnedUserOpt = yield* userAdapter.findOneAndUpdate({ email: 'alice@example.com' }, {});
 
-      expectTypeOf(returnedUser).toEqualTypeOf<User | null>();
-      expect(returnedUser).not.toBeNull();
-      expect(returnedUser!.id).toBe(alice.id);
-      expect(returnedUser!.name).toBe(alice.name);
+      expectTypeOf(returnedUserOpt).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(returnedUserOpt)).toBe(true);
+      if (Option.isSome(returnedUserOpt)) {
+        expect(returnedUserOpt.value.id).toBe(alice.id);
+        expect(returnedUserOpt.value.name).toBe(alice.name);
+      }
 
       const aliceAfter = yield* userAdapter.findOne({ id: alice.id });
-      expect(aliceAfter).toEqual({ ...alice });
+      expect(aliceAfter).toEqual(Option.some(alice));
     }),
   );
 
@@ -1809,11 +1884,13 @@ describe('Adapter findOneAndUpdate()', () => {
       const newUserEmail = 'emptyupsert@example.com';
       const filterForUpsert: Partial<User> = { email: newUserEmail };
       const payload = { name: 'Empty Upsert', age: 20 };
-      const user = yield* userAdapter.findOneAndUpdate(filterForUpsert, payload, { upsert: true });
-      expectTypeOf(user).toEqualTypeOf<User | null>();
-      expect(user).not.toBeNull();
-      expect(user!.email).toBe(newUserEmail);
-      expect(user!.name).toBe(payload.name);
+      const userOpt = yield* userAdapter.findOneAndUpdate(filterForUpsert, payload, { upsert: true });
+      expectTypeOf(userOpt).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(userOpt)).toBe(true);
+      if (Option.isSome(userOpt)) {
+        expect(userOpt.value.email).toBe(newUserEmail);
+        expect(userOpt.value.name).toBe(payload.name);
+      }
       expect(yield* userAdapter.count()).toBe(1);
     }),
   );
@@ -1839,15 +1916,17 @@ describe('Adapter findOneAndUpdate()', () => {
       const initialAge30Users = yield* userAdapter.find({ age: 30 }, { order: { id: 'asc' } });
       const firstUserId = initialAge30Users[0].id;
 
-      const updatedUser = yield* userAdapter.findOneAndUpdate(
+      const updatedUserOpt = yield* userAdapter.findOneAndUpdate(
         { age: 30 },
         { bio: 'Updated by findOneAndUpdate for age 30' },
         { order: { id: 'asc' } },
       );
-      expectTypeOf(updatedUser).toEqualTypeOf<User | null>();
-      expect(updatedUser).not.toBeNull();
-      expect(updatedUser!.id).toBe(firstUserId);
-      expect(updatedUser!.bio).toBe('Updated by findOneAndUpdate for age 30');
+      expectTypeOf(updatedUserOpt).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(updatedUserOpt)).toBe(true);
+      if (Option.isSome(updatedUserOpt)) {
+        expect(updatedUserOpt.value.id).toBe(firstUserId);
+        expect(updatedUserOpt.value.bio).toBe('Updated by findOneAndUpdate for age 30');
+      }
 
       const otherAge30Users = yield* userAdapter.find({ age: 30, id: { $ne: firstUserId } });
       otherAge30Users.forEach((user) => {
@@ -1870,9 +1949,12 @@ describe('Adapter findOneAndUpdate()', () => {
         expect(Exit.isFailure(exit)).toBe(true);
         // @ts-expect-error Internal effect access.
         expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
-        expect(yield* userAdapter.findOne({ email: newNonExistentEmail })).toBeNull();
-        const bobUser = yield* userAdapter.findOne({ email: bobEmail });
-        expect(bobUser!.name).toBe('Bob');
+        expect(Option.isNone(yield* userAdapter.findOne({ email: newNonExistentEmail }))).toBe(true);
+        const bobUserOpt = yield* userAdapter.findOne({ email: bobEmail });
+        assert(Option.isSome(bobUserOpt), 'Expected Bob to be found');
+        if (Option.isSome(bobUserOpt)) {
+          expect(bobUserOpt.value.name).toBe('Bob');
+        }
       }),
     );
 
@@ -1886,8 +1968,11 @@ describe('Adapter findOneAndUpdate()', () => {
         expect(Exit.isFailure(exit)).toBe(true);
         // @ts-expect-error Internal effect access.
         expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
-        const aliceUser = yield* userAdapter.findOne({ name: 'Alice' });
-        expect(aliceUser!.email).toBe(aliceEmail);
+        const aliceUserOpt = yield* userAdapter.findOne({ name: 'Alice' });
+        assert(Option.isSome(aliceUserOpt));
+        if (Option.isSome(aliceUserOpt)) {
+          expect(aliceUserOpt.value.email).toBe(aliceEmail);
+        }
       }),
     );
 
@@ -1896,17 +1981,22 @@ describe('Adapter findOneAndUpdate()', () => {
         const filterWithNull: Partial<User> = { email: 'upsertnullbio@example.com', bio: null };
         const payload = { name: 'Upsert Null Bio User', age: 33 };
 
-        const user = yield* userAdapter.findOneAndUpdate(filterWithNull, payload, { upsert: true });
-        expectTypeOf(user).toEqualTypeOf<User | null>();
+        const userOpt = yield* userAdapter.findOneAndUpdate(filterWithNull, payload, { upsert: true });
+        expectTypeOf(userOpt).toEqualTypeOf<Option.Option<User>>();
 
-        expect(user).not.toBeNull();
-        expect(user!.email).toBe(filterWithNull.email);
-        expect(user!.name).toBe(payload.name);
-        expect(user!.bio).toBeNull();
-        expect(user!.age).toBe(payload.age);
+        expect(Option.isSome(userOpt)).toBe(true);
+        if (Option.isSome(userOpt)) {
+          expect(userOpt.value.email).toBe(filterWithNull.email);
+          expect(userOpt.value.name).toBe(payload.name);
+          expect(userOpt.value.bio).toBeNull();
+          expect(userOpt.value.age).toBe(payload.age);
+        }
 
-        const dbUser = yield* userAdapter.findOne({ email: filterWithNull.email });
-        expect(dbUser!.bio).toBeNull();
+        const dbUserOpt = yield* userAdapter.findOne({ email: filterWithNull.email });
+        assert(Option.isSome(dbUserOpt), 'Expected user to be found');
+        if (Option.isSome(dbUserOpt)) {
+          expect(dbUserOpt.value.bio).toBeNull();
+        }
       }),
     );
 
@@ -1931,18 +2021,21 @@ describe('Adapter findOneAndUpdate()', () => {
 describe('Adapter findOneAndDelete()', () => {
   it.effect('should find and delete a user if filter matches, returning the deleted record', () =>
     Effect.gen(function* () {
-      const trent = (yield* userAdapter.findOne({ email: 'trent@example.com' }))!;
+      const trentOpt = yield* userAdapter.findOne({ email: 'trent@example.com' });
+      assert(Option.isSome(trentOpt), 'Expected Trent to be found');
+      const trent = trentOpt.value;
 
       const initialCount = yield* userAdapter.count();
 
-      const deletedUser = yield* userAdapter.findOneAndDelete({ email: 'trent@example.com' });
-      expectTypeOf(deletedUser).toEqualTypeOf<User | null>();
-      expect(deletedUser).toBeDefined();
-      expect(deletedUser).not.toBeNull();
-      expect(deletedUser!.id).toBe(trent.id);
-      expect(deletedUser!.name).toBe(trent.name);
+      const deletedUserOpt = yield* userAdapter.findOneAndDelete({ email: 'trent@example.com' });
+      expectTypeOf(deletedUserOpt).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(deletedUserOpt)).toBe(true);
+      if (Option.isSome(deletedUserOpt)) {
+        expect(deletedUserOpt.value.id).toBe(trent.id);
+        expect(deletedUserOpt.value.name).toBe(trent.name);
+      }
 
-      expect(yield* userAdapter.findOne({ id: trent.id })).toBeNull();
+      expect(Option.isNone(yield* userAdapter.findOne({ id: trent.id }))).toBe(true);
       const currentCount = yield* userAdapter.count();
       expect(currentCount).toBe(initialCount - 1);
     }),
@@ -1951,8 +2044,8 @@ describe('Adapter findOneAndDelete()', () => {
   it.effect('should return null if no user matches filter', () =>
     Effect.gen(function* () {
       const user = yield* userAdapter.findOneAndDelete({ email: 'ghost@example.com' });
-      expectTypeOf(user).toEqualTypeOf<User | null>();
-      expect(user).toBeNull();
+      expectTypeOf(user).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isNone(user)).toBe(true);
     }),
   );
 
@@ -1960,19 +2053,23 @@ describe('Adapter findOneAndDelete()', () => {
     Effect.gen(function* () {
       client.exec('DELETE FROM users;');
       const user = yield* userAdapter.findOneAndDelete({ name: 'AnyName' });
-      expectTypeOf(user).toEqualTypeOf<User | null>();
-      expect(user).toBeNull();
+      expectTypeOf(user).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isNone(user)).toBe(true);
     }),
   );
 
   it.effect('should apply select option on returned (deleted) record', () =>
     Effect.gen(function* () {
-      const ursula = (yield* userAdapter.findOne({ email: 'ursula@example.com' }))!;
+      const ursulaOpt = yield* userAdapter.findOne({ email: 'ursula@example.com' });
+      assert(Option.isSome(ursulaOpt), 'Expected Ursula to be found');
+      const ursula = ursulaOpt.value;
 
       const deletedUser = yield* userAdapter.findOneAndDelete({ email: 'ursula@example.com' }, { select: { id: 1, name: 1, email: 1 } });
-      expectTypeOf(deletedUser).toEqualTypeOf<{ id: number; name: string; email: string | null } | null>();
-      expect(deletedUser).not.toBeNull();
-      expect(deletedUser).toEqual({ id: ursula.id, name: 'Ursula User', email: 'ursula@example.com' });
+      expectTypeOf(deletedUser).toEqualTypeOf<Option.Option<{ id: number; name: string; email: string | null }>>();
+      expect(Option.isSome(deletedUser)).toBe(true);
+      if (Option.isSome(deletedUser)) {
+        expect(deletedUser.value).toEqual({ id: ursula.id, name: 'Ursula User', email: 'ursula@example.com' });
+      }
     }),
   );
 
@@ -1985,13 +2082,15 @@ describe('Adapter findOneAndDelete()', () => {
       const firstUserId = initialAge30Users[0].id;
       const firstUserName = initialAge30Users[0].name;
 
-      const deletedUser = yield* userAdapter.findOneAndDelete({ age: 30 }, { order: { id: 'asc' } });
-      expectTypeOf(deletedUser).toEqualTypeOf<User | null>();
-      expect(deletedUser).not.toBeNull();
-      expect(deletedUser!.id).toBe(firstUserId);
-      expect(deletedUser!.name).toBe(firstUserName);
+      const deletedUserOpt = yield* userAdapter.findOneAndDelete({ age: 30 }, { order: { id: 'asc' } });
+      expectTypeOf(deletedUserOpt).toEqualTypeOf<Option.Option<User>>();
+      expect(Option.isSome(deletedUserOpt)).toBe(true);
+      if (Option.isSome(deletedUserOpt)) {
+        expect(deletedUserOpt.value.id).toBe(firstUserId);
+        expect(deletedUserOpt.value.name).toBe(firstUserName);
+      }
 
-      expect(yield* userAdapter.findOne({ id: firstUserId })).toBeNull();
+      expect(Option.isNone(yield* userAdapter.findOne({ id: firstUserId }))).toBe(true);
       expect(yield* userAdapter.count({ age: 30 })).toBe(initialAge30Users.length - 1);
     }),
   );
@@ -2000,7 +2099,9 @@ describe('Adapter findOneAndDelete()', () => {
 describe('Foreign Key Cascades (SQLite ON DELETE CASCADE Behavior Verification)', () => {
   it.effect('deleting a user should cascade delete their posts', () =>
     Effect.gen(function* () {
-      const alice = (yield* userAdapter.findOne({ email: 'alice@example.com' }))!;
+      const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+      assert(Option.isSome(aliceOpt));
+      const alice = aliceOpt.value;
 
       const alicePostsBefore = yield* postAdapter.find({ userId: alice.id });
       expectTypeOf(alicePostsBefore).toEqualTypeOf<Post[]>();
@@ -2017,7 +2118,9 @@ describe('Foreign Key Cascades (SQLite ON DELETE CASCADE Behavior Verification)'
 
   it.effect('deleting an office should cascade delete users in that office, and their posts indirectly', () =>
     Effect.gen(function* () {
-      const hqOffice = (yield* officeAdapter.findOne({ name: 'HQ' }))!;
+      const hqOfficeOpt = yield* officeAdapter.findOne({ name: 'HQ' });
+      assert(Option.isSome(hqOfficeOpt), 'Expected HQ office to be found');
+      const hqOffice = hqOfficeOpt.value;
 
       const usersInHQBefore = yield* userAdapter.find({ officeId: hqOffice.id });
       expectTypeOf(usersInHQBefore).toEqualTypeOf<User[]>();

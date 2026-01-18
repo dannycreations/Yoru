@@ -6,19 +6,27 @@ import { DiscordHandlerTag } from '../workflows/DiscordHandler';
 import type { EmbedBuilder, Guild, GuildMember, Role } from 'discord.js';
 
 export const addSplitFields = (embed: EmbedBuilder, name: string, list: readonly string[], separator = ' '): void => {
-  let value = '';
-  let count = 0;
-  for (const item of list) {
-    if (value.length + item.length + separator.length > 1024) {
-      embed.addFields({ name: count === 0 ? name : `${name} (cont.)`, value });
-      value = item;
-      count++;
-    } else {
-      value = value ? `${value}${separator}${item}` : item;
-    }
-  }
-  if (value) {
-    embed.addFields({ name: count === 0 ? name : `${name} (cont.)`, value });
+  const { fields, currentValue, count } = list.reduce(
+    (acc, item) => {
+      const isOverLimit = acc.currentValue.length + item.length + separator.length > 1024;
+      if (isOverLimit && acc.currentValue) {
+        return {
+          fields: [...acc.fields, { name: acc.count === 0 ? name : `${name} (cont.)`, value: acc.currentValue }],
+          currentValue: item,
+          count: acc.count + 1,
+        };
+      }
+      return {
+        ...acc,
+        currentValue: acc.currentValue ? `${acc.currentValue}${separator}${item}` : item,
+      };
+    },
+    { fields: [] as Array<{ readonly name: string; readonly value: string }>, currentValue: '', count: 0 },
+  );
+
+  const allFields = currentValue ? [...fields, { name: count === 0 ? name : `${name} (cont.)`, value: currentValue }] : fields;
+  if (allFields.length > 0) {
+    embed.addFields(allFields);
   }
 };
 

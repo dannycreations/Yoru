@@ -21,7 +21,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { Context, Data, Effect } from 'effect';
+import { Context, Data, Effect, Option } from 'effect';
 
 import type { SQL, Table } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -35,14 +35,14 @@ export class SqliteClientError extends Data.TaggedError('SqliteClientError')<{
 
 export class SqliteClientTag extends Context.Tag('@structures/SqliteClient')<SqliteClientTag, BetterSQLite3Database>() {}
 
-const JOIN_MAP = {
+const JOIN_MAP: Readonly<Record<string, 'leftJoin' | 'rightJoin' | 'fullJoin' | 'innerJoin'>> = {
   left: 'leftJoin',
   right: 'rightJoin',
   full: 'fullJoin',
   inner: 'innerJoin',
 } as const;
 
-const OPERATOR_MAP: Record<string, (col: SQL, val: SQL) => SQL> = {
+const OPERATOR_MAP: Readonly<Record<string, (col: SQL, val: SQL) => SQL>> = {
   $eq: eq,
   $ne: ne,
   $gt: gt,
@@ -56,7 +56,7 @@ const OPERATOR_MAP: Record<string, (col: SQL, val: SQL) => SQL> = {
   $in: (col, val) => (Array.isArray(val) && val.length > 0 ? inArray(col, val) : sql`0`),
   $nin: (col, val) => (Array.isArray(val) && val.length > 0 ? notInArray(col, val) : sql`1`),
   $null: (col, val) => (val ? isNull(col) : isNotNull(col)),
-};
+} as const;
 
 export interface Adapter<A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>> {
   readonly count: (filter?: QueryFilter<A>) => Effect.Effect<number, SqliteClientError, SqliteClientTag>;
@@ -67,28 +67,28 @@ export interface Adapter<A extends Table, Select extends InferSelect<A> = InferS
   readonly findOne: <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter?: QueryFilter<A>,
     options?: Omit<QueryOptions<A, ExtractTables<J>, S, J>, 'limit'>,
-  ) => Effect.Effect<ReturnAlias<A, ExtractTables<J>, S, J> | null, SqliteClientError, SqliteClientTag>;
+  ) => Effect.Effect<Option.Option<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError, SqliteClientTag>;
   readonly findOneAndUpdate: {
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: Partial<InferSelect<A>>,
       data: Partial<Omit<Insert, 'id'>>,
       options: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { upsert: true },
-    ): Effect.Effect<ReturnAlias<A, B, S> | null, SqliteClientError, SqliteClientTag>;
+    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: QueryFilter<A>,
       data: Partial<Omit<Insert, 'id'>>,
       options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { upsert?: false },
-    ): Effect.Effect<ReturnAlias<A, B, S> | null, SqliteClientError, SqliteClientTag>;
+    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: Partial<InferSelect<A>> | QueryFilter<A>,
       data: Partial<Omit<Insert, 'id'>>,
       options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { upsert?: boolean },
-    ): Effect.Effect<ReturnAlias<A, B, S> | null, SqliteClientError, SqliteClientTag>;
+    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
   };
   readonly findOneAndDelete: <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     filter?: QueryFilter<A>,
     options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'>,
-  ) => Effect.Effect<ReturnAlias<A, B, S> | null, SqliteClientError, SqliteClientTag>;
+  ) => Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
   readonly insert: <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     record: Omit<Insert, 'id'> | Array<Omit<Insert, 'id'>>,
     options?: Pick<QueryOptions<A, B, S, unknown>, 'select'> & {
@@ -110,9 +110,8 @@ export interface Adapter<A extends Table, Select extends InferSelect<A> = InferS
 }
 
 const hasKeys = (obj?: object | null): obj is object => {
-  if (obj == null) return false;
-  for (const _ in obj) return true;
-  return false;
+  if (obj === null || obj === undefined) return false;
+  return Object.keys(obj).length > 0;
 };
 
 const withTrace = <A>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => A) => {
@@ -173,7 +172,9 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
 
       if (operator === '$not') {
         const negated = buildWhereComparison(key, operand);
-        result.push(negated.length === 0 ? sql`0` : not(and(...negated)!));
+        if (negated.length > 0) {
+          result.push(not(and(...negated)!));
+        }
         continue;
       }
 
@@ -216,7 +217,9 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         result.push(['$nand', '$nor'].includes(key) ? not(joined!) : joined!);
       } else if (key === '$not') {
         const conds = isObjectLike(value) && !Array.isArray(value) ? buildWhereLogical(value as QueryFilter<A>) : buildWhereComparison(key, value);
-        result.push(conds.length === 0 ? sql`0` : not(and(...conds)!));
+        if (conds.length > 0) {
+          result.push(not(and(...conds)!));
+        }
       } else {
         result.push(...buildWhereComparison(key, value));
       }
@@ -332,7 +335,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const findOne = <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter: QueryFilter<A> = {},
     options: Omit<QueryOptions<A, ExtractTables<J>, S, J>, 'limit'> = {},
-  ) => Effect.map(find(filter, { ...options, limit: 1 }), (r) => r[0] ?? null);
+  ) => Effect.map(find(filter, { ...options, limit: 1 }), (r) => Option.fromNullable(r[0]));
 
   const findOneAndUpdate = ((
     filter: Partial<InferSelect<A>> | QueryFilter<A>,
@@ -342,8 +345,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     } = {},
   ) =>
     Effect.gen(function* () {
-      const r = yield* findOne(filter as QueryFilter<A>, { ...options, select: undefined });
-      if (options.upsert && r === null) {
+      const rOpt = yield* findOne(filter as QueryFilter<A>, { ...options, select: undefined });
+      if (options.upsert && Option.isNone(rOpt)) {
         const isComplex =
           Object.keys(filter).some((k) => k.startsWith('$')) ||
           Object.values(filter).some((v) => isObjectLike(v) && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith('$')));
@@ -357,16 +360,17 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
 
         // @ts-expect-error Avoid extensive casting.
         const s = yield* insert({ ...filter, ...data }, options);
-        return s[0];
+        return Option.fromNullable(s[0]);
       }
 
-      if (r !== null) {
+      if (Option.isSome(rOpt)) {
+        const r = rOpt.value;
         // @ts-expect-error Avoid extensive casting.
         const s = yield* update({ ...r, ...data }, options);
-        return s[0];
+        return Option.fromNullable(s[0]);
       }
 
-      return r;
+      return Option.none();
     })) as Adapter<A, Select, Insert>['findOneAndUpdate'];
 
   const findOneAndDelete = <B extends Array<Table>, S extends SelectClause<A, B, S>>(
@@ -374,10 +378,10 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     options: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> = {},
   ) =>
     Effect.gen(function* () {
-      const r = yield* findOne(filter, { ...options, select: undefined });
-      if (r === null) return r as ReturnAlias<A, B, S> | null;
-      const s = yield* deleteFn(r as unknown as Select, options);
-      return s[0] as ReturnAlias<A, B, S>;
+      const rOpt = yield* findOne(filter, { ...options, select: undefined });
+      if (Option.isNone(rOpt)) return Option.none();
+      const s = yield* deleteFn(rOpt.value as unknown as Select, options);
+      return Option.fromNullable(s[0]) as Option.Option<ReturnAlias<A, B, S>>;
     });
 
   const insert = <B extends Array<Table>, S extends SelectClause<A, B, S>>(

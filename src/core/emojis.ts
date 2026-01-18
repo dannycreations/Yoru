@@ -1,8 +1,8 @@
-import { Schema } from 'effect';
+import { Data, Schema } from 'effect';
 
 import { EmojiSchema } from './schemas';
 
-const emojiData = {
+const emojiData = Data.struct({
   thumbnail: 'https://raw.githubusercontent.com/dannycreations/yoru/main/discord/emojis/{0}',
   level: '<:level:679995912151760920>',
   hashtag: '<:hashtag:1216000497975037994>',
@@ -135,6 +135,8 @@ const emojiData = {
     'Royal Champion': '<:royalchampion:1333151008326684702>',
     'Minion Prince': '<:minionprince:1333152496620667031>',
   },
-} as const;
+} as const);
 
-export const emoji = Schema.decodeSync(EmojiSchema)(emojiData);
+export type Emoji = Schema.Schema.Type<typeof EmojiSchema>;
+
+export const emoji: Emoji = Schema.decodeSync(EmojiSchema)(emojiData);

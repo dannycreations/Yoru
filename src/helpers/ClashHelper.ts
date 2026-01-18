@@ -7,15 +7,15 @@ import type { ValueOf } from '@vegapunk/utilities';
 import type { Player } from 'clashofclans.js';
 import type { EmbedFooterOptions, GuildMember } from 'discord.js';
 
-const CLAN_ROLE_MAP: Record<string, ValueOf<typeof MemberRoles>> = {
+const CLAN_ROLE_MAP: Readonly<Record<string, ValueOf<typeof MemberRoles>>> = {
   leader: MemberRoles.Leader,
   coLeader: MemberRoles.CoLeader,
   elder: MemberRoles.Elder,
-};
+} as const;
 
 const getThumbnailUrl = (name: string): string => emoji.thumbnail.replace('{0}', name);
 
-export const getPlayerNickname = (member: GuildMember, player: { name: string; tag: string }): string => {
+export const getPlayerNickname = (member: GuildMember, player: { readonly name: string; readonly tag: string }): string => {
   const isSameName = member.user.username.toLowerCase() === player.name.toLowerCase();
   return isSameName ? `${player.name} ${player.tag}` : player.name;
 };
@@ -63,8 +63,8 @@ export const createPlayerEmbed = (player: Player): EmbedBuilder => {
 };
 
 const UNIT_LOOKUP = (() => {
-  const lookup = new Map<string, { category: string; emoji: string }>();
-  const add = (data: Record<string, string>, category: string) => {
+  const lookup = new Map<string, { readonly category: string; readonly emoji: string }>();
+  const add = (data: Readonly<Record<string, string>>, category: string) => {
     for (const [name, emojiValue] of Object.entries(data)) {
       lookup.set(name, { category, emoji: emojiValue });
     }
@@ -110,5 +110,5 @@ export const categorizeUnits = (player: Player) => {
     }
   }
 
-  return { categories, unknowns };
+  return { categories, unknowns } as const;
 };

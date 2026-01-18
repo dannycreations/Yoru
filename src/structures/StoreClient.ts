@@ -124,4 +124,5 @@ export const StoreClientLayer = <I, S, A extends object, IS, R>(
   schema: Schema.Schema<A, IS, R>,
   initialData: A,
   initialDelay = 1000,
-): Layer.Layer<I, never, Scope.Scope | R> => Layer.scoped(tag, makeStoreClient(filePath, schema, initialData, initialDelay) as any);
+): Layer.Layer<I, never, Scope.Scope | R> =>
+  Layer.scoped(tag, makeStoreClient(filePath, schema, initialData, initialDelay) as Effect.Effect<S, never, Scope.Scope | R>);

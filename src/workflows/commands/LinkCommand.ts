@@ -18,12 +18,12 @@ const linkedTag = (guild: Guild, ownerId: string, player: Player) =>
     const memberOpt = yield* getGuildMember(ownerId, guild);
     if (Option.isNone(memberOpt)) return;
 
-    yield* memberHandler.updatePresence(memberOpt.value, player);
+    yield* memberHandler.updatePresence(memberOpt.value, Option.some(player));
   });
 
 const linkQueue = new Set<string>();
 
-export const linkCommand = (message: Message<true>, args: string[]) =>
+export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const clash = yield* ClashTag;
     const accountDatabase = yield* AccountDatabaseTag;
@@ -59,9 +59,10 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
 
       const titleField = `${formatPlayerStats(player)}\n`;
 
-      const account = yield* accountDatabase.findOne({ tag });
-      if (account) {
-        const user = yield* userDatabase.findOne({ id: account.userId });
+      const accountOpt = yield* accountDatabase.findOne({ tag });
+      if (Option.isSome(accountOpt)) {
+        const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
+        const user = Option.getOrNull(userOpt);
         const member = message.guild.members.cache.get(user?.ownerId || '');
 
         if (user && user.ownerId === mentionId) {
@@ -94,8 +95,10 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
       yield* Effect.tryPromise(() => msg.reactions.removeAll());
 
       if (collected?.first()?.emoji.name === '✅') {
-        const user = yield* userDatabase.findOneAndUpdate({ ownerId: mentionId }, { ownerId: mentionId }, { upsert: true });
-        yield* accountDatabase.findOneAndUpdate({ tag }, { tag, userId: user!.id }, { upsert: true });
+        const userOpt = yield* userDatabase.findOneAndUpdate({ ownerId: mentionId }, { ownerId: mentionId }, { upsert: true });
+        if (Option.isSome(userOpt)) {
+          yield* accountDatabase.findOneAndUpdate({ tag }, { tag, userId: userOpt.value.id }, { upsert: true });
+        }
         yield* linkedTag(message.guild, mentionId, player);
         const member = message.guild.members.cache.get(mentionId);
         embed.setDescription(`${titleField}Linked to **${member?.user.tag || mentionId}**.`);
@@ -106,5 +109,5 @@ export const linkCommand = (message: Message<true>, args: string[]) =>
       }
 
       yield* Effect.tryPromise(() => msg.edit({ embeds: [embed] }));
-    }).pipe(Effect.ensuring(Effect.sync(() => linkQueue.delete(message.author.id))));
-  });
+    }).pipe(Effect.ensuring(Effect.sync(() => linkQueue.delete(message.author.id))), Effect.asVoid);
+  }).pipe(Effect.asVoid);

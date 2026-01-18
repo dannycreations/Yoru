@@ -1,6 +1,6 @@
 import { Logger, LogLevel, SapphireClient } from '@sapphire/framework';
 import { GatewayIntentBits, Partials } from 'discord.js';
-import { Context, Data, Effect, Layer } from 'effect';
+import { Context, Data, Effect, Layer, Option } from 'effect';
 
 import { EnvTag } from '../core/schemas';
 import { makeBridge } from '../structures/RuntimeClient';
@@ -48,15 +48,17 @@ const makeDiscordClient = Effect.gen(function* () {
   client.logger.error = bridgeLogger(Effect.logError);
   client.logger.fatal = bridgeLogger(Effect.logFatal);
 
-  let loginTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
-    bridge.sync(Effect.logWarning('Discord client login timed out after 60 seconds.'));
-    client.destroy();
-  }, 60_000).unref();
+  let loginTimeout = Option.some(
+    setTimeout(() => {
+      bridge.sync(Effect.logWarning('Discord client login timed out after 60 seconds.'));
+      client.destroy();
+    }, 60_000).unref(),
+  );
 
   const clearLoginTimeout = () => {
-    if (loginTimeout) {
-      clearTimeout(loginTimeout);
-      loginTimeout = undefined;
+    if (Option.isSome(loginTimeout)) {
+      clearTimeout(loginTimeout.value);
+      loginTimeout = Option.none();
     }
   };
 

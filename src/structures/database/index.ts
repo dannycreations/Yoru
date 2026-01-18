@@ -76,7 +76,7 @@ export const SqliteClientLayer = (options: SqliteOptions): Layer.Layer<SqliteCli
         },
         catch: (error) =>
           new SqliteClientError({
-            message: 'Failed to initialize SQLite database',
+            message: error instanceof Error ? error.message : 'Failed to initialize SQLite database',
             cause: error,
           }),
       }),

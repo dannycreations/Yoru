@@ -13,7 +13,7 @@ import { MemberHandlerTag } from '../MemberHandler';
 import type { Message } from 'discord.js';
 import type { AccountTable } from '../../database/schema';
 
-const checkProfile = (message: Message<true>, ownerId: string, accounts: AccountTable[]) =>
+const checkProfile = (message: Message<true>, ownerId: string, accounts: ReadonlyArray<AccountTable>) =>
   Effect.gen(function* () {
     const memberHandler = yield* MemberHandlerTag;
     const memberOpt = yield* getGuildMember(ownerId, message.guild);
@@ -31,32 +31,33 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Account
 
     const results = yield* Effect.all(
       accounts.map((account) =>
-        (account.bannedAt ? Effect.succeed({ tag: account.tag, banned: true as const, player: null }) : memberHandler.getPlayer(account)).pipe(
-          Effect.either,
-        ),
+        (account.bannedAt
+          ? Effect.succeed({ tag: account.tag, banned: true as const, player: Option.none() })
+          : memberHandler.getPlayer(account)
+        ).pipe(Effect.either),
       ),
       { concurrency: 'unbounded' },
     );
 
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      if (Either.isLeft(result)) continue;
+    results.forEach((result, i) => {
+      if (Either.isRight(result)) {
+        const data = result.right;
+        const count = i + 1;
 
-      const data = result.right;
-      const count = i + 1;
-
-      if (data.banned) {
-        embed.addFields({
-          name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
-          value: '⛔ Has been banned!',
-        });
-      } else if (data.player) {
-        embed.addFields({
-          name: `${count}. ${emoji.townhalls[data.player.townHallLevel - 1]} ${data.player.name}`,
-          value: formatPlayerField(data.player),
-        });
+        if (data.banned) {
+          embed.addFields({
+            name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
+            value: '⛔ Has been banned!',
+          });
+        } else if (Option.isSome(data.player)) {
+          const player = data.player.value;
+          embed.addFields({
+            name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
+            value: formatPlayerField(player),
+          });
+        }
       }
-    }
+    });
 
     embed.setFooter({ text: message.author.username, iconURL: message.author.displayAvatarURL() }).setTimestamp();
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
@@ -71,15 +72,17 @@ const checkPlayer = (message: Message<true>, tag: string) =>
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
 
-    const account = yield* accountDatabase.findOne({ tag });
-    let isOwned = '';
-    if (account) {
-      const user = yield* userDatabase.findOne({ id: account.userId });
-      if (user) {
-        const member = message.guild.members.cache.get(user.ownerId);
-        isOwned = `👤 ${member ? member.user.tag : user.ownerId}\n`;
+    const accountOpt = yield* accountDatabase.findOne({ tag });
+    const isOwned = yield* Effect.gen(function* () {
+      if (Option.isSome(accountOpt)) {
+        const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
+        if (Option.isSome(userOpt)) {
+          const member = message.guild.members.cache.get(userOpt.value.ownerId);
+          return `👤 ${member ? member.user.tag : userOpt.value.ownerId}\n`;
+        }
       }
-    }
+      return '';
+    });
 
     const statsValue = `${isOwned}${formatPlayerStats(player)}`;
     embed.addFields({
@@ -90,7 +93,7 @@ const checkPlayer = (message: Message<true>, tag: string) =>
     const { categories, unknowns } = categorizeUnits(player);
 
     Object.entries(categories).forEach(([name, list]) => {
-      if (list.length) addSplitFields(embed, name, list);
+      if (list.length > 0) addSplitFields(embed, name, list);
     });
 
     const achievements = player.achievements
@@ -100,7 +103,7 @@ const checkPlayer = (message: Message<true>, tag: string) =>
 
     if (achievements) embed.addFields({ name: 'Achievements', value: achievements });
 
-    if (unknowns.length) yield* Effect.logWarning('Unknown assets detected', unknowns);
+    if (unknowns.length > 0) yield* Effect.logWarning('Unknown assets detected', unknowns);
 
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
   });
@@ -110,10 +113,10 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
 
-    const user = yield* userDatabase.findOne({ ownerId });
-    const accounts = user ? yield* accountDatabase.find({ userId: user.id }) : [];
+    const userOpt = yield* userDatabase.findOne({ ownerId });
+    const accounts = Option.isSome(userOpt) ? yield* accountDatabase.find({ userId: userOpt.value.id }) : [];
 
-    if (!user || accounts.length === 0) {
+    if (Option.isNone(userOpt) || accounts.length === 0) {
       yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nThere is no tag linked to this user!`));
       return;
     }
@@ -130,7 +133,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const clash = yield* ClashTag;
     const configStore = yield* ConfigStoreTag;
     const config = yield* configStore.get;
-    const clanTags = config.clanTags;
+    const { clanTags } = config;
 
     if (clanTags.length === 0) {
       yield* Effect.tryPromise(() => message.reply('No clans are currently configured.'));
@@ -172,7 +175,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
       { concurrency: 'unbounded' },
     );
 
-    for (const result of memberResults) {
+    memberResults.forEach((result) => {
       if (result.type === 'unknown') {
         unknown.push(result.field);
       } else if (result.type === 'leave') {
@@ -182,7 +185,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
         if (!guildMap.has(result.ownerId)) guildMap.set(result.ownerId, list);
         list.push(result.field);
       }
-    }
+    });
 
     const embed = new EmbedBuilder()
       .setColor('#0099ff')
@@ -192,11 +195,11 @@ const checkMembers = (message: Message<true>, page = 1) =>
       .setDescription(`👥 **Total Members in Clan:** ${clan.memberCount}`)
       .setTimestamp();
 
-    if (leave.length) {
+    if (leave.length > 0) {
       embed.addFields({ name: `🖕 Members leave Discord (${leave.length})`, value: leave.join(' ').slice(0, 1024) });
     }
 
-    if (guildMap.size) {
+    if (guildMap.size > 0) {
       const field = [...guildMap.entries()]
         .map(([ownerId, members]) => `**<@${ownerId}>:**\n- ${members.map((m) => m.trim()).join('\n- ')}`)
         .join('\n')
@@ -204,14 +207,14 @@ const checkMembers = (message: Message<true>, page = 1) =>
       embed.addFields({ name: '👍 Members on Discord', value: field });
     }
 
-    if (unknown.length) {
+    if (unknown.length > 0) {
       embed.addFields({ name: `👎 Members not on Discord (${unknown.length})`, value: unknown.join(' ').slice(0, 1024) });
     }
 
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
   });
 
-export const checkCommand = (message: Message<true>, args: string[]) =>
+export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const tag = args[0];
     const page = parseInt(args[1], 10) || 0;
@@ -241,4 +244,4 @@ export const checkCommand = (message: Message<true>, args: string[]) =>
         yield* Effect.tryPromise(() => message.reply('Invalid player tag!'));
       }
     }
-  });
+  }).pipe(Effect.asVoid);

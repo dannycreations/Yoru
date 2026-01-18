@@ -6,21 +6,27 @@ import { ClashError } from '../services/ClashService';
 
 import type { Message } from 'discord.js';
 
-export const replyWithError = (message: Message<true>, error: unknown) =>
+export const replyWithError = (message: Message<true>, error: unknown): Effect.Effect<void> =>
   Effect.gen(function* () {
     const cause = error instanceof ClashError ? error.cause : error;
 
-    let errorMessage = 'Unhandled Rejection, please contact owner!';
+    const errorMessage = yield* Effect.sync(() => {
+      if (cause instanceof HTTPError) {
+        return cause.reason === 'notFound' && cause.path.includes('/players/') ? 'Error, Player tag not found!' : cause.message;
+      }
+      if (error instanceof ClashError) {
+        return error.message;
+      }
+      if (isErrorLike(error) && 'message' in error) {
+        return error.message;
+      }
+      return null;
+    });
 
-    if (cause instanceof HTTPError) {
-      errorMessage = cause.reason === 'notFound' && cause.path.includes('/players/') ? 'Error, Player tag not found!' : cause.message;
-    } else if (error instanceof ClashError) {
-      errorMessage = error.message;
-    } else if (isErrorLike(error) && 'message' in error) {
-      errorMessage = error.message;
-    } else {
+    if (errorMessage === null) {
       yield* Effect.logError('Unexpected error encountered', error);
+      yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUnhandled Rejection, please contact owner!`)).pipe(Effect.ignore);
+    } else {
+      yield* Effect.tryPromise(() => message.reply(`> ${message.content}\n${errorMessage}`)).pipe(Effect.ignore);
     }
-
-    yield* Effect.tryPromise(() => message.reply(`> ${message.content}\n${errorMessage}`));
   }).pipe(Effect.asVoid);

@@ -4,7 +4,7 @@ import { DiscordHandlerTag } from '../DiscordHandler';
 
 import type { Message } from 'discord.js';
 
-export const pingCommand = (message: Message<true>) =>
+export const pingCommand = (message: Message<true>): Effect.Effect<void, Error, DiscordHandlerTag> =>
   Effect.gen(function* () {
     const { client: discord } = yield* DiscordHandlerTag;
     const msg = yield* Effect.tryPromise(() => message.reply('ping?'));
@@ -13,4 +13,4 @@ export const pingCommand = (message: Message<true>) =>
 
     const latencyReport = `Pong! BOT Latency ${botLatency}ms. API Latency ${apiLatency}ms.`;
     yield* Effect.tryPromise(() => msg.edit(latencyReport));
-  });
+  }).pipe(Effect.asVoid);

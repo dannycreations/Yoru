@@ -16,7 +16,11 @@ export const EventHandler = Effect.gen(function* () {
     once = false,
   ) => {
     const cb = (...args: any[]) =>
-      Runtime.runFork(runtime)(Effect.catchAllCause(handler(...args), (cause) => Effect.logError(`Unhandled error in ${event} handler`, cause)));
+      Runtime.runFork(runtime)(
+        Effect.gen(function* () {
+          yield* handler(...args);
+        }).pipe(Effect.catchAllCause((cause) => Effect.logError(`Unhandled error in ${event} handler`, cause))),
+      );
 
     if (once && emitter.once) {
       emitter.once(event, cb);

@@ -36,15 +36,17 @@ export const MemberHandlerLayer = Layer.effect(
     const accountDatabase = yield* AccountDatabaseTag;
 
     const getPlayer = (account: AccountTable) =>
-      clash.getPlayer(account.tag).pipe(
-        Effect.map((player) => ({ player, banned: false as const, tag: account.tag })),
-        Effect.catchIf(
-          (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
-          () =>
-            accountDatabase.update({ ...account, bannedAt: Date.now() }).pipe(Effect.as({ player: null, banned: true as const, tag: account.tag })),
-        ),
-        Effect.catchAll(() => Effect.succeed({ player: null, banned: false as const, tag: account.tag })),
-      );
+      Effect.gen(function* () {
+        return yield* clash.getPlayer(account.tag).pipe(
+          Effect.map((player) => ({ player, banned: false as const, tag: account.tag })),
+          Effect.catchIf(
+            (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
+            () =>
+              accountDatabase.update({ ...account, bannedAt: Date.now() }).pipe(Effect.as({ player: null, banned: true as const, tag: account.tag })),
+          ),
+          Effect.catchAll(() => Effect.succeed({ player: null, banned: false as const, tag: account.tag })),
+        );
+      });
 
     const findActiveAccount = (userId: number, currentTag: string) =>
       Effect.gen(function* () {

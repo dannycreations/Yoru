@@ -84,13 +84,19 @@ export const cycleMidnightRestart: Effect.Effect<never, RuntimeRestart> = Effect
   return yield* Effect.fail(new RuntimeRestart());
 });
 
-export const runMain = async <A, E, R, ROut = unknown, RE = unknown, RIn = unknown>(
+export const runMain = <A, E, R, ROut = unknown, RE = unknown, RIn = unknown>(
   program: Effect.Effect<A, E, R | Scope.Scope>,
   options: RuntimeOptions<ROut, RE, RIn> = {},
-): Promise<void> => {
+): void => {
   const { runtimeBaseLayer, ...restartOptions } = options;
 
-  const runtimeEffect = runtimeBaseLayer ? Effect.runtime<ROut>().pipe(Effect.provide(runtimeBaseLayer)) : Effect.runtime();
-  const runtime = await Effect.runPromise(runtimeEffect as Effect.Effect<Runtime.Runtime<R>>);
-  runForkWithCleanUp(cycleWithRestart(program, restartOptions), runtime);
+  const mainEffect = Effect.gen(function* () {
+    const runtime = yield* Effect.runtime<R>();
+    yield* Effect.sync(() => runForkWithCleanUp(cycleWithRestart(program, restartOptions), runtime));
+    yield* Effect.never;
+  }).pipe(Effect.scoped);
+
+  const layeredEffect = runtimeBaseLayer ? mainEffect.pipe(Effect.provide(runtimeBaseLayer)) : mainEffect;
+
+  Effect.runFork(layeredEffect as Effect.Effect<never>);
 };

@@ -62,10 +62,12 @@ const makeDiscordClient = Effect.gen(function* () {
   client.once('ready', () => clearLoginTimeout());
 
   const login = (): Effect.Effect<void, DiscordError> =>
-    Effect.tryPromise({
-      try: () => client.login(env.DISCORD_TOKEN),
-      catch: (error) => new DiscordError({ message: 'Failed to login to Discord', cause: error }),
-    }).pipe(Effect.asVoid);
+    Effect.gen(function* () {
+      yield* Effect.tryPromise({
+        try: () => client.login(env.DISCORD_TOKEN),
+        catch: (error) => new DiscordError({ message: 'Failed to login to Discord', cause: error }),
+      });
+    });
 
   const isMaintenance = false;
 

@@ -17,8 +17,8 @@ export const sqliteConfig = makeSqliteConfig({
 
 export class UserDatabaseTag extends Context.Tag('@database/User')<UserDatabaseTag, Adapter<typeof userTable>>() {}
 
-export const UserDatabaseLayer = Layer.succeed(UserDatabaseTag, Adapter(userTable));
+export const UserDatabaseLayer = Layer.sync(UserDatabaseTag, () => Adapter(userTable));
 
 export class AccountDatabaseTag extends Context.Tag('@database/Account')<AccountDatabaseTag, Adapter<typeof accountTable>>() {}
 
-export const AccountDatabaseLayer = Layer.succeed(AccountDatabaseTag, Adapter(accountTable));
+export const AccountDatabaseLayer = Layer.sync(AccountDatabaseTag, () => Adapter(accountTable));

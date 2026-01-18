@@ -59,67 +59,68 @@ const makeHttpClient = Effect.sync(() => {
   const gotInstance: Got = got.bind(got);
   const userAgent = new UserAgent({ deviceCategory: 'desktop' });
 
-  const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError> => {
-    const isString = typeof options === 'string';
-    const payload: DefaultOptions = defaultsDeep({}, isString ? { url: options } : options, {
-      headers: { 'user-agent': userAgent.toString() },
-      http2: true,
-    });
-
-    const retryCount = isString ? 3 : (options.retry ?? 3);
-    const { initial = 10_000, transmission = 30_000, total = 60_000 } = payload.timeout || {};
-
-    return Effect.async<Response<T>, HttpClientError>((resume) => {
-      const promise = gotInstance({
-        ...payload,
-        retry: 0,
-        timeout: {
-          lookup: initial,
-          connect: initial,
-          secureConnect: initial,
-          socket: transmission,
-          response: transmission,
-          send: transmission,
-          request: total,
-        },
-        resolveBodyOnly: false,
-      }) as CancelableRequest<Response<T>>;
-
-      promise
-        .then((response) => resume(Effect.succeed(response)))
-        .catch((error) =>
-          resume(
-            Effect.fail(
-              isErrorLike<RequestError>(error)
-                ? new HttpClientError({
-                    message: error.message || 'Request failed',
-                    code: error.code,
-                    status: error.response?.statusCode,
-                    cause: error,
-                  })
-                : new HttpClientError({
-                    message: String(error),
-                    cause: error,
-                  }),
-            ),
-          ),
-        );
-
-      return Effect.sync(() => {
-        promise.cancel();
+  const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError> =>
+    Effect.gen(function* () {
+      const isString = typeof options === 'string';
+      const payload: DefaultOptions = defaultsDeep({}, isString ? { url: options } : options, {
+        headers: { 'user-agent': userAgent.toString() },
+        http2: true,
       });
-    }).pipe(
-      Effect.retry({
-        while: (error) => {
-          if (!(error instanceof HttpClientError)) return false;
-          const isNetworkError = !!error.code && ERROR_CODES.includes(error.code);
-          const isRetryableStatus = !!error.status && ERROR_STATUS_CODES.includes(error.status);
-          return isNetworkError || isRetryableStatus || isErrorTimeout(error);
-        },
-        schedule: retryCount < 0 ? Schedule.forever : Schedule.recurs(retryCount),
-      }),
-    );
-  };
+
+      const retryCount = isString ? 3 : (options.retry ?? 3);
+      const { initial = 10_000, transmission = 30_000, total = 60_000 } = payload.timeout || {};
+
+      return yield* Effect.async<Response<T>, HttpClientError>((resume) => {
+        const promise = gotInstance({
+          ...payload,
+          retry: 0,
+          timeout: {
+            lookup: initial,
+            connect: initial,
+            secureConnect: initial,
+            socket: transmission,
+            response: transmission,
+            send: transmission,
+            request: total,
+          },
+          resolveBodyOnly: false,
+        }) as CancelableRequest<Response<T>>;
+
+        promise
+          .then((response) => resume(Effect.succeed(response)))
+          .catch((error) =>
+            resume(
+              Effect.fail(
+                isErrorLike<RequestError>(error)
+                  ? new HttpClientError({
+                      message: error.message || 'Request failed',
+                      code: error.code,
+                      status: error.response?.statusCode,
+                      cause: error,
+                    })
+                  : new HttpClientError({
+                      message: String(error),
+                      cause: error,
+                    }),
+              ),
+            ),
+          );
+
+        return Effect.sync(() => {
+          promise.cancel();
+        });
+      }).pipe(
+        Effect.retry({
+          while: (error) => {
+            if (!(error instanceof HttpClientError)) return false;
+            const isNetworkError = !!error.code && ERROR_CODES.includes(error.code);
+            const isRetryableStatus = !!error.status && ERROR_STATUS_CODES.includes(error.status);
+            return isNetworkError || isRetryableStatus || isErrorTimeout(error);
+          },
+          schedule: retryCount < 0 ? Schedule.forever : Schedule.recurs(retryCount),
+        }),
+      );
+    });
 
   const waitForConnectionFn = (total?: number): Effect.Effect<void, HttpClientError> => {
     const retryMs = total ?? 10_000;

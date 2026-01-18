@@ -51,20 +51,22 @@ const makeClashClient = Effect.gen(function* () {
   const events = yield* PubSub.unbounded<ClashEvent>();
 
   const login = () =>
-    Effect.tryPromise({
-      try: () =>
-        client.rest.login({
-          email: config.email,
-          password: config.password,
-          keyName: config.keyName ?? 'Yoru',
-          keyCount: config.keyCount ?? 1,
-        }),
-      catch: (error) =>
-        new ClashError({
-          message: 'Failed to login to Clash API',
-          cause: error,
-        }),
-    }).pipe(Effect.asVoid);
+    Effect.gen(function* () {
+      yield* Effect.tryPromise({
+        try: () =>
+          client.rest.login({
+            email: config.email,
+            password: config.password,
+            keyName: config.keyName ?? 'Yoru',
+            keyCount: config.keyCount ?? 1,
+          }),
+        catch: (error) =>
+          new ClashError({
+            message: 'Failed to login to Clash API',
+            cause: error,
+          }),
+      });
+    });
 
   client.rest.requestHandler['reValidateKeys'] = () => Promise.resolve();
 
@@ -190,24 +192,25 @@ const makeClashClient = Effect.gen(function* () {
 
     const updates = yield* Effect.all(
       Array.from(tags).map((tag) =>
-        Effect.tryPromise({
-          try: () => client.getClan(tag),
-          catch: (error) => error,
-        }).pipe(
-          Effect.catchAll(() => Effect.succeed(null)),
-          Effect.flatMap((newClan) => {
-            if (!newClan) return Effect.succeed(null);
-            const oldClan = cache.get(tag);
-            const publish = oldClan
-              ? PubSub.publish(events, {
-                  _tag: ClientEvents.ClanMember,
-                  oldClan,
-                  newClan,
-                })
-              : Effect.void;
-            return publish.pipe(Effect.as({ tag, newClan }));
-          }),
-        ),
+        Effect.gen(function* () {
+          const newClan = yield* Effect.tryPromise({
+            try: () => client.getClan(tag),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+          if (!newClan) return null;
+
+          const oldClan = cache.get(tag);
+          if (oldClan) {
+            yield* PubSub.publish(events, {
+              _tag: ClientEvents.ClanMember,
+              oldClan,
+              newClan,
+            });
+          }
+
+          return { tag, newClan };
+        }),
       ),
       { concurrency: 'unbounded' },
     );

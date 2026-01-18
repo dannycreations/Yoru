@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Layer, Schema } from 'effect';
+import { Config, Context, Data, Effect, Layer, Schema } from 'effect';
 
 import { StoreClient, StoreClientLayer } from '../structures/StoreClient';
 
@@ -7,12 +7,7 @@ export class EnvError extends Data.TaggedError('EnvError')<{
 }> {}
 
 export const EnvSchema = Schema.Struct({
-  NODE_ENV: Schema.optional(Schema.Literal('development', 'production', 'test')).pipe(
-    Schema.withDefaults({
-      constructor: () => 'development',
-      decoding: () => 'development',
-    }),
-  ),
+  NODE_ENV: Schema.Literal('development', 'production', 'test'),
   DISCORD_TOKEN: Schema.NonEmptyString,
   CLASH_EMAIL: Schema.NonEmptyString,
   CLASH_PASSWORD: Schema.NonEmptyString,
@@ -24,8 +19,14 @@ export class EnvTag extends Context.Tag('@core/Env')<EnvTag, Env>() {}
 
 export const EnvLayer = Layer.effect(
   EnvTag,
-  Schema.decodeUnknown(EnvSchema)(process.env).pipe(
-    Effect.mapError((error) => new EnvError({ message: `Invalid environment variables: ${error.message}` })),
+  Config.all({
+    NODE_ENV: Config.string('NODE_ENV').pipe(Config.withDefault('development')),
+    DISCORD_TOKEN: Config.string('DISCORD_TOKEN'),
+    CLASH_EMAIL: Config.string('CLASH_EMAIL'),
+    CLASH_PASSWORD: Config.string('CLASH_PASSWORD'),
+  }).pipe(
+    Effect.flatMap((raw) => Schema.decodeUnknown(EnvSchema)(raw)),
+    Effect.mapError((error) => new EnvError({ message: `Invalid environment variables: ${String(error)}` })),
   ),
 );
 

@@ -4,8 +4,8 @@
 
 ```cmd
 # Checks for compilation errors and linting warnings (Fast)
-bun run check
+npm run check
 
 # Runs all unit and integration tests (Slow)
-bun run test
+npm run test
 ```

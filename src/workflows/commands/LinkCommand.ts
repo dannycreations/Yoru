@@ -3,9 +3,9 @@ import { Effect, Option } from 'effect';
 
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
-import { createPlayerEmbed, formatPlayerStats } from '../../helpers/clash.helper';
-import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
-import { isModeratorRole } from '../../helpers/role.helper';
+import { createPlayerEmbed, formatPlayerStats } from '../../helpers/ClashHelper';
+import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/DiscordHelper';
+import { isModeratorRole } from '../../helpers/RoleHelper';
 import { ClashTag } from '../../services/ClashService';
 import { MemberHandlerTag } from '../MemberHandler';
 

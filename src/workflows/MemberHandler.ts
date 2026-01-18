@@ -4,9 +4,9 @@ import { Context, Effect, Layer } from 'effect';
 import { MemberRoles, RegisterRoles } from '../core/constants';
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
 import { AccountDatabaseTag } from '../database';
-import { getPlayerNickname } from '../helpers/clash.helper';
-import { removeMemberRoles } from '../helpers/discord.helper';
-import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/role.helper';
+import { getPlayerNickname } from '../helpers/ClashHelper';
+import { removeMemberRoles } from '../helpers/DiscordHelper';
+import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/RoleHelper';
 import { ClashTag } from '../services/ClashService';
 import { SqliteClientTag } from '../structures/database';
 

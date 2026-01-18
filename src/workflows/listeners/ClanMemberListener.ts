@@ -3,7 +3,7 @@ import { Effect, Option, PubSub, Queue, Scope } from 'effect';
 import { ClientEvents } from '../../core/constants';
 import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
-import { getGuildMember } from '../../helpers/discord.helper';
+import { getGuildMember } from '../../helpers/DiscordHelper';
 import { ClashTag } from '../../services/ClashService';
 import { createStore, StoreClient } from '../../structures/StoreClient';
 import { MemberHandlerTag } from '../MemberHandler';

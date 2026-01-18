@@ -5,8 +5,8 @@ import { Effect, Either, Option } from 'effect';
 import { emoji } from '../../core/emojis';
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
-import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/clash.helper';
-import { addSplitFields, getGuildMember, parseMentionOrSnowflake } from '../../helpers/discord.helper';
+import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/ClashHelper';
+import { addSplitFields, getGuildMember, parseMentionOrSnowflake } from '../../helpers/DiscordHelper';
 import { ClashTag } from '../../services/ClashService';
 import { MemberHandlerTag } from '../MemberHandler';
 

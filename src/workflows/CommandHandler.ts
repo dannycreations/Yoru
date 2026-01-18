@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from 'effect';
 
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
-import { replyWithError } from '../helpers/error.helper';
+import { replyWithError } from '../helpers/ErrorHelper';
 import { ClashLayer } from '../services/ClashService';
 import { SqliteClientTag } from '../structures/database';
 import { checkCommand } from './commands/CheckCommand';

@@ -7,8 +7,8 @@ import { AccountDatabaseLayer, sqliteConfig, UserDatabaseLayer } from './databas
 import { ClashConfigTag, ClashLayer, ClashTag } from './services/ClashService';
 import { SqliteClientLayer } from './structures/database';
 import { HttpClientLayer } from './structures/HttpClient';
-import { createLogger, LoggerClientLayer } from './structures/LoggerClient';
-import { cycleMidnightRestart, cycleWithRestart, runForkWithCleanUp } from './structures/RuntimeClient';
+import { LoggerClientLayer, makeLoggerClient } from './structures/LoggerClient';
+import { cycleMidnightRestart, runMain } from './structures/RuntimeClient';
 import { CommandHandlerLayer } from './workflows/CommandHandler';
 import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandler';
 import { EventHandlerLayer } from './workflows/EventHandler';
@@ -28,7 +28,18 @@ const program = Effect.gen(function* () {
   yield* cycleMidnightRestart;
 });
 
-const logger = createLogger({ exception: false, rejection: false });
+const logger = makeLoggerClient({ exception: false, rejection: false });
+
+const BaseLayer = Layer.mergeAll(
+  EnvLayer,
+  HttpClientLayer,
+  ConfigStoreLayer,
+  SessionStoreLayer,
+  SqliteClientLayer(sqliteConfig),
+  UserDatabaseLayer,
+  AccountDatabaseLayer,
+  LoggerClientLayer(Logger.defaultLogger, logger),
+);
 
 const MainLayer = EventHandlerLayer.pipe(
   Layer.provideMerge(DiscordHandlerLayer),
@@ -47,17 +58,8 @@ const MainLayer = EventHandlerLayer.pipe(
       }),
     ),
   ),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      EnvLayer,
-      HttpClientLayer,
-      ConfigStoreLayer,
-      SessionStoreLayer,
-      SqliteClientLayer(sqliteConfig),
-      UserDatabaseLayer,
-      AccountDatabaseLayer,
-    ),
-  ),
 );
 
-runForkWithCleanUp(cycleWithRestart(program.pipe(Effect.provide(MainLayer))).pipe(Effect.provide(LoggerClientLayer(Logger.defaultLogger, logger))));
+runMain(program.pipe(Effect.provide(MainLayer)), {
+  runtimeBaseLayer: BaseLayer,
+});

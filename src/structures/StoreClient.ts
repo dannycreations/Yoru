@@ -2,9 +2,14 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { parseJsonc } from '@vegapunk/utilities';
 import { defaultsDeep } from '@vegapunk/utilities/common';
-import { Context, Data, Effect, Layer, Ref, Schedule, Schema } from 'effect';
+import { isErrorLike } from '@vegapunk/utilities/result';
+import { Context, Data, Effect, Layer, Ref, Schedule, Schema, Scope } from 'effect';
 
-const ensureDir = (path: string) => Effect.tryPromise(() => mkdir(dirname(path), { recursive: true }));
+const ensureDir = (path: string): Effect.Effect<void, StoreClientError> =>
+  Effect.tryPromise({
+    try: () => mkdir(dirname(path), { recursive: true }),
+    catch: (cause) => new StoreClientError({ message: `Failed to ensure directory: ${dirname(path)}`, cause }),
+  }).pipe(Effect.asVoid);
 
 export class StoreClientError extends Data.TaggedError('StoreClientError')<{
   readonly message: string;
@@ -18,41 +23,48 @@ export interface StoreClient<T> {
   readonly setDelay: (delayMs: number) => Effect.Effect<void>;
 }
 
-const loadStore = <A>(filePath: string, initialData: A) =>
-  Effect.tryPromise(() => readFile(filePath, 'utf-8')).pipe(
-    Effect.flatMap((content) => Effect.sync(() => parseJsonc<A>(content))),
-    Effect.map((data) => defaultsDeep({}, data, initialData)),
-    Effect.catchAll((error) => {
-      // Missing files are handled by creating them with the provided initial data.
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        return ensureDir(filePath).pipe(
-          Effect.flatMap(() => Effect.tryPromise(() => writeFile(filePath, JSON.stringify(initialData)))),
-          Effect.as(initialData),
-          Effect.mapError((error) => new StoreClientError({ message: `Failed to initialize store: ${filePath}`, cause: error })),
-        );
-      }
-      return Effect.fail(
-        error instanceof StoreClientError ? error : new StoreClientError({ message: `Failed to load store: ${filePath}`, cause: error }),
-      );
-    }),
-  );
-
-const saveStore = <A>(filePath: string, data: A) =>
-  Effect.gen(function* () {
-    yield* ensureDir(filePath);
-
-    const tempPath = `${filePath}.tmp`;
-    const content = JSON.stringify(data);
-
-    yield* Effect.tryPromise(() => writeFile(tempPath, content));
-    yield* Effect.tryPromise(() => rename(tempPath, filePath));
+const loadStore = (filePath: string): Effect.Effect<unknown, StoreClientError> =>
+  Effect.tryPromise({
+    try: () => readFile(filePath, 'utf-8'),
+    catch: (error) => error,
   }).pipe(
-    Effect.mapError((error) =>
-      error instanceof StoreClientError ? error : new StoreClientError({ message: `Failed to save store: ${filePath}`, cause: error }),
+    Effect.flatMap((content) => Effect.sync(() => parseJsonc<unknown>(content))),
+    Effect.catchAll((error) =>
+      isErrorLike<{ readonly code: string }>(error) && error.code === 'ENOENT'
+        ? Effect.succeed({})
+        : Effect.fail(new StoreClientError({ message: `Failed to load store: ${filePath}`, cause: error })),
     ),
   );
 
-export const createStore = <A extends object, I, R>(filePath: string, schema: Schema.Schema<A, I, R>, initialData: A, initialDelay: number = 1000) =>
+const saveStore = <A, I, R>(filePath: string, schema: Schema.Schema<A, I, R>, data: A): Effect.Effect<void, StoreClientError, R> =>
+  Effect.gen(function* () {
+    yield* ensureDir(filePath);
+
+    const encode = Schema.encode(schema);
+    const encoded = yield* encode(data).pipe(
+      Effect.mapError((error) => new StoreClientError({ message: `Failed to encode store: ${filePath}`, cause: error })),
+    );
+
+    const tempPath = `${filePath}.tmp`;
+    const content = JSON.stringify(encoded);
+
+    yield* Effect.tryPromise({
+      try: () => writeFile(tempPath, content),
+      catch: (cause) => new StoreClientError({ message: `Failed to write temp store: ${tempPath}`, cause }),
+    });
+
+    yield* Effect.tryPromise({
+      try: () => rename(tempPath, filePath),
+      catch: (cause) => new StoreClientError({ message: `Failed to rename store: ${tempPath} -> ${filePath}`, cause }),
+    });
+  });
+
+export const makeStoreClient = <A extends object, I, R>(
+  filePath: string,
+  schema: Schema.Schema<A, I, R>,
+  initialData: A,
+  initialDelay = 1000,
+): Effect.Effect<StoreClient<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
     const dataRef = yield* Ref.make(initialData);
     const delayRef = yield* Ref.make(initialDelay);
@@ -60,9 +72,19 @@ export const createStore = <A extends object, I, R>(filePath: string, schema: Sc
 
     const decode = Schema.decodeUnknown(schema);
 
-    const rawData = yield* loadStore(filePath, initialData);
+    const rawData = yield* loadStore(filePath).pipe(Effect.catchAll(() => Effect.succeed({})));
     const validatedData = yield* decode(rawData).pipe(
-      Effect.mapError((error) => new StoreClientError({ message: `Validation failed for store: ${filePath}`, cause: error })),
+      Effect.catchAll((error) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning(`Store validation failed for ${filePath}, attempting to merge with defaults`);
+          yield* Effect.logDebug(error);
+
+          const partialDecode = Schema.decodeUnknown(Schema.partial(schema));
+          const partial = yield* partialDecode(rawData).pipe(Effect.catchAll(() => Effect.succeed({})));
+
+          return defaultsDeep({}, partial, initialData);
+        }),
+      ),
     );
 
     yield* Ref.set(dataRef, validatedData);
@@ -71,7 +93,7 @@ export const createStore = <A extends object, I, R>(filePath: string, schema: Sc
       Effect.flatMap((isDirty) =>
         isDirty
           ? Ref.get(dataRef).pipe(
-              Effect.flatMap((data) => saveStore(filePath, data)),
+              Effect.flatMap((data) => saveStore(filePath, schema, data)),
               Effect.catchAll((error) => Effect.zipRight(Ref.set(dirtyRef, true), Effect.logError(`Store auto-save failed for ${filePath}`, error))),
             )
           : Effect.void,
@@ -80,15 +102,12 @@ export const createStore = <A extends object, I, R>(filePath: string, schema: Sc
 
     const autoSaveLoop = Effect.gen(function* () {
       const delay = yield* Ref.get(delayRef);
-
-      // Periodic execution of the save operation ensures that in-memory state is persisted to disk at regular intervals, minimizing potential data loss.
       yield* Effect.sleep(`${Math.max(1000, delay)} millis`);
       yield* save;
     }).pipe(Effect.repeat(Schedule.forever));
 
     yield* Effect.fork(autoSaveLoop);
 
-    // Closing the scope triggers a final save operation to ensure data persistence.
     yield* Effect.addFinalizer(() => save.pipe(Effect.catchAllCause(() => Effect.void)));
 
     return {
@@ -96,13 +115,13 @@ export const createStore = <A extends object, I, R>(filePath: string, schema: Sc
       set: (partial: Partial<A>) => Ref.update(dataRef, (current) => ({ ...current, ...partial })).pipe(Effect.zipRight(Ref.set(dirtyRef, true))),
       update: (f: (data: A) => A) => Ref.update(dataRef, f).pipe(Effect.zipRight(Ref.set(dirtyRef, true))),
       setDelay: (delayMs: number) => Ref.set(delayRef, Math.max(1000, delayMs)),
-    };
+    } satisfies StoreClient<A>;
   });
 
-export const StoreClientLayer = <S, A extends object, I, R>(
-  tag: Context.Tag<S, StoreClient<A>>,
+export const StoreClientLayer = <A extends object, I, R>(
+  tag: Context.Tag<StoreClient<A>, StoreClient<A>>,
   filePath: string,
   schema: Schema.Schema<A, I, R>,
   initialData: A,
-  initialDelay: number = 1000,
-): Layer.Layer<S, StoreClientError, R> => Layer.scoped(tag, createStore(filePath, schema, initialData, initialDelay));
+  initialDelay = 1000,
+): Layer.Layer<StoreClient<A>, never, Scope.Scope | R> => Layer.scoped(tag, makeStoreClient(filePath, schema, initialData, initialDelay));

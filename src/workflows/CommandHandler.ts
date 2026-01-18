@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from 'effect';
 
-import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
+import { ConfigStoreTag } from '../core/schemas';
 import { replyWithError } from '../helpers/ErrorHelper';
 import { ClashLayer } from '../services/ClashService';
 import { SqliteClientTag } from '../structures/database';
@@ -15,7 +15,7 @@ import type { DiscordHandler } from './DiscordHandler';
 export interface CommandHandler {
   readonly handleCommand: (
     message: Message<true>,
-  ) => Effect.Effect<void, never, SqliteClientTag | DiscordHandler | ConfigStoreTag | SessionStoreTag | ClashLayer | typeof MemberHandlerTag.Service>;
+  ) => Effect.Effect<void, never, SqliteClientTag | DiscordHandler | typeof ConfigStoreTag | ClashLayer | typeof MemberHandlerTag.Service>;
 }
 
 export class CommandHandlerTag extends Context.Tag('@workflows/CommandHandler')<CommandHandlerTag, CommandHandler>() {}

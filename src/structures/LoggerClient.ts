@@ -5,9 +5,19 @@ import pino from 'pino';
 import pinoPretty from 'pino-pretty';
 
 import type { ReadonlyRecord } from 'effect/Record';
-import type { Level, Logger as LoggerPino, StreamEntry } from 'pino';
+import type { Level, StreamEntry } from 'pino';
 
-export const LOG_LEVEL_MAP: ReadonlyRecord<LogLevel.LogLevel['_tag'], pino.LevelWithSilent> = {
+export const PINO_LEVEL_MAP: ReadonlyRecord<string, LogLevel.LogLevel> = {
+  trace: LogLevel.Trace,
+  debug: LogLevel.Debug,
+  info: LogLevel.Info,
+  warn: LogLevel.Warning,
+  error: LogLevel.Error,
+  fatal: LogLevel.Fatal,
+  silent: LogLevel.None,
+};
+
+export const EFFECT_LEVEL_MAP: ReadonlyRecord<LogLevel.LogLevel['_tag'], pino.LevelWithSilent> = {
   All: 'trace',
   Trace: 'trace',
   Debug: 'debug',
@@ -27,7 +37,7 @@ export interface LoggerOptions {
   readonly rejection?: boolean;
 }
 
-export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
+export const makeLoggerClient = (options: LoggerOptions = {}): pino.Logger => {
   const {
     dir = join(process.cwd(), 'logs'),
     level = process.env.NODE_ENV === 'development' ? 'debug' : 'info',
@@ -37,7 +47,7 @@ export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
     rejection = true,
   } = options;
 
-  const streams: StreamEntry[] = [
+  const streams: ReadonlyArray<StreamEntry> = [
     {
       level: 'warn',
       stream: pino.destination({
@@ -45,34 +55,32 @@ export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
         dest: `${dir}/errors.log`,
       }),
     },
+    ...(trace
+      ? [
+          {
+            level: 'trace' as const,
+            stream: pino.destination({
+              mkdir: true,
+              dest: `${dir}/traces.log`,
+            }),
+          },
+        ]
+      : []),
+    pretty
+      ? {
+          level,
+          stream: pinoPretty({
+            colorize: true,
+            translateTime: 'SYS:HH:MM:ss',
+            sync: process.env.NODE_ENV === 'development',
+            singleLine: process.env.NODE_ENV === 'production',
+          }),
+        }
+      : {
+          level,
+          stream: process.stdout,
+        },
   ];
-
-  if (trace) {
-    streams.push({
-      level: 'trace',
-      stream: pino.destination({
-        mkdir: true,
-        dest: `${dir}/traces.log`,
-      }),
-    });
-  }
-
-  if (pretty) {
-    streams.push({
-      level,
-      stream: pinoPretty({
-        colorize: true,
-        translateTime: 'SYS:HH:MM:ss',
-        sync: process.env.NODE_ENV === 'development',
-        singleLine: process.env.NODE_ENV === 'production',
-      }),
-    });
-  } else {
-    streams.push({
-      level,
-      stream: process.stdout,
-    });
-  }
 
   const instance = pino(
     {
@@ -95,16 +103,16 @@ export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
         },
       },
     },
-    pino.multistream(streams),
+    pino.multistream(streams as StreamEntry[]),
   );
 
-  if (exception) {
+  if (exception && process.listenerCount('uncaughtException') === 0) {
     process.on('uncaughtException', (error, origin) => {
       instance.fatal({ error, origin }, 'UncaughtException');
     });
   }
 
-  if (rejection) {
+  if (rejection && process.listenerCount('unhandledRejection') === 0) {
     process.on('unhandledRejection', (reason, promise) => {
       instance.fatal({ reason, promise }, 'UnhandledRejection');
     });
@@ -114,22 +122,27 @@ export const createLogger = (options: LoggerOptions = {}): LoggerPino => {
 };
 
 export const LoggerClientLayer = (self: Logger.Logger<unknown, void>, logger: pino.Logger): Layer.Layer<never> =>
-  Logger.replace(
-    self,
-    Logger.make(({ logLevel, message, cause }) => {
-      const level = LOG_LEVEL_MAP[logLevel._tag] ?? 'info';
-      const payload = Array.isArray(message) ? [...message] : [message];
+  Layer.mergeAll(
+    Logger.replace(
+      self,
+      Logger.make(({ logLevel, message, cause }) => {
+        const level = EFFECT_LEVEL_MAP[logLevel._tag] ?? 'info';
+        const payload = Array.isArray(message) ? [...message] : [message];
 
-      if (cause && !Cause.isEmptyType(cause)) {
-        const [failure] = Cause.failures(cause);
-        const causePretty = { cause: Cause.pretty(cause) };
-        if (isErrorLike<{ cause: unknown }>(failure) && failure.cause) {
-          payload.push(Object.assign({}, failure.cause, causePretty));
-        } else {
-          payload.push(causePretty);
+        if (cause && !Cause.isEmptyType(cause)) {
+          const [failure] = Cause.failures(cause);
+          const causePretty = { cause: Cause.pretty(cause) };
+
+          if (isErrorLike<{ readonly cause: unknown }>(failure) && failure.cause) {
+            payload.push({ ...(failure.cause as object), ...causePretty });
+          } else {
+            payload.push(causePretty);
+          }
         }
-      }
 
-      (logger[level] as (...args: unknown[]) => void)(...payload);
-    }),
+        const logMethod = logger[level] as (...args: readonly unknown[]) => void;
+        logMethod.call(logger, ...payload);
+      }),
+    ),
+    Logger.minimumLogLevel(PINO_LEVEL_MAP[logger.level] ?? LogLevel.Info),
   );

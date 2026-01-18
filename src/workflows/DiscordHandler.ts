@@ -18,7 +18,7 @@ export interface DiscordHandler {
 
 export class DiscordHandlerTag extends Context.Tag('@workflows/DiscordHandler')<DiscordHandlerTag, DiscordHandler>() {}
 
-const createDiscordClient = Effect.gen(function* () {
+const makeDiscordClient = Effect.gen(function* () {
   const env = yield* EnvTag;
   const runtime = yield* Effect.runtime();
 
@@ -82,7 +82,7 @@ const createDiscordClient = Effect.gen(function* () {
 
 export const DiscordHandlerLayer = Layer.scoped(
   DiscordHandlerTag,
-  Effect.acquireRelease(createDiscordClient, ({ client }) =>
+  Effect.acquireRelease(makeDiscordClient, ({ client }) =>
     Effect.sync(() => {
       client.destroy();
     }),

@@ -51,7 +51,7 @@ export const patchDialect = (dialect: PatchedDialect): void => {
   dialect.buildLimit = (limit: number) => (limit >= 0 ? buildLimit(limit) : sql` LIMIT -1`);
 };
 
-export const createConfig = (options: Partial<SqliteOptions> = {}): SqliteOptions => defaultsDeep({}, options, baseOptions);
+export const makeSqliteConfig = (options: Partial<SqliteOptions> = {}): SqliteOptions => defaultsDeep({}, options, baseOptions);
 
 export const SqliteClientLayer = (options: SqliteOptions): Layer.Layer<SqliteClientTag, SqliteClientError, never> =>
   Layer.scoped(

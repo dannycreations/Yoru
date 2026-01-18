@@ -15,11 +15,11 @@ import type { GuildMember } from 'discord.js';
 import type { AccountTable } from '../database/schema';
 
 export interface MemberHandler {
-  readonly updatePresence: (member: GuildMember, player: Player | null) => Effect.Effect<void, never, SessionStoreTag | ConfigStoreTag>;
+  readonly updatePresence: (member: GuildMember, player: Player | null) => Effect.Effect<void, never, typeof SessionStoreTag | typeof ConfigStoreTag>;
   readonly findActiveAccount: (
     userId: number,
     currentTag: string,
-  ) => Effect.Effect<Player | null, never, SqliteClientTag | typeof ClashTag | ConfigStoreTag | typeof AccountDatabaseTag>;
+  ) => Effect.Effect<Player | null, never, SqliteClientTag | typeof ClashTag | typeof ConfigStoreTag | typeof AccountDatabaseTag>;
   readonly getPlayer: (
     account: AccountTable,
   ) => Effect.Effect<{ player: Player | null; banned: boolean; tag: string }, never, typeof ClashTag | SqliteClientTag | typeof AccountDatabaseTag>;

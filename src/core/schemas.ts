@@ -76,7 +76,7 @@ export const ConfigSchema = Schema.Struct({
 
 export type Config = Schema.Schema.Type<typeof ConfigSchema>;
 
-export class ConfigStoreTag extends Context.Tag('@core/ConfigStore')<ConfigStoreTag, StoreClient<Config>>() {}
+export const ConfigStoreTag = Context.GenericTag<StoreClient<Config>>('@core/ConfigStore');
 
 export const ConfigStoreLayer = StoreClientLayer(
   ConfigStoreTag,
@@ -100,6 +100,6 @@ export const SessionSchema = Schema.Struct({
 
 export type Session = Schema.Schema.Type<typeof SessionSchema>;
 
-export class SessionStoreTag extends Context.Tag('@core/SessionStore')<SessionStoreTag, StoreClient<Session>>() {}
+export const SessionStoreTag = Context.GenericTag<StoreClient<Session>>('@core/SessionStore');
 
 export const SessionStoreLayer = StoreClientLayer(SessionStoreTag, 'sessions/sessions.json', SessionSchema, { clans: [], leavers: [] }, 5000);

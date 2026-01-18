@@ -40,7 +40,7 @@ export interface ClashLayer {
 
 export class ClashTag extends Context.Tag('@services/Clash')<ClashTag, ClashLayer>() {}
 
-const createClash = Effect.gen(function* () {
+const makeClashClient = Effect.gen(function* () {
   const http = yield* HttpClientTag;
   const config = yield* ClashConfigTag;
 
@@ -280,4 +280,4 @@ const createClash = Effect.gen(function* () {
   };
 });
 
-export const ClashLayer = Layer.scoped(ClashTag, createClash);
+export const ClashLayer = Layer.scoped(ClashTag, makeClashClient);

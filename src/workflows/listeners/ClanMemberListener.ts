@@ -5,7 +5,7 @@ import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { getGuildMember } from '../../helpers/DiscordHelper';
 import { ClashTag } from '../../services/ClashService';
-import { createStore, StoreClient } from '../../structures/StoreClient';
+import { makeStoreClient, StoreClient } from '../../structures/StoreClient';
 import { MemberHandlerTag } from '../MemberHandler';
 
 import type { ClanMember } from 'clashofclans.js';
@@ -84,15 +84,15 @@ export const createClanMemberListener = () =>
             yield* sessionStore.update((s) => ({ ...s, clans: [...(s.clans ?? []), { name: oldClan.name, tag: oldClan.tag }] }));
           }
 
-          let clanStore = clanStores.get(oldClan.tag);
-          if (!clanStore) {
-            clanStore = yield* createStore(`sessions/clan/${oldClan.tag}.json`, ClanSchema, oldClan, 60_000).pipe(
+          const clanStore = clanStores.get(oldClan.tag);
+          const currentStore =
+            clanStore ??
+            (yield* makeStoreClient(`sessions/clan/${oldClan.tag}.json`, ClanSchema, oldClan, 60_000).pipe(
               Effect.provideService(Scope.Scope, scope),
-            );
-            clanStores.set(oldClan.tag, clanStore);
-          }
+              Effect.tap((s) => Effect.sync(() => clanStores.set(oldClan.tag, s))),
+            ));
 
-          const storedClan = yield* clanStore.get;
+          const storedClan = yield* currentStore.get;
           const newMemberTags = new Set(newClan.members.map((m) => m.tag));
           const leftMembers = storedClan.members.filter((m) => !newMemberTags.has(m.tag));
 
@@ -116,7 +116,7 @@ export const createClanMemberListener = () =>
             }
           }
 
-          yield* clanStore.set(newClan);
+          yield* currentStore.set(newClan);
         }),
       );
 

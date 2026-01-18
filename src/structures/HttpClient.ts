@@ -39,31 +39,37 @@ export interface DefaultOptions extends Omit<Options, 'prefixUrl' | 'retry' | 't
   }>;
 }
 
-export interface HttpClientLayer {
+export interface HttpClient {
   readonly request: <T = string>(options: string | DefaultOptions) => Effect.Effect<Response<T>, HttpClientError>;
   readonly waitForConnection: (total?: number) => Effect.Effect<void, HttpClientError>;
 }
 
-export class HttpClientTag extends Context.Tag('@structures/HttpClient')<HttpClientTag, HttpClientLayer>() {}
-
-const gotInstance: Got = got.bind(got);
-const userAgent = new UserAgent({ deviceCategory: 'desktop' });
+export const HttpClientTag = Context.GenericTag<HttpClient>('@structures/HttpClient');
 
 export const isErrorTimeout = (error: unknown): boolean =>
-  isErrorLike<{ _tag: string }>(error) && (error._tag === 'TimeoutException' || error.code === 'ETIMEDOUT');
+  isErrorLike<{ readonly _tag: string; readonly code?: string }>(error) && (error._tag === 'TimeoutException' || error.code === 'ETIMEDOUT');
 
-const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError> => {
-  const isString = typeof options === 'string';
-  const payload = defaultsDeep({}, isString ? { url: options } : options, {
-    headers: { 'user-agent': userAgent.toString() },
-    http2: true,
-  });
+export const request = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError, HttpClient> =>
+  HttpClientTag.pipe(Effect.flatMap((service) => service.request<T>(options)));
 
-  const retryCount = isString ? 3 : (options.retry ?? 3);
-  const { initial = 10_000, transmission = 30_000, total = 60_000 } = payload.timeout || {};
+export const waitForConnection = (total?: number): Effect.Effect<void, HttpClientError, HttpClient> =>
+  HttpClientTag.pipe(Effect.flatMap((service) => service.waitForConnection(total)));
 
-  return Effect.tryPromise({
-    try: (signal) => {
+const makeHttpClient = Effect.sync(() => {
+  const gotInstance: Got = got.bind(got);
+  const userAgent = new UserAgent({ deviceCategory: 'desktop' });
+
+  const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError> => {
+    const isString = typeof options === 'string';
+    const payload: DefaultOptions = defaultsDeep({}, isString ? { url: options } : options, {
+      headers: { 'user-agent': userAgent.toString() },
+      http2: true,
+    });
+
+    const retryCount = isString ? 3 : (options.retry ?? 3);
+    const { initial = 10_000, transmission = 30_000, total = 60_000 } = payload.timeout || {};
+
+    return Effect.async<Response<T>, HttpClientError>((resume) => {
       const promise = gotInstance({
         ...payload,
         retry: 0,
@@ -77,61 +83,73 @@ const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<
           request: total,
         },
         resolveBodyOnly: false,
-      } as Options) as CancelableRequest<Response<T>>;
+      }) as CancelableRequest<Response<T>>;
 
-      signal.addEventListener('abort', () => promise.cancel(), { once: true });
+      promise
+        .then((response) => resume(Effect.succeed(response)))
+        .catch((error) =>
+          resume(
+            Effect.fail(
+              isErrorLike<RequestError>(error)
+                ? new HttpClientError({
+                    message: error.message || 'Request failed',
+                    code: error.code,
+                    status: error.response?.statusCode,
+                    cause: error,
+                  })
+                : new HttpClientError({
+                    message: String(error),
+                    cause: error,
+                  }),
+            ),
+          ),
+        );
 
-      return promise;
-    },
-    catch: (error) => {
-      const err = error as RequestError;
-      return new HttpClientError({
-        message: err.message || 'Request failed',
-        code: err.code,
-        status: err.response?.statusCode,
-        cause: error,
+      return Effect.sync(() => {
+        promise.cancel();
       });
-    },
-  }).pipe(
-    Effect.retry({
-      while: (error) => {
-        const isNetworkError = !!error.code && ERROR_CODES.includes(error.code);
-        const isRetryableStatus = !!error.status && ERROR_STATUS_CODES.includes(error.status);
-        return isNetworkError || isRetryableStatus || isErrorTimeout(error);
-      },
-      schedule: retryCount < 0 ? Schedule.forever : Schedule.recurs(retryCount),
-    }),
-  );
-};
-
-const waitForConnectionFn = (retryMs: number = 10_000): Effect.Effect<void, HttpClientError> => {
-  const checkGoogle = Effect.tryPromise({
-    try: () => lookup('google.com'),
-    catch: (error) =>
-      new HttpClientError({
-        message: 'DNS lookup failed',
-        code: 'ENOTFOUND',
-        cause: error,
+    }).pipe(
+      Effect.retry({
+        while: (error) => {
+          if (!(error instanceof HttpClientError)) return false;
+          const isNetworkError = !!error.code && ERROR_CODES.includes(error.code);
+          const isRetryableStatus = !!error.status && ERROR_STATUS_CODES.includes(error.status);
+          return isNetworkError || isRetryableStatus || isErrorTimeout(error);
+        },
+        schedule: retryCount < 0 ? Schedule.forever : Schedule.recurs(retryCount),
       }),
-  });
+    );
+  };
 
-  const checkApple = requestFn({
-    url: 'https://captive.apple.com/hotspot-detect.html',
-    headers: { 'user-agent': 'CaptiveNetworkSupport/1.0 wispr' },
-    timeout: { total: retryMs },
-  });
+  const waitForConnectionFn = (total?: number): Effect.Effect<void, HttpClientError> => {
+    const retryMs = total ?? 10_000;
+    const checkGoogle = Effect.tryPromise({
+      try: () => lookup('google.com'),
+      catch: (error) =>
+        new HttpClientError({
+          message: 'DNS lookup failed',
+          code: 'ENOTFOUND',
+          cause: error,
+        }),
+    });
 
-  return Effect.raceAll([checkGoogle, checkApple]).pipe(Effect.retry(Schedule.spaced(`${retryMs} millis`)), Effect.asVoid);
-};
+    const checkApple = requestFn({
+      url: 'https://captive.apple.com/hotspot-detect.html',
+      headers: { 'user-agent': 'CaptiveNetworkSupport/1.0 wispr' },
+      timeout: { total: retryMs },
+    });
 
-export const request = <T = string>(options: string | DefaultOptions) => HttpClientTag.pipe(Effect.flatMap((service) => service.request<T>(options)));
+    return Effect.race(checkGoogle, checkApple).pipe(
+      Effect.retry({ schedule: Schedule.spaced(`${retryMs} millis`) }),
+      Effect.mapError((e) => (e instanceof HttpClientError ? e : new HttpClientError({ message: String(e), cause: e }))),
+      Effect.asVoid,
+    );
+  };
 
-export const waitForConnection = (total?: number) => HttpClientTag.pipe(Effect.flatMap((service) => service.waitForConnection(total)));
-
-export const HttpClientLayer = Layer.succeed(
-  HttpClientTag,
-  HttpClientTag.of({
+  return {
     request: requestFn,
     waitForConnection: waitForConnectionFn,
-  }),
-);
+  } satisfies HttpClient;
+});
+
+export const HttpClientLayer: Layer.Layer<HttpClient> = Layer.effect(HttpClientTag, makeHttpClient);

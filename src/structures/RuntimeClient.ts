@@ -4,6 +4,34 @@ import { Cause, Data, Effect, Fiber, Layer, Runtime, Schedule, Scope } from 'eff
 
 export class RuntimeRestart extends Data.TaggedError('RuntimeRestart') {}
 
+export interface Bridge {
+  readonly fork: <A, E, R>(effect: Effect.Effect<A, E, R>, options?: { readonly name?: string }) => Fiber.RuntimeFiber<A, any>;
+  readonly sync: <A, E, R>(effect: Effect.Effect<A, E, R>) => A;
+  readonly promise: <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>;
+}
+
+export const makeBridge = Effect.gen(function* () {
+  const runtime = yield* Effect.runtime<any>();
+  const runFork = Runtime.runFork(runtime);
+  const runSync = Runtime.runSync(runtime);
+  const runPromise = Runtime.runPromise(runtime);
+
+  const bridge: Bridge = {
+    fork: (effect, options) =>
+      runFork(
+        effect.pipe(
+          Effect.catchAllCause((cause) =>
+            Effect.logError(chalk`{bold.red Unhandled error in forked bridge${options?.name ? ` [${options.name}]` : ''}}`, cause),
+          ),
+        ) as Effect.Effect<any, any, any>,
+      ),
+    sync: (effect) => runSync(effect as Effect.Effect<any, any, any>),
+    promise: (effect) => runPromise(effect as Effect.Effect<any, any, any>),
+  };
+
+  return bridge;
+});
+
 export interface RuntimeRestartOptions {
   readonly maxRestarts?: number;
   readonly intervalMs?: number;

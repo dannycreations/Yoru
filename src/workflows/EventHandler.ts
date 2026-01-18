@@ -1,13 +1,14 @@
 import { PollingEvents } from 'clashofclans.js';
-import { Effect, Layer, Runtime } from 'effect';
+import { Effect, Layer } from 'effect';
 
 import { ClashTag } from '../services/ClashService';
+import { makeBridge } from '../structures/RuntimeClient';
 import { createClanMemberListener } from './listeners/ClanMemberListener';
 import { createDiscordListener } from './listeners/DiscordListener';
 
 export const EventHandler = Effect.gen(function* () {
   const { client } = yield* ClashTag;
-  const runtime = yield* Effect.runtime();
+  const bridge = yield* makeBridge;
 
   const register = (
     emitter: { on: (event: string, cb: (...args: any[]) => void) => void; once?: (event: string, cb: (...args: any[]) => void) => void },
@@ -15,12 +16,7 @@ export const EventHandler = Effect.gen(function* () {
     handler: (...args: any[]) => Effect.Effect<void, unknown, never>,
     once = false,
   ) => {
-    const cb = (...args: any[]) =>
-      Runtime.runFork(runtime)(
-        Effect.gen(function* () {
-          yield* handler(...args);
-        }).pipe(Effect.catchAllCause((cause) => Effect.logError(`Unhandled error in ${event} handler`, cause))),
-      );
+    const cb = (...args: any[]) => bridge.fork(handler(...args), { name: event });
 
     if (once && emitter.once) {
       emitter.once(event, cb);

@@ -4,6 +4,7 @@ import { Context, Data, Effect, Layer, PubSub, Ref, Schedule } from 'effect';
 
 import { ClientEvents } from '../core/constants';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient';
+import { makeBridge } from '../structures/RuntimeClient';
 
 import type { Clan, Player, RequestOptions } from 'clashofclans.js';
 
@@ -43,6 +44,7 @@ export class ClashTag extends Context.Tag('@services/Clash')<ClashTag, ClashLaye
 const makeClashClient = Effect.gen(function* () {
   const http = yield* HttpClientTag;
   const config = yield* ClashConfigTag;
+  const bridge = yield* makeBridge;
 
   const client = new Client({ keys: [] });
 
@@ -88,7 +90,7 @@ const makeClashClient = Effect.gen(function* () {
 
   requestHandler.request = async <T>(path: string, options: RequestOptions = {}) => {
     let requestState = 0;
-    return Effect.runPromise(
+    return bridge.promise(
       Effect.gen(function* () {
         return yield* Effect.tryPromise(() => requestOrig<T>(path, options)).pipe(
           Effect.tap(() => (requestState = 0)),

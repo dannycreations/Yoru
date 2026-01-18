@@ -1,8 +1,9 @@
 import { Logger, LogLevel, SapphireClient } from '@sapphire/framework';
 import { GatewayIntentBits, Partials } from 'discord.js';
-import { Context, Data, Effect, Layer, Runtime } from 'effect';
+import { Context, Data, Effect, Layer } from 'effect';
 
 import { EnvTag } from '../core/schemas';
+import { makeBridge } from '../structures/RuntimeClient';
 
 export class DiscordError extends Data.TaggedError('DiscordError')<{
   readonly message: string;
@@ -20,7 +21,7 @@ export class DiscordHandlerTag extends Context.Tag('@workflows/DiscordHandler')<
 
 const makeDiscordClient = Effect.gen(function* () {
   const env = yield* EnvTag;
-  const runtime = yield* Effect.runtime();
+  const bridge = yield* makeBridge;
 
   const client = new SapphireClient({
     typing: true,
@@ -38,7 +39,7 @@ const makeDiscordClient = Effect.gen(function* () {
   const bridgeLogger =
     (effect: (...args: unknown[]) => Effect.Effect<void>) =>
     (...args: unknown[]) =>
-      Runtime.runSync(runtime)(effect(...args));
+      bridge.sync(effect(...args));
 
   client.logger.trace = bridgeLogger(Effect.logTrace);
   client.logger.debug = bridgeLogger(Effect.logDebug);
@@ -48,7 +49,7 @@ const makeDiscordClient = Effect.gen(function* () {
   client.logger.fatal = bridgeLogger(Effect.logFatal);
 
   let loginTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
-    Runtime.runSync(runtime)(Effect.logWarning('Discord client login timed out after 60 seconds.'));
+    bridge.sync(Effect.logWarning('Discord client login timed out after 60 seconds.'));
     client.destroy();
   }, 60_000).unref();
 

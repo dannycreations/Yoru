@@ -21,7 +21,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { Context, Data, Effect, Option } from 'effect';
+import { Array, Context, Data, Effect, Option } from 'effect';
 
 import type { SQL, Table } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -151,7 +151,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       return table as unknown as Record<string, unknown>;
     }
 
-    const cache = joins.reduceRight((acc, join) => Object.assign(acc, join.table), {} as Record<string, unknown>);
+    const cache = Array.reduceRight(joins, {} as Record<string, unknown>, (acc, join) => Object.assign(acc, join.table));
     return Object.assign(cache, table);
   };
 
@@ -164,69 +164,50 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       return [val === null ? isNull(column) : eq(column, val as SQL)];
     }
 
-    const operation = val as Record<string, unknown>;
-    const result: Array<SQL> = [];
-
-    for (const operator in operation) {
-      const operand = operation[operator];
-
+    return Object.entries(val as Record<string, unknown>).reduce((acc, [operator, operand]) => {
       if (operator === '$not') {
         const negated = buildWhereComparison(key, operand);
-        if (negated.length > 0) {
-          result.push(not(and(...negated)!));
-        }
-        continue;
+        return negated.length > 0 ? [...acc, not(and(...negated)!)] : acc;
       }
 
       if (operand === null && !['$eq', '$ne', '$null'].includes(operator)) {
-        result.push(sql`0`);
-        continue;
+        return [...acc, sql`0`];
       }
 
       if (operator === '$eq' && operand === null) {
-        result.push(isNull(column));
-        continue;
+        return [...acc, isNull(column)];
       }
+
       if (operator === '$ne' && operand === null) {
-        result.push(isNotNull(column));
-        continue;
+        return [...acc, isNotNull(column)];
       }
 
       const handler = OPERATOR_MAP[operator];
-      result.push(handler ? handler(column, operand as SQL) : sql`0`);
-    }
-    return result;
+      return [...acc, handler ? handler(column, operand as SQL) : sql`0`];
+    }, [] as Array<SQL>);
   };
 
-  const buildWhereLogical = (filter: QueryFilter<A>): Array<SQL> => {
-    const result: Array<SQL> = [];
-
-    for (const key in filter) {
-      const value = filter[key as keyof typeof filter];
-
+  const buildWhereLogical = (filter: QueryFilter<A>): Array<SQL> =>
+    Object.entries(filter).reduce((acc, [key, value]) => {
       if (['$and', '$nand', '$or', '$nor'].includes(key)) {
         const nested = Array.isArray(value) ? (value as QueryFilter<A>[]).flatMap((v) => buildWhereLogical(v)) : [];
         const isPositive = key === '$and' || key === '$nor';
 
         if (nested.length === 0) {
-          result.push(sql.raw(isPositive ? '1' : '0'));
-          continue;
+          return [...acc, sql.raw(isPositive ? '1' : '0')];
         }
 
         const joined = key === '$and' || key === '$nand' ? and(...nested) : or(...nested);
-        result.push(['$nand', '$nor'].includes(key) ? not(joined!) : joined!);
-      } else if (key === '$not') {
-        const conds = isObjectLike(value) && !Array.isArray(value) ? buildWhereLogical(value as QueryFilter<A>) : buildWhereComparison(key, value);
-        if (conds.length > 0) {
-          result.push(not(and(...conds)!));
-        }
-      } else {
-        result.push(...buildWhereComparison(key, value));
+        return [...acc, ['$nand', '$nor'].includes(key) ? not(joined!) : joined!];
       }
-    }
 
-    return result;
-  };
+      if (key === '$not') {
+        const conds = isObjectLike(value) && !Array.isArray(value) ? buildWhereLogical(value as QueryFilter<A>) : buildWhereComparison(key, value);
+        return conds.length > 0 ? [...acc, not(and(...conds)!)] : acc;
+      }
+
+      return [...acc, ...buildWhereComparison(key, value)];
+    }, [] as Array<SQL>);
 
   const buildWhereClause = (filter?: QueryFilter<A>): SQL | undefined => {
     if (!filter || !hasKeys(filter)) {
@@ -240,14 +221,10 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const buildOrderClause = <S>(columnCache: Record<string, unknown>, order?: S): SQL | undefined => {
     if (!order || !hasKeys(order)) return undefined;
 
-    const clauses: SQL[] = [];
-    for (const key in order) {
-      const direction = (order as Record<string, string>)[key];
+    const clauses = Object.entries(order as Record<string, string>).reduce((acc, [key, direction]) => {
       const column = columnCache[key] as SQL;
-      if (column) {
-        clauses.push(direction?.toLowerCase() === 'desc' ? desc(column) : asc(column));
-      }
-    }
+      return column ? [...acc, direction?.toLowerCase() === 'desc' ? desc(column) : asc(column)] : acc;
+    }, [] as SQL[]);
 
     return clauses.length === 0 ? undefined : (sql.join(clauses, sql.raw(', ')) as unknown as SQL);
   };
@@ -255,17 +232,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const buildSelectClause = <S>(columnCache: Record<string, unknown>, select?: S): InferColumn<A> | undefined => {
     if (!select || !hasKeys(select)) return undefined;
 
-    const columns: Record<string, unknown> = {};
     const selectObj = select as unknown as Record<string, number>;
-
-    if (selectObj['id'] !== 0 && columnCache['id']) {
-      columns['id'] = columnCache['id'];
-    }
-
-    for (const key in selectObj) {
-      if (key === 'id' || selectObj[key] === 0) continue;
-      if (columnCache[key]) columns[key] = columnCache[key];
-    }
+    const columns = Object.entries(selectObj).reduce(
+      (acc, [key, value]) => {
+        if (key === 'id' || value === 0 || !columnCache[key]) return acc;
+        return { ...acc, [key]: columnCache[key] };
+      },
+      selectObj['id'] !== 0 && columnCache['id'] ? { id: columnCache['id'] } : ({} as Record<string, unknown>),
+    );
 
     return hasKeys(columns) ? (columns as InferColumn<A>) : undefined;
   };
@@ -288,8 +262,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       const select = buildSelectClause(columnCache, options.select);
       const query = select ? db.select(select).from(table) : db.select().from(table);
       if (hasKeys(options.joins)) {
-        for (const join of options.joins) {
-          if (!hasKeys(join)) continue;
+        options.joins.forEach((join) => {
+          if (!hasKeys(join)) return;
 
           const isCrossJoin = join.type === 'cross';
           if (!(isCrossJoin || (join.on && hasKeys(join.on)))) {
@@ -311,7 +285,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
             const joinMethod = JOIN_MAP[join.type as keyof typeof JOIN_MAP] ?? 'innerJoin';
             query[joinMethod](join.table, sql`(${sql.join(conds, sql.raw(' AND '))})`);
           }
-        }
+        });
       }
 
       query.where(buildWhereClause(filter));
@@ -396,15 +370,11 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   ) =>
     withTrace((db, trace) => {
       const input = Array.isArray(record) ? record : [record];
-      const values: Insert[] = [];
-
-      for (let i = 0; i < input.length; i++) {
-        const rec = input[i];
-        if (!hasKeys(rec)) continue;
-
+      const values = input.reduce((acc, rec) => {
+        if (!hasKeys(rec)) return acc;
         const { id, ...newRec } = rec as Record<string, unknown>;
-        values.push(newRec as Insert);
-      }
+        return [...acc, newRec as Insert];
+      }, [] as Insert[]);
 
       if (values.length === 0) {
         return [];
@@ -430,16 +400,17 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
           const { id, ...newRec } = rec as Record<string, unknown>;
           query.onConflictDoUpdate({ target, set: newRec as Insert });
         } else {
-          const mergeSet: Record<string, unknown> = {};
-          for (const key in rec) {
-            if (key === 'id') continue;
-            const val = rec[key];
-            const col = table[key as keyof A];
-            if (!col) {
-              throw new Error(`Conflict set column "${key}" not found in table "${getTableName(table)}"`);
-            }
-            mergeSet[key] = sql`COALESCE(${col}, ${sql`${val}`})`;
-          }
+          const mergeSet = Object.entries(rec).reduce(
+            (acc, [key, val]) => {
+              if (key === 'id') return acc;
+              const col = table[key as keyof A];
+              if (!col) {
+                throw new Error(`Conflict set column "${key}" not found in table "${getTableName(table)}"`);
+              }
+              return { ...acc, [key]: sql`COALESCE(${col}, ${sql`${val}`})` };
+            },
+            {} as Record<string, unknown>,
+          );
           query.onConflictDoUpdate({ target, set: mergeSet as Insert });
         }
       }

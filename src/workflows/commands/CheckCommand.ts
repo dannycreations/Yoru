@@ -1,6 +1,6 @@
 import { Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
-import { Effect, Either, Option } from 'effect';
+import { Array, Effect, Either, Option, Record } from 'effect';
 
 import { emoji } from '../../core/emojis';
 import { ConfigStoreTag } from '../../core/schemas';
@@ -17,12 +17,13 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
   Effect.gen(function* () {
     const memberHandler = yield* MemberHandlerTag;
     const memberOpt = yield* getGuildMember(ownerId, message.guild);
+
     if (Option.isNone(memberOpt)) {
       yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUser leaving discord server!`));
       return;
     }
-    const member = memberOpt.value;
 
+    const member = memberOpt.value;
     const embed = new EmbedBuilder()
       .setColor('#0099ff')
       .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
@@ -39,25 +40,38 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
       { concurrency: 'unbounded' },
     );
 
-    results.forEach((result, i) => {
-      if (Either.isRight(result)) {
-        const data = result.right;
-        const count = i + 1;
+    const fields = Array.reduce(results, [] as ReadonlyArray<{ readonly name: string; readonly value: string }>, (acc, result, i) => {
+      if (Either.isLeft(result)) return acc;
+      const data = result.right;
+      const count = i + 1;
 
-        if (data.banned) {
-          embed.addFields({
+      if (data.banned) {
+        return [
+          ...acc,
+          {
             name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
             value: '⛔ Has been banned!',
-          });
-        } else if (Option.isSome(data.player)) {
-          const player = data.player.value;
-          embed.addFields({
+          },
+        ];
+      }
+
+      if (Option.isSome(data.player)) {
+        const player = data.player.value;
+        return [
+          ...acc,
+          {
             name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
             value: formatPlayerField(player),
-          });
-        }
+          },
+        ];
       }
+
+      return acc;
     });
+
+    if (fields.length > 0) {
+      embed.addFields([...fields]);
+    }
 
     embed.setFooter({ text: message.author.username, iconURL: message.author.displayAvatarURL() }).setTimestamp();
     yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
@@ -74,14 +88,11 @@ const checkPlayer = (message: Message<true>, tag: string) =>
 
     const accountOpt = yield* accountDatabase.findOne({ tag });
     const isOwned = yield* Effect.gen(function* () {
-      if (Option.isSome(accountOpt)) {
-        const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
-        if (Option.isSome(userOpt)) {
-          const member = message.guild.members.cache.get(userOpt.value.ownerId);
-          return `👤 ${member ? member.user.tag : userOpt.value.ownerId}\n`;
-        }
-      }
-      return '';
+      if (Option.isNone(accountOpt)) return '';
+      const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
+      if (Option.isNone(userOpt)) return '';
+      const member = message.guild.members.cache.get(userOpt.value.ownerId);
+      return `👤 ${member ? member.user.tag : userOpt.value.ownerId}\n`;
     });
 
     const statsValue = `${isOwned}${formatPlayerStats(player)}`;
@@ -92,14 +103,19 @@ const checkPlayer = (message: Message<true>, tag: string) =>
 
     const { categories, unknowns } = categorizeUnits(player);
 
-    Object.entries(categories).forEach(([name, list]) => {
-      if (list.length > 0) addSplitFields(embed, name, list);
+    Array.forEach(Record.toEntries(categories), ([name, list]) => {
+      if (list.length > 0) {
+        addSplitFields(embed, name, list);
+      }
     });
 
-    const achievements = player.achievements
-      .filter((r) => ['Friend in Need', 'Games Champion'].includes(r.name))
-      .map((a) => `${emoji.stars[a.stars]} **${a.name}** ${a.value.toLocaleString()}\n`)
-      .join('');
+    const achievements = Array.join(
+      Array.map(
+        Array.filter(player.achievements, (r) => ['Friend in Need', 'Games Champion'].includes(r.name)),
+        (a) => `${emoji.stars[a.stars]} **${a.name}** ${a.value.toLocaleString()}\n`,
+      ),
+      '',
+    );
 
     if (achievements) embed.addFields({ name: 'Achievements', value: achievements });
 
@@ -143,16 +159,12 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const index = Math.max(0, Math.min(page - 1, clanTags.length - 1));
 
     const clan = yield* clash.getClan(clanTags[index]);
-    const guildMap = new Map<string, string[]>();
-    const leave: string[] = [];
-    const unknown: string[] = [];
-
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
 
     const tags = clan.members.map((m) => m.tag);
     const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
-    const userIds = [...new Set(accounts.map((acc) => acc.userId).filter((id): id is number => id !== null))];
+    const userIds = Array.fromIterable(new Set(accounts.map((acc) => acc.userId).filter((id): id is number => id !== null)));
     const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
 
     const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
@@ -175,17 +187,27 @@ const checkMembers = (message: Message<true>, page = 1) =>
       { concurrency: 'unbounded' },
     );
 
-    memberResults.forEach((result) => {
-      if (result.type === 'unknown') {
-        unknown.push(result.field);
-      } else if (result.type === 'leave') {
-        leave.push(result.field);
-      } else {
-        const list = guildMap.get(result.ownerId) ?? [];
-        if (!guildMap.has(result.ownerId)) guildMap.set(result.ownerId, list);
-        list.push(result.field);
-      }
-    });
+    const { guildMap, leave, unknown } = Array.reduce(
+      memberResults,
+      {
+        guildMap: new Map<string, ReadonlyArray<string>>(),
+        leave: [] as ReadonlyArray<string>,
+        unknown: [] as ReadonlyArray<string>,
+      },
+      (acc, result) => {
+        switch (result.type) {
+          case 'unknown':
+            return { ...acc, unknown: [...acc.unknown, result.field] };
+          case 'leave':
+            return { ...acc, leave: [...acc.leave, result.field] };
+          case 'guild': {
+            const list = acc.guildMap.get(result.ownerId) ?? [];
+            acc.guildMap.set(result.ownerId, [...list, result.field]);
+            return acc;
+          }
+        }
+      },
+    );
 
     const embed = new EmbedBuilder()
       .setColor('#0099ff')

@@ -17,16 +17,18 @@ export const replyWithError = (message: Message<true>, error: unknown): Effect.E
       if (error instanceof ClashError) {
         return error.message;
       }
-      if (isErrorLike(error) && 'message' in error) {
+      if (isErrorLike(error)) {
         return error.message;
       }
       return null;
     });
 
+    const reply =
+      errorMessage === null ? `> ${message.content}\nUnhandled Rejection, please contact owner!` : `> ${message.content}\n${errorMessage}`;
+
     if (errorMessage === null) {
       yield* Effect.logError('Unexpected error encountered', error);
-      yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUnhandled Rejection, please contact owner!`)).pipe(Effect.ignore);
-    } else {
-      yield* Effect.tryPromise(() => message.reply(`> ${message.content}\n${errorMessage}`)).pipe(Effect.ignore);
     }
+
+    yield* Effect.tryPromise(() => message.reply(reply)).pipe(Effect.ignore);
   }).pipe(Effect.asVoid);

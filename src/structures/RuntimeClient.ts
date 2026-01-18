@@ -1,35 +1,33 @@
 import { chalk } from '@vegapunk/utilities';
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Cause, Chunk, Data, Effect, Fiber, Layer, Runtime, Schedule, Scope } from 'effect';
+import { Cause, Chunk, Data, Effect, Fiber, Layer, Ref, Runtime, Schedule, Scope } from 'effect';
 
 export class RuntimeRestart extends Data.TaggedError('RuntimeRestart') {}
 
 export interface Bridge {
-  readonly fork: <A, E, R>(effect: Effect.Effect<A, E, R>, options?: { readonly name?: string }) => Fiber.RuntimeFiber<A, any>;
+  readonly fork: <A, E, R>(effect: Effect.Effect<A, E, R>, options?: { readonly name?: string }) => Fiber.RuntimeFiber<A | void, never>;
   readonly sync: <A, E, R>(effect: Effect.Effect<A, E, R>) => A;
   readonly promise: <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>;
 }
 
 export const makeBridge = Effect.gen(function* () {
-  const runtime = yield* Effect.runtime<any>();
+  const runtime = yield* Effect.runtime<unknown>();
   const runFork = Runtime.runFork(runtime);
   const runSync = Runtime.runSync(runtime);
   const runPromise = Runtime.runPromise(runtime);
 
-  const bridge: Bridge = {
+  return {
     fork: (effect, options) =>
       runFork(
         effect.pipe(
           Effect.catchAllCause((cause) =>
             Effect.logError(chalk`{bold.red Unhandled error in forked bridge${options?.name ? ` [${options.name}]` : ''}}`, cause),
           ),
-        ) as Effect.Effect<any, any, any>,
+        ),
       ),
-    sync: (effect) => runSync(effect as Effect.Effect<any, any, any>),
-    promise: (effect) => runPromise(effect as Effect.Effect<any, any, any>),
-  };
-
-  return bridge;
+    sync: (effect) => runSync(effect),
+    promise: (effect) => runPromise(effect),
+  } satisfies Bridge;
 });
 
 export interface RuntimeRestartOptions {
@@ -70,40 +68,41 @@ export const runForkWithCleanUp = <A, E, R>(effect: Effect.Effect<A, E, R>, runt
 export const cycleWithRestart = <A, E, R>(
   program: Effect.Effect<A, E, R | Scope.Scope>,
   options: RuntimeRestartOptions = {},
-): Effect.Effect<void, never, R> => {
-  const { maxRestarts = 3, intervalMs = 60_000, restartDelayMs = 5_000 } = options;
-  const restartTimes: number[] = [];
+): Effect.Effect<void, never, R> =>
+  Effect.gen(function* () {
+    const { maxRestarts = 3, intervalMs = 60_000, restartDelayMs = 5_000 } = options;
+    const restartTimesRef = yield* Ref.make<readonly number[]>([]);
 
-  const loop = Effect.catchAllCause(Effect.scoped(program), (cause) =>
-    Effect.gen(function* () {
-      const failures = Cause.failures(cause);
+    const loop = Effect.catchAllCause(Effect.scoped(program), (cause) =>
+      Effect.gen(function* () {
+        const failures = Cause.failures(cause);
 
-      if (Chunk.some(failures, (error) => isErrorLike<{ readonly _tag: string }>(error) && error._tag === 'RuntimeRestart')) {
-        return;
-      }
+        if (Chunk.some(failures, (error) => isErrorLike<{ readonly _tag: string }>(error) && error._tag === 'RuntimeRestart')) {
+          return;
+        }
 
-      const now = Date.now();
-      const recentRestarts = [...restartTimes.filter((t) => now - t < intervalMs), now];
+        const now = yield* Effect.sync(() => Date.now());
+        const restartTimes = yield* Ref.get(restartTimesRef);
+        const nextRestarts = [...restartTimes.filter((t) => now - t < intervalMs), now];
 
-      restartTimes.length = 0;
-      restartTimes.push(...recentRestarts);
+        yield* Ref.set(restartTimesRef, nextRestarts);
 
-      if (restartTimes.length >= maxRestarts) {
-        yield* Effect.logFatal(chalk`{bold.red System crashed too many times. Shutting down...}`, cause);
-        yield* Effect.sync(() => process.exit(1));
-      }
+        if (nextRestarts.length >= maxRestarts) {
+          yield* Effect.logFatal(chalk`{bold.red System crashed too many times. Shutting down...}`, cause);
+          yield* Effect.sync(() => process.exit(1));
+        }
 
-      yield* Effect.logError(chalk`{bold.red System encountered an error}`, cause);
-      yield* Effect.logInfo(chalk`{bold.yellow System restarting in ${restartDelayMs / 1000} seconds...}`);
-      yield* Effect.sleep(`${restartDelayMs} millis`);
-    }),
-  );
+        yield* Effect.logError(chalk`{bold.red System encountered an error}`, cause);
+        yield* Effect.logInfo(chalk`{bold.yellow System restarting in ${restartDelayMs / 1000} seconds...}`);
+        yield* Effect.sleep(`${restartDelayMs} millis`);
+      }),
+    );
 
-  return Effect.repeat(loop, Schedule.forever).pipe(Effect.asVoid);
-};
+    yield* Effect.repeat(loop, Schedule.forever);
+  }).pipe(Effect.asVoid);
 
 export const cycleMidnightRestart: Effect.Effect<never, RuntimeRestart> = Effect.gen(function* () {
-  const now = new Date();
+  const now = yield* Effect.sync(() => new Date());
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   const msUntilMidnight = tomorrow.getTime() - now.getTime();
 

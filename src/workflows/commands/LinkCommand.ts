@@ -1,5 +1,5 @@
 import { Util } from 'clashofclans.js';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Ref } from 'effect';
 
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
@@ -21,10 +21,11 @@ const linkedTag = (guild: Guild, ownerId: string, player: Player) =>
     yield* memberHandler.updatePresence(memberOpt.value, Option.some(player));
   });
 
-const linkQueue = new Set<string>();
+const linkQueueRef = Ref.unsafeMake(new Set<string>());
 
 export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
+    const linkQueue = yield* Ref.get(linkQueueRef);
     const clash = yield* ClashTag;
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
@@ -40,7 +41,12 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nYou must complete previous operation before create new one.`));
       return;
     }
-    linkQueue.add(message.author.id);
+
+    yield* Ref.update(linkQueueRef, (set) => {
+      const next = new Set(set);
+      next.add(message.author.id);
+      return next;
+    });
 
     yield* Effect.gen(function* () {
       const mentionId = parseMentionOrSnowflake(mention);
@@ -52,22 +58,22 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       const configStore = yield* ConfigStoreTag;
       const config = yield* configStore.get;
       const isAuthorized = config.ownerIds.includes(message.author.id) || (message.member?.roles.cache.some(isModeratorRole) ?? false);
+
       if (!isAuthorized) return;
 
       const player = yield* clash.getPlayer(tag);
       const embed = createPlayerEmbed(player);
-
       const titleField = `${formatPlayerStats(player)}\n`;
 
       const accountOpt = yield* accountDatabase.findOne({ tag });
       if (Option.isSome(accountOpt)) {
         const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
         const user = Option.getOrNull(userOpt);
-        const member = message.guild.members.cache.get(user?.ownerId || '');
+        const member = message.guild.members.cache.get(user?.ownerId ?? '');
 
         if (user && user.ownerId === mentionId) {
           yield* linkedTag(message.guild, mentionId, player);
-          embed.setDescription(`${titleField}Re-linked to **${member?.user.tag || mentionId}**.`);
+          embed.setDescription(`${titleField}Re-linked to **${member?.user.tag ?? mentionId}**.`);
         } else if (user) {
           if (member) {
             embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`);
@@ -75,7 +81,7 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
             yield* userDatabase.update({ ...user, ownerId: mentionId });
             yield* linkedTag(message.guild, mentionId, player);
             const newMember = message.guild.members.cache.get(mentionId);
-            embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag || mentionId}**.`);
+            embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag ?? mentionId}**.`);
           }
         }
         yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
@@ -87,7 +93,8 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       yield* Effect.tryPromise(() => msg.react('✅'));
       yield* Effect.tryPromise(() => msg.react('❎'));
 
-      const filter = (r: MessageReaction, u: DiscordUser) => ['✅', '❎'].includes(r.emoji.name!) && u.id === message.author.id;
+      const filter = (r: MessageReaction, u: DiscordUser) => ['✅', '❎'].includes(r.emoji.name ?? '') && u.id === message.author.id;
+
       const collected = yield* Effect.tryPromise(() => msg.awaitReactions({ filter, max: 1, time: 60_000 })).pipe(
         Effect.catchAll(() => Effect.succeed(null)),
       );
@@ -101,7 +108,7 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
         }
         yield* linkedTag(message.guild, mentionId, player);
         const member = message.guild.members.cache.get(mentionId);
-        embed.setDescription(`${titleField}Linked to **${member?.user.tag || mentionId}**.`);
+        embed.setDescription(`${titleField}Linked to **${member?.user.tag ?? mentionId}**.`);
       } else {
         const description =
           (collected?.size ?? 0) > 0 ? `${titleField}Operation canceled.` : `${titleField}No answer after 60 seconds, operation canceled.`;
@@ -109,5 +116,14 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       }
 
       yield* Effect.tryPromise(() => msg.edit({ embeds: [embed] }));
-    }).pipe(Effect.ensuring(Effect.sync(() => linkQueue.delete(message.author.id))), Effect.asVoid);
+    }).pipe(
+      Effect.ensuring(
+        Ref.update(linkQueueRef, (set) => {
+          const next = new Set(set);
+          next.delete(message.author.id);
+          return next;
+        }),
+      ),
+      Effect.asVoid,
+    );
   }).pipe(Effect.asVoid);

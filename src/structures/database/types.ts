@@ -18,17 +18,17 @@ export interface ComparisonOperator<T> {
   readonly $nlike?: T;
   readonly $glob?: T;
   readonly $nglob?: T;
-  readonly $in?: Array<T>;
-  readonly $nin?: Array<T>;
+  readonly $in?: ReadonlyArray<T>;
+  readonly $nin?: ReadonlyArray<T>;
   readonly $null?: boolean;
   readonly $not?: ComparisonOperator<T>;
 }
 
 export interface LogicalOperator<T extends Table> {
-  readonly $and?: Array<QueryBaseFilter<T> & LogicalOperator<T>>;
-  readonly $nand?: Array<QueryBaseFilter<T> & LogicalOperator<T>>;
-  readonly $or?: Array<QueryBaseFilter<T> & LogicalOperator<T>>;
-  readonly $nor?: Array<QueryBaseFilter<T> & LogicalOperator<T>>;
+  readonly $and?: ReadonlyArray<QueryBaseFilter<T> & LogicalOperator<T>>;
+  readonly $nand?: ReadonlyArray<QueryBaseFilter<T> & LogicalOperator<T>>;
+  readonly $or?: ReadonlyArray<QueryBaseFilter<T> & LogicalOperator<T>>;
+  readonly $nor?: ReadonlyArray<QueryBaseFilter<T> & LogicalOperator<T>>;
   readonly $not?: QueryBaseFilter<T> & LogicalOperator<T>;
 }
 
@@ -38,7 +38,7 @@ export type QueryBaseFilter<A extends Table> = {
 
 export type QueryFilter<A extends Table> = QueryBaseFilter<A> & LogicalOperator<A>;
 
-export interface QueryOptions<A extends Table, B extends Array<Table>, S, J = JoinClause<A, B>> {
+export interface QueryOptions<A extends Table, B extends ReadonlyArray<Table>, S, J = JoinClause<A, B>> {
   readonly select?: S;
   readonly limit?: number;
   readonly offset?: number;
@@ -46,24 +46,24 @@ export interface QueryOptions<A extends Table, B extends Array<Table>, S, J = Jo
   readonly joins?: J;
 }
 
-export type SelectClause<A extends Table, B extends Array<Table>, S> = Partial<Record<keyof SelectMerge<A, B>, 0 | 1>> &
+export type SelectClause<A extends Table, B extends ReadonlyArray<Table>, S> = Partial<Record<keyof SelectMerge<A, B>, 0 | 1>> &
   Readonly<Record<Exclude<keyof S, keyof SelectMerge<A, B>>, never>>;
 
-export type SelectMerge<A extends Table, B extends Array<Table>> = InferSelect<A> & SelectTuple<B>;
+export type SelectMerge<A extends Table, B extends ReadonlyArray<Table>> = InferSelect<A> & SelectTuple<B>;
 
-export type SelectTuple<B extends Array<Table>> = B extends [infer Head, ...infer Tail]
+export type SelectTuple<B extends ReadonlyArray<Table>> = B extends readonly [infer Head, ...infer Tail]
   ? Head extends Table
-    ? Tail extends Array<Table>
+    ? Tail extends ReadonlyArray<Table>
       ? InferSelect<Head> & SelectTuple<Tail>
       : InferSelect<Head>
     : never
   : unknown;
 
-export type OrderClause<A extends Table, B extends Array<Table>> = OrderType<A> & OrderTuple<B>;
+export type OrderClause<A extends Table, B extends ReadonlyArray<Table>> = OrderType<A> & OrderTuple<B>;
 
-export type OrderTuple<B extends Array<Table>> = B extends [infer Head, ...infer Tail]
+export type OrderTuple<B extends ReadonlyArray<Table>> = B extends readonly [infer Head, ...infer Tail]
   ? Head extends Table
-    ? Tail extends Array<Table>
+    ? Tail extends ReadonlyArray<Table>
       ? OrderType<Head> & OrderTuple<Tail>
       : OrderType<Head>
     : never
@@ -73,10 +73,10 @@ export type OrderType<T extends Table> = {
   [K in keyof InferColumn<T> as K extends string ? K : never]?: 'asc' | 'desc';
 };
 
-export type JoinClause<A extends Table, B extends Array<Table>> = {
-  [K in keyof B]: {
+export type JoinClause<A extends Table, B extends ReadonlyArray<Table>> = {
+  readonly [K in keyof B]: {
     readonly table: B[K];
-    readonly on: { [L in keyof InferSelect<A>]?: keyof InferSelect<B[K]> };
+    readonly on: { readonly [L in keyof InferSelect<A>]?: keyof InferSelect<B[K]> };
     readonly type?: 'left' | 'right' | 'cross' | 'full' | 'inner';
   };
 };
@@ -87,32 +87,38 @@ export type ExtractTables<J> = J extends readonly [infer Head, ...infer Tail]
       ? [T, ...ExtractTables<Tail>]
       : ExtractTables<Tail>
     : ExtractTables<Tail>
-  : J extends Array<{ table: infer T }>
-    ? (T extends Table ? T : never)[]
-    : [];
+  : J extends ReadonlyArray<{ table: infer T }>
+    ? ReadonlyArray<T extends Table ? T : never>
+    : readonly [];
 
 export type IsLeftOrFull<J, T extends Table> =
-  J extends Array<infer Join> ? (Extract<Join, { table: T; type: 'left' | 'full' }> extends never ? false : true) : false;
+  J extends ReadonlyArray<infer Join> ? (Extract<Join, { table: T; type: 'left' | 'full' }> extends never ? false : true) : false;
 
-export type IsRightOrFull<J> = J extends Array<infer Join> ? (Extract<Join, { type: 'right' | 'full' }> extends never ? false : true) : false;
+export type IsRightOrFull<J> = J extends ReadonlyArray<infer Join> ? (Extract<Join, { type: 'right' | 'full' }> extends never ? false : true) : false;
 
-export type ReturnAlias<A extends Table, B extends Array<Table>, S, J extends readonly unknown[] = unknown[]> =
+export type ReturnAlias<A extends Table, B extends ReadonlyArray<Table>, S, J extends readonly unknown[] = unknown[]> =
   S extends Record<keyof S, number>
     ? keyof S extends never
-      ? B extends [infer _A, ...infer _B]
-        ? { [K in A['_']['name']]: IsRightOrFull<J> extends true ? InferSelect<A> | null : InferSelect<A> } & ReturnTuple<B, J>
+      ? B extends readonly [infer _A, ...infer _B]
+        ? {
+            readonly [K in A['_']['name']]: IsRightOrFull<J> extends true ? InferSelect<A> | null : InferSelect<A>;
+          } & ReturnTuple<B, J>
         : InferSelect<A>
       : Omit<
           SelectMerge<A, B>,
           Exclude<keyof SelectMerge<A, B>, { [K in keyof S]: S[K] extends 1 ? K : never }[keyof S] | (S extends { id: 0 } ? never : 'id')>
         >
-    : B extends [infer _A, ...infer _B]
-      ? { [K in A['_']['name']]: IsRightOrFull<J> extends true ? InferSelect<A> | null : InferSelect<A> } & ReturnTuple<B, J>
+    : B extends readonly [infer _A, ...infer _B]
+      ? {
+          readonly [K in A['_']['name']]: IsRightOrFull<J> extends true ? InferSelect<A> | null : InferSelect<A>;
+        } & ReturnTuple<B, J>
       : InferSelect<A>;
 
-export type ReturnTuple<T extends Array<unknown>, J> = T extends [infer Head, ...infer Tail]
+export type ReturnTuple<T extends ReadonlyArray<unknown>, J> = T extends readonly [infer Head, ...infer Tail]
   ? Head extends Table
-    ? { [K in Head['_']['name']]: IsLeftOrFull<J, Head> extends true ? InferSelect<Head> | null : InferSelect<Head> } & ReturnTuple<Tail, J>
+    ? {
+        readonly [K in Head['_']['name']]: IsLeftOrFull<J, Head> extends true ? InferSelect<Head> | null : InferSelect<Head>;
+      } & ReturnTuple<Tail, J>
     : ReturnTuple<Tail, J>
   : unknown;
 

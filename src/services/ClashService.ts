@@ -51,6 +51,7 @@ const makeClashClient = Effect.gen(function* () {
   const clanTags = yield* Ref.make(new Set<string>());
   const clanCache = yield* Ref.make(new Map<string, Clan>());
   const events = yield* PubSub.unbounded<ClashEvent>();
+  const ipRef = yield* Ref.make(Option.none<string>());
 
   const login = () =>
     Effect.gen(function* () {
@@ -72,19 +73,20 @@ const makeClashClient = Effect.gen(function* () {
 
   client.rest.requestHandler['reValidateKeys'] = () => Promise.resolve();
 
-  let ipFromError: string | undefined;
-
   const requestHandler = client.rest.requestHandler;
 
   const getIpOrig = requestHandler['getIp'].bind(requestHandler);
-  requestHandler['getIp'] = (token: string) => {
-    const ip = ipFromError;
-    if (ip) {
-      ipFromError = undefined;
-      return ip;
-    }
-    return getIpOrig(token);
-  };
+  requestHandler['getIp'] = (token: string) =>
+    bridge.sync(
+      Ref.get(ipRef).pipe(
+        Effect.flatMap((ipOpt) =>
+          Option.match(ipOpt, {
+            onNone: () => Effect.sync(() => getIpOrig(token)),
+            onSome: (ip) => Ref.set(ipRef, Option.none()).pipe(Effect.as(ip)),
+          }),
+        ),
+      ),
+    );
 
   const requestOrig = requestHandler.request.bind(requestHandler);
 
@@ -134,7 +136,7 @@ const makeClashClient = Effect.gen(function* () {
                 if (error.status === 403 && error.reason === 'accessDenied.invalidIp') {
                   requestHandler['keys'].shift();
                   const ipMatch = error.message.match(/(\d{1,3}\.){3}\d+/);
-                  if (ipMatch) ipFromError = ipMatch[0];
+                  if (ipMatch) yield* Ref.set(ipRef, Option.some(ipMatch[0]));
                   return yield* login().pipe(
                     Effect.flatMap(() =>
                       Effect.gen(function* () {
@@ -221,13 +223,12 @@ const makeClashClient = Effect.gen(function* () {
       { concurrency: 'unbounded' },
     ).pipe(Effect.map((arr) => Chunk.compact(Chunk.fromIterable(arr))));
 
-    yield* Ref.update(clanCache, (prev) => {
-      const next = new Map(prev);
-      for (const update of updates) {
+    yield* Ref.update(clanCache, (prev) =>
+      Chunk.reduce(updates, new Map(prev), (next, update) => {
         next.set(update.tag, update.newClan);
-      }
-      return next;
-    });
+        return next;
+      }),
+    );
   }).pipe(
     Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
     Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),
@@ -266,9 +267,7 @@ const makeClashClient = Effect.gen(function* () {
     addClans: (tags: readonly string[]) =>
       Ref.update(clanTags, (set) => {
         const next = new Set(set);
-        for (const tag of tags) {
-          next.add(tag);
-        }
+        tags.forEach((tag) => next.add(tag));
         return next;
       }),
     getClan,

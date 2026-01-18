@@ -15,7 +15,7 @@ export const EnvSchema = Schema.Struct({
   CLASH_PASSWORD: Schema.NonEmptyString,
 });
 
-export type Env = Schema.Schema.Type<typeof EnvSchema>;
+export interface Env extends Schema.Schema.Type<typeof EnvSchema> {}
 
 export class EnvTag extends Context.Tag('@core/Env')<EnvTag, Env>() {}
 
@@ -39,7 +39,10 @@ export const EmojiSchema = Schema.Struct({
   trophies: Schema.String,
   attackwin: Schema.String,
   noleague: Schema.String,
-  isclan: Schema.Struct({ true: Schema.String, false: Schema.String }),
+  isclan: Schema.Struct({
+    true: Schema.String,
+    false: Schema.String,
+  }),
   stars: Schema.Array(Schema.String),
   townhalls: Schema.Array(Schema.String),
   troops: Schema.Struct({
@@ -56,7 +59,7 @@ export const EmojiSchema = Schema.Struct({
   heroes: Schema.Record({ key: Schema.String, value: Schema.String }),
 });
 
-export type Emoji = Schema.Schema.Type<typeof EmojiSchema>;
+export interface Emoji extends Schema.Schema.Type<typeof EmojiSchema> {}
 
 export const ClanSchema = Schema.Struct({
   tag: Schema.String,
@@ -69,7 +72,7 @@ export const ClanSchema = Schema.Struct({
   ),
 });
 
-export type ClanData = Schema.Schema.Type<typeof ClanSchema>;
+export interface ClanData extends Schema.Schema.Type<typeof ClanSchema> {}
 
 export const ConfigSchema = Schema.Struct({
   prefix: Schema.String,
@@ -77,7 +80,7 @@ export const ConfigSchema = Schema.Struct({
   clanTags: Schema.Array(Schema.String),
 });
 
-export type Config = Schema.Schema.Type<typeof ConfigSchema>;
+export interface Config extends Schema.Schema.Type<typeof ConfigSchema> {}
 
 export class ConfigStoreTag extends Context.Tag('@core/ConfigStore')<ConfigStoreTag, StoreClient<Config>>() {}
 
@@ -101,7 +104,7 @@ export const SessionSchema = Schema.Struct({
   leavers: Schema.optional(Schema.Array(Schema.String)),
 });
 
-export type Session = Schema.Schema.Type<typeof SessionSchema>;
+export interface Session extends Schema.Schema.Type<typeof SessionSchema> {}
 
 export class SessionStoreTag extends Context.Tag('@core/SessionStore')<SessionStoreTag, StoreClient<Session>>() {}
 

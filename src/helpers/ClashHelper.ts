@@ -1,4 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
+import { Array } from 'effect';
 
 import { MemberRoles } from '../core/constants';
 import { emoji } from '../core/emojis';
@@ -62,53 +63,50 @@ export const createPlayerEmbed = (player: Player): EmbedBuilder => {
   return embed;
 };
 
-const UNIT_LOOKUP = (() => {
-  const lookup = new Map<string, { readonly category: string; readonly emoji: string }>();
-  const add = (data: Readonly<Record<string, string>>, category: string) => {
-    for (const [name, emojiValue] of Object.entries(data)) {
-      lookup.set(name, { category, emoji: emojiValue });
-    }
-  };
-
-  add(emoji.troops.normal, 'Troops');
-  add(emoji.troops.dark, 'Dark Troops');
-  add(emoji.troops.super, 'Super Troops');
-  add(emoji.troops.siege, 'Siege Machines');
-  add(emoji.troops.pets, 'Pets');
-  add(emoji.spells.normal, 'Spells');
-  add(emoji.spells.dark, 'Dark Spells');
-  add(emoji.heroes, 'Heroes');
-
-  return lookup;
-})();
+const UNIT_LOOKUP: ReadonlyMap<string, { readonly category: string; readonly emoji: string }> = new Map<
+  string,
+  { readonly category: string; readonly emoji: string }
+>([
+  ...Object.entries(emoji.troops.normal).map(([name, emoji]) => [name, { category: 'Troops', emoji }] as const),
+  ...Object.entries(emoji.troops.dark).map(([name, emoji]) => [name, { category: 'Dark Troops', emoji }] as const),
+  ...Object.entries(emoji.troops.super).map(([name, emoji]) => [name, { category: 'Super Troops', emoji }] as const),
+  ...Object.entries(emoji.troops.siege).map(([name, emoji]) => [name, { category: 'Siege Machines', emoji }] as const),
+  ...Object.entries(emoji.troops.pets).map(([name, emoji]) => [name, { category: 'Pets', emoji }] as const),
+  ...Object.entries(emoji.spells.normal).map(([name, emoji]) => [name, { category: 'Spells', emoji }] as const),
+  ...Object.entries(emoji.spells.dark).map(([name, emoji]) => [name, { category: 'Dark Spells', emoji }] as const),
+  ...Object.entries(emoji.heroes).map(([name, emoji]) => [name, { category: 'Heroes', emoji }] as const),
+]);
 
 export const categorizeUnits = (player: Player) => {
-  const categories: Record<string, string[]> = {
-    Troops: [],
-    'Dark Troops': [],
-    'Super Troops': [],
-    'Siege Machines': [],
-    Pets: [],
-    Spells: [],
-    'Dark Spells': [],
-    Heroes: [],
-  };
-  const unknowns: unknown[] = [];
+  const units = Array.filter([...player.troops, ...player.spells, ...player.heroes], (u) => u.village === 'home');
 
-  const units = [...player.troops, ...player.spells, ...player.heroes];
-
-  for (const unit of units) {
-    if (unit.village !== 'home') {
-      continue;
-    }
-
-    const mapping = UNIT_LOOKUP.get(unit.name);
-    if (mapping) {
-      categories[mapping.category].push(`${mapping.emoji}**${unit.level}**/${unit.maxLevel}`);
-    } else {
-      unknowns.push(unit);
-    }
-  }
-
-  return { categories, unknowns } as const;
+  return Array.reduce(
+    units,
+    {
+      categories: {
+        Troops: [],
+        'Dark Troops': [],
+        'Super Troops': [],
+        'Siege Machines': [],
+        Pets: [],
+        Spells: [],
+        'Dark Spells': [],
+        Heroes: [],
+      } as Record<string, string[]>,
+      unknowns: [] as unknown[],
+    },
+    (acc, unit) => {
+      const mapping = UNIT_LOOKUP.get(unit.name);
+      if (mapping) {
+        return {
+          ...acc,
+          categories: {
+            ...acc.categories,
+            [mapping.category]: [...acc.categories[mapping.category], `${mapping.emoji}**${unit.level}**/${unit.maxLevel}`],
+          },
+        };
+      }
+      return { ...acc, unknowns: [...acc.unknowns, unit] };
+    },
+  );
 };

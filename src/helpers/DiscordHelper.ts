@@ -1,12 +1,14 @@
 import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
-import { Effect, Option } from 'effect';
+import { Array, Effect, Option } from 'effect';
 
 import { DiscordHandlerTag } from '../workflows/DiscordHandler';
 
 import type { EmbedBuilder, Guild, GuildMember, Role } from 'discord.js';
 
 export const addSplitFields = (embed: EmbedBuilder, name: string, list: readonly string[], separator = ' '): void => {
-  const { fields, currentValue, count } = list.reduce(
+  const { fields, currentValue, count } = Array.reduce(
+    list,
+    { fields: [] as Array<{ readonly name: string; readonly value: string }>, currentValue: '', count: 0 },
     (acc, item) => {
       const isOverLimit = acc.currentValue.length + item.length + separator.length > 1024;
       if (isOverLimit && acc.currentValue) {
@@ -21,7 +23,6 @@ export const addSplitFields = (embed: EmbedBuilder, name: string, list: readonly
         currentValue: acc.currentValue ? `${acc.currentValue}${separator}${item}` : item,
       };
     },
-    { fields: [] as Array<{ readonly name: string; readonly value: string }>, currentValue: '', count: 0 },
   );
 
   const allFields = currentValue ? [...fields, { name: count === 0 ? name : `${name} (cont.)`, value: currentValue }] : fields;
@@ -52,7 +53,7 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
 
     const { client } = yield* DiscordHandlerTag;
 
-    const guilds = Array.from(client.guilds.cache.values());
+    const guilds = globalThis.Array.from(client.guilds.cache.values());
 
     const cachedMember = guilds.find((g) => g.members.cache.has(userId))?.members.cache.get(userId);
     if (cachedMember) {

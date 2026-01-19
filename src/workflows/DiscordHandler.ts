@@ -1,6 +1,6 @@
 import { Logger, LogLevel, SapphireClient } from '@sapphire/framework';
 import { GatewayIntentBits, Partials } from 'discord.js';
-import { Context, Data, Effect, Layer, Option } from 'effect';
+import { Context, Data, Effect, Fiber, Layer, Option, Ref } from 'effect';
 
 import { EnvTag } from '../core/schemas';
 import { makeBridge } from '../structures/RuntimeClient';
@@ -48,19 +48,27 @@ const makeDiscordClient = Effect.gen(function* () {
   client.logger.error = bridgeLogger(Effect.logError);
   client.logger.fatal = bridgeLogger(Effect.logFatal);
 
-  let loginTimeout = Option.some(
-    setTimeout(() => {
-      bridge.sync(Effect.logWarning('Discord client login timed out after 60 seconds.'));
-      client.destroy();
-    }, 60_000).unref(),
+  const loginTimeoutRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void, never>>());
+
+  const timeoutFiber = yield* Effect.logWarning('Discord client login timed out...').pipe(
+    Effect.zipRight(Effect.sync(() => void client.destroy())),
+    Effect.delay('60 seconds'),
+    Effect.fork,
   );
 
-  const clearLoginTimeout = () => {
-    if (Option.isSome(loginTimeout)) {
-      clearTimeout(loginTimeout.value);
-      loginTimeout = Option.none();
-    }
-  };
+  yield* Ref.set(loginTimeoutRef, Option.some(timeoutFiber));
+
+  const clearLoginTimeout = () =>
+    bridge.fork(
+      Ref.get(loginTimeoutRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.zipRight(Ref.set(loginTimeoutRef, Option.none()))),
+          }),
+        ),
+      ),
+    );
 
   client.once('ready', () => clearLoginTimeout());
 

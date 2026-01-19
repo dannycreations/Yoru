@@ -1,23 +1,26 @@
 import { PollingEvents } from 'clashofclans.js';
 import { Effect, Layer, Scope } from 'effect';
 
-import { ClashTag } from '../services/ClashService';
+import { ClashClientTag } from '../services/ClashService';
 import { makeBridge } from '../structures/RuntimeClient';
 import { createClanMemberListener } from './listeners/ClanMemberListener';
 import { createDiscordListener } from './listeners/DiscordListener';
 
 export const EventHandler = Effect.gen(function* () {
-  const { client } = yield* ClashTag;
+  const { client } = yield* ClashClientTag;
   const bridge = yield* makeBridge;
   const scope = yield* Effect.scope;
 
-  const register = (
-    emitter: { on: (event: string, cb: (...args: any[]) => void) => void; once?: (event: string, cb: (...args: any[]) => void) => void },
+  const register = <Args extends readonly unknown[]>(
+    emitter: {
+      readonly on: (event: string, cb: (...args: Args) => void) => void;
+      readonly once?: (event: string, cb: (...args: Args) => void) => void;
+    },
     event: string,
-    handler: (...args: any[]) => Effect.Effect<void, unknown, any>,
+    handler: (...args: Args) => Effect.Effect<void, unknown, any>,
     once = false,
-  ) => {
-    const cb = (...args: any[]) =>
+  ): void => {
+    const cb = (...args: Args) =>
       bridge.fork(
         handler(...args).pipe(
           Effect.provideService(Scope.Scope, scope),

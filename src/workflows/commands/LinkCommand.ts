@@ -6,7 +6,7 @@ import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { createPlayerEmbed, formatPlayerStats } from '../../helpers/ClashHelper';
 import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/DiscordHelper';
 import { isModeratorRole } from '../../helpers/RoleHelper';
-import { ClashTag } from '../../services/ClashService';
+import { ClashClientTag } from '../../services/ClashService';
 import { MemberHandlerTag } from '../MemberHandler';
 
 import type { Player } from 'clashofclans.js';
@@ -26,7 +26,7 @@ const linkQueueRef = Ref.unsafeMake(new Set<string>());
 export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const linkQueue = yield* Ref.get(linkQueueRef);
-    const clash = yield* ClashTag;
+    const clash = yield* ClashClientTag;
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
     const tag = args[0];

@@ -109,10 +109,7 @@ export interface Adapter<A extends Table, Select extends InferSelect<A> = InferS
   ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
 }
 
-const hasKeys = (obj?: object | null): obj is object => {
-  if (obj === null || obj === undefined) return false;
-  return Object.keys(obj).length > 0;
-};
+const hasKeys = (obj?: object | null): obj is object => (obj == null ? false : Object.keys(obj).length > 0);
 
 const withTrace = <A>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => A) => {
   const trace: { value?: () => SQL } = {};
@@ -262,7 +259,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       const select = buildSelectClause(columnCache, options.select);
       const query = select ? db.select(select).from(table) : db.select().from(table);
       if (hasKeys(options.joins)) {
-        options.joins.forEach((join) => {
+        Array.forEach(options.joins, (join) => {
           if (!hasKeys(join)) return;
 
           const isCrossJoin = join.type === 'cross';
@@ -370,11 +367,11 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   ) =>
     withTrace((db, trace) => {
       const input = Array.isArray(record) ? record : [record];
-      const values = input.reduce((acc, rec) => {
-        if (!hasKeys(rec)) return acc;
+      const values = Array.filterMap(input, (rec) => {
+        if (!hasKeys(rec)) return Option.none();
         const { id, ...newRec } = rec as Record<string, unknown>;
-        return [...acc, newRec as Insert];
-      }, [] as Insert[]);
+        return Option.some(newRec as Insert);
+      });
 
       if (values.length === 0) {
         return [];

@@ -27,7 +27,7 @@ export const makeBridge = Effect.gen(function* () {
       ),
     sync: (effect) => runSync(effect),
     promise: (effect) => runPromise(effect),
-  } satisfies Bridge;
+  } as Bridge;
 });
 
 export interface RuntimeRestartOptions {

@@ -7,7 +7,7 @@ import { AccountDatabaseTag } from '../database';
 import { getPlayerNickname } from '../helpers/ClashHelper';
 import { removeMemberRoles } from '../helpers/DiscordHelper';
 import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/RoleHelper';
-import { ClashTag } from '../services/ClashService';
+import { ClashClientTag } from '../services/ClashService';
 import { SqliteClientTag } from '../structures/database';
 
 import type { Player } from 'clashofclans.js';
@@ -19,13 +19,13 @@ export interface MemberHandler {
   readonly findActiveAccount: (
     userId: number,
     currentTag: string,
-  ) => Effect.Effect<Option.Option<Player>, never, SqliteClientTag | ClashTag | ConfigStoreTag | AccountDatabaseTag>;
+  ) => Effect.Effect<Option.Option<Player>, never, SqliteClientTag | ClashClientTag | ConfigStoreTag | AccountDatabaseTag>;
   readonly getPlayer: (
     account: AccountTable,
   ) => Effect.Effect<
     { readonly player: Option.Option<Player>; readonly banned: boolean; readonly tag: string },
     never,
-    ClashTag | SqliteClientTag | AccountDatabaseTag
+    ClashClientTag | SqliteClientTag | AccountDatabaseTag
   >;
 }
 
@@ -34,7 +34,7 @@ export class MemberHandlerTag extends Context.Tag('@workflows/MemberHandler')<Me
 export const MemberHandlerLayer = Layer.effect(
   MemberHandlerTag,
   Effect.gen(function* () {
-    const clash = yield* ClashTag;
+    const clash = yield* ClashClientTag;
     const configStore = yield* ConfigStoreTag;
     const sessionStore = yield* SessionStoreTag;
     const accountDatabase = yield* AccountDatabaseTag;

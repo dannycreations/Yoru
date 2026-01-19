@@ -1,6 +1,6 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Client, HTTPError } from 'clashofclans.js';
-import { Chunk, Context, Data, Effect, Layer, Option, PubSub, Ref, Schedule } from 'effect';
+import { Cause, Chunk, Context, Data, Deferred, Effect, Layer, Option, PubSub, Ref, Schedule } from 'effect';
 
 import { ClientEvents } from '../core/constants';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient';
@@ -31,7 +31,7 @@ export interface ClashConfig {
 
 export class ClashConfigTag extends Context.Tag('@services/ClashConfig')<ClashConfigTag, ClashConfig>() {}
 
-export interface ClashLayer {
+export interface ClashClient {
   readonly client: Client;
   readonly events: PubSub.PubSub<ClashEvent>;
   readonly addClans: (tags: readonly string[]) => Effect.Effect<void>;
@@ -39,7 +39,7 @@ export interface ClashLayer {
   readonly getPlayer: (tag: string) => Effect.Effect<Player, ClashError>;
 }
 
-export class ClashTag extends Context.Tag('@services/Clash')<ClashTag, ClashLayer>() {}
+export class ClashClientTag extends Context.Tag('@services/Clash')<ClashClientTag, ClashClient>() {}
 
 const makeClashClient = Effect.gen(function* () {
   const http = yield* HttpClientTag;
@@ -52,6 +52,9 @@ const makeClashClient = Effect.gen(function* () {
   const clanCache = yield* Ref.make(new Map<string, Clan>());
   const events = yield* PubSub.unbounded<ClashEvent>();
   const ipRef = yield* Ref.make(Option.none<string>());
+  const rotationGate = yield* Ref.make(Option.none<Deferred.Deferred<void, never>>());
+  const rotationVersion = yield* Ref.make(0);
+  const rotationLock = yield* Effect.makeSemaphore(1);
 
   const login = () =>
     Effect.gen(function* () {
@@ -90,107 +93,160 @@ const makeClashClient = Effect.gen(function* () {
 
   const requestOrig = requestHandler.request.bind(requestHandler);
 
-  requestHandler.request = async <T>(path: string, options: RequestOptions = {}) => {
-    let requestState = 0;
-    return bridge.promise(
+  const requestStateRef = yield* Ref.make(0);
+
+  requestHandler.request = async <T>(path: string, options: RequestOptions = {}) =>
+    bridge.promise(
       Effect.gen(function* () {
-        return yield* Effect.tryPromise(() => requestOrig<T>(path, options)).pipe(
-          Effect.tap(() => Effect.sync(() => (requestState = 0))),
-          Effect.catchAll((error) =>
-            Effect.gen(function* () {
-              if (requestState > 2) {
-                requestState = 2;
-                return yield* Effect.fail(
-                  new ClashError({
-                    message: 'API problem, please check back later!',
-                    cause: error,
-                  }),
-                );
-              }
+        yield* Ref.get(rotationGate).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (d) => Deferred.await(d),
+            }),
+          ),
+        );
 
-              if (isErrorLike(error) && ERROR_CODES.includes(error.code)) {
-                requestState = 0;
-                return yield* waitForConnection().pipe(
-                  Effect.flatMap(() =>
-                    Effect.fail(
-                      new ClashError({
-                        message: 'Retrying after connection recovery',
-                        cause: error,
-                      }),
-                    ),
-                  ),
-                );
-              }
+        const startVersion = yield* Ref.get(rotationVersion);
 
-              if (error instanceof HTTPError) {
-                if (error.status === 503) {
-                  requestState = 0;
+        return yield* Effect.tryPromise(() => requestOrig<T>(path, options))
+          .pipe(
+            Effect.tap(() => Ref.set(requestStateRef, 0)),
+            Effect.catchAll((error) =>
+              Effect.gen(function* () {
+                const requestState = yield* Ref.get(requestStateRef);
+                const isInvalidIp =
+                  (error instanceof HTTPError && error.status === 403 && error.reason === 'accessDenied.invalidIp') ||
+                  (isErrorLike<{ status?: number; reason?: string }>(error) && error.status === 403 && error.reason === 'accessDenied.invalidIp');
+
+                if (requestState > 2) {
+                  yield* Ref.set(requestStateRef, 2);
                   return yield* Effect.fail(
                     new ClashError({
-                      message: 'Service is temporarily unavailable because of maintenance!',
-                      status: 503,
-                    }),
-                  );
-                }
-
-                if (error.status === 403 && error.reason === 'accessDenied.invalidIp') {
-                  requestHandler['keys'].shift();
-                  const ipMatch = error.message.match(/(\d{1,3}\.){3}\d+/);
-                  if (ipMatch) yield* Ref.set(ipRef, Option.some(ipMatch[0]));
-                  return yield* login().pipe(
-                    Effect.flatMap(() =>
-                      Effect.gen(function* () {
-                        requestState++;
-                        return yield* Effect.fail(
-                          new ClashError({
-                            message: 'Retrying due to IP change',
-                            status: 403,
-                            cause: error,
-                          }),
-                        );
-                      }),
-                    ),
-                  );
-                }
-
-                if (ERROR_STATUS_CODES.includes(error.status)) {
-                  requestState = 0;
-                  return yield* Effect.fail(
-                    new ClashError({
-                      message: 'Transient API error',
-                      status: error.status,
+                      message: 'API problem, please check back later!',
                       cause: error,
                     }),
                   );
                 }
-              }
 
-              if (error instanceof SyntaxError && error.message.includes('not valid JSON')) {
+                if (isErrorLike(error) && ERROR_CODES.includes(error.code)) {
+                  yield* Ref.set(requestStateRef, 0);
+                  return yield* waitForConnection().pipe(
+                    Effect.flatMap(() =>
+                      Effect.fail(
+                        new ClashError({
+                          message: 'Retrying after connection recovery',
+                          cause: error,
+                        }),
+                      ),
+                    ),
+                  );
+                }
+
+                if (error instanceof HTTPError) {
+                  if (error.status === 503) {
+                    yield* Ref.set(requestStateRef, 0);
+                    return yield* Effect.fail(
+                      new ClashError({
+                        message: 'Service is temporarily unavailable because of maintenance!',
+                        status: 503,
+                      }),
+                    );
+                  }
+
+                  if (isInvalidIp) {
+                    yield* rotationLock.withPermits(1)(
+                      Effect.gen(function* () {
+                        const currentVersion = yield* Ref.get(rotationVersion);
+                        if (currentVersion === startVersion) {
+                          const d = yield* Deferred.make<void, never>();
+                          yield* Ref.set(rotationGate, Option.some(d));
+
+                          yield* Effect.gen(function* () {
+                            requestHandler['keys'].shift();
+                            const message = isErrorLike<{ message: string }>(error) ? error.message : String(error);
+                            const ipMatch = message.match(/(\d{1,3}\.){3}\d+/);
+                            if (ipMatch) yield* Ref.set(ipRef, Option.some(ipMatch[0]));
+                            yield* login();
+                            yield* Ref.update(rotationVersion, (v) => v + 1);
+                          }).pipe(
+                            Effect.ensuring(
+                              Effect.gen(function* () {
+                                yield* Ref.set(rotationGate, Option.none());
+                                yield* Deferred.succeed(d, undefined);
+                              }),
+                            ),
+                            Effect.catchAll(() => Effect.void),
+                          );
+                        }
+                      }),
+                    );
+
+                    yield* Ref.update(requestStateRef, (s) => s + 1);
+                    return yield* Effect.fail(
+                      new ClashError({
+                        message: 'Retrying due to IP change',
+                        status: 403,
+                        cause: error,
+                      }),
+                    );
+                  }
+
+                  if (ERROR_STATUS_CODES.includes(error.status)) {
+                    yield* Ref.set(requestStateRef, 0);
+                    return yield* Effect.fail(
+                      new ClashError({
+                        message: 'Transient API error',
+                        status: error.status,
+                        cause: error,
+                      }),
+                    );
+                  }
+                }
+
+                if (error instanceof SyntaxError && error.message.includes('not valid JSON')) {
+                  return yield* Effect.fail(
+                    new ClashError({
+                      message: 'Invalid JSON response',
+                      status: 500,
+                      cause: error,
+                    }),
+                  );
+                }
+
                 return yield* Effect.fail(
                   new ClashError({
-                    message: 'Invalid JSON response',
-                    status: 500,
+                    message: 'Request failed',
                     cause: error,
                   }),
                 );
-              }
-
-              return yield* Effect.fail(
-                new ClashError({
-                  message: 'Request failed',
-                  cause: error,
-                }),
-              );
-            }),
-          ),
-          Effect.retry({
-            while: (error) => error instanceof ClashError && error.status !== 503,
-            schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
-          }),
-        );
-      }).pipe(Effect.provideService(HttpClientTag, http)),
+              }),
+            ),
+          )
+          .pipe(
+            Effect.catchAllCause((cause) =>
+              Effect.gen(function* () {
+                const error = Cause.failureOption(cause);
+                if (Option.isSome(error) && error.value instanceof ClashError) {
+                  return yield* Effect.fail(error.value);
+                }
+                return yield* Effect.fail(
+                  new ClashError({
+                    message: 'Request failed',
+                    cause: cause,
+                  }),
+                );
+              }),
+            ),
+          );
+      }).pipe(
+        Effect.retry({
+          while: (error) => error instanceof ClashError && error.status !== 503,
+          schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
+        }),
+        Effect.provideService(HttpClientTag, http),
+      ),
     );
-  };
 
   yield* login();
 
@@ -275,4 +331,4 @@ const makeClashClient = Effect.gen(function* () {
   };
 });
 
-export const ClashLayer = Layer.scoped(ClashTag, makeClashClient);
+export const ClashClientLayer = Layer.scoped(ClashClientTag, makeClashClient);

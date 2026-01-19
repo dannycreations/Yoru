@@ -1,3 +1,3 @@
-import { createConfig } from './src/services/database';
+import { makeSqliteConfig } from './src/structures/database';
 
-export default createConfig();
+export default makeSqliteConfig();

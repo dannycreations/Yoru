@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Record as ReadonlyRecord } from 'effect';
 
 import { ConfigStoreTag } from '../core/schemas';
 import { replyWithError } from '../helpers/ErrorHelper';
-import { ClashTag } from '../services/ClashService';
+import { ClashClientTag } from '../services/ClashService';
 import { SqliteClientTag } from '../structures/database';
 import { checkCommand } from './commands/CheckCommand';
 import { linkCommand } from './commands/LinkCommand';
@@ -15,7 +15,7 @@ import type { DiscordHandler } from './DiscordHandler';
 export interface CommandHandler {
   readonly handleCommand: (
     message: Message<true>,
-  ) => Effect.Effect<void, never, SqliteClientTag | DiscordHandler | ConfigStoreTag | ClashTag | MemberHandlerTag>;
+  ) => Effect.Effect<void, never, SqliteClientTag | DiscordHandler | ConfigStoreTag | ClashClientTag | MemberHandlerTag>;
 }
 
 export class CommandHandlerTag extends Context.Tag('@workflows/CommandHandler')<CommandHandlerTag, CommandHandler>() {}

@@ -4,7 +4,7 @@ import { Effect, Layer, Logger } from 'effect';
 
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
 import { AccountDatabaseLayer, UserDatabaseLayer } from './database';
-import { ClashConfigTag, ClashLayer, ClashTag } from './services/ClashService';
+import { ClashClientLayer, ClashClientTag, ClashConfigTag } from './services/ClashService';
 import { SqliteClientLayer } from './structures/database';
 import { HttpClientLayer } from './structures/HttpClient';
 import { LoggerClientLayer, makeLoggerClient } from './structures/LoggerClient';
@@ -15,7 +15,7 @@ import { EventHandlerLayer } from './workflows/EventHandler';
 import { MemberHandlerLayer } from './workflows/MemberHandler';
 
 const program = Effect.gen(function* () {
-  const clash = yield* ClashTag;
+  const clash = yield* ClashClientTag;
   const store = yield* ConfigStoreTag;
   const discord = yield* DiscordHandlerTag;
   const config = yield* store.get;
@@ -54,7 +54,7 @@ const MainLayer = EventHandlerLayer.pipe(
   Layer.provideMerge(DiscordHandlerLayer),
   Layer.provideMerge(CommandHandlerLayer),
   Layer.provideMerge(MemberHandlerLayer),
-  Layer.provideMerge(ClashLayer),
+  Layer.provideMerge(ClashClientLayer),
   Layer.provideMerge(
     Layer.effect(
       ClashConfigTag,

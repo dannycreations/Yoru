@@ -7,7 +7,7 @@ import { ConfigStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/ClashHelper';
 import { addSplitFields, getGuildMember, parseMentionOrSnowflake } from '../../helpers/DiscordHelper';
-import { ClashTag } from '../../services/ClashService';
+import { ClashClientTag } from '../../services/ClashService';
 import { MemberHandlerTag } from '../MemberHandler';
 
 import type { Message } from 'discord.js';
@@ -31,7 +31,7 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
       .setThumbnail(member.user.displayAvatarURL());
 
     const results = yield* Effect.all(
-      accounts.map((account) =>
+      Array.map(accounts, (account) =>
         (account.bannedAt
           ? Effect.succeed({ tag: account.tag, banned: true as const, player: Option.none() })
           : memberHandler.getPlayer(account)
@@ -79,7 +79,7 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
 
 const checkPlayer = (message: Message<true>, tag: string) =>
   Effect.gen(function* () {
-    const clash = yield* ClashTag;
+    const clash = yield* ClashClientTag;
     const player = yield* clash.getPlayer(tag);
     const embed = createPlayerEmbed(player);
 
@@ -146,7 +146,7 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
 
 const checkMembers = (message: Message<true>, page = 1) =>
   Effect.gen(function* () {
-    const clash = yield* ClashTag;
+    const clash = yield* ClashClientTag;
     const configStore = yield* ConfigStoreTag;
     const config = yield* configStore.get;
     const { clanTags } = config;
@@ -162,16 +162,16 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
 
-    const tags = clan.members.map((m) => m.tag);
+    const tags = Array.map(clan.members, (m) => m.tag);
     const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
-    const userIds = Array.fromIterable(new Set(accounts.map((acc) => acc.userId).filter((id): id is number => id !== null)));
+    const userIds = Array.fromIterable(new Set(Array.filterMap(accounts, (acc) => Option.fromNullable(acc.userId))));
     const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
 
-    const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
-    const userMap = new Map(users.map((u) => [u.id, u]));
+    const accountMap = new Map(Array.map(accounts, (acc) => [acc.tag, acc]));
+    const userMap = new Map(Array.map(users, (u) => [u.id, u]));
 
     const memberResults = yield* Effect.all(
-      clan.members.map((member) =>
+      Array.map(clan.members, (member) =>
         Effect.gen(function* () {
           const field = `**${member.name}** ${member.tag}\n`;
           const account = accountMap.get(member.tag);

@@ -84,15 +84,15 @@ export const categorizeUnits = (player: Player) => {
     units,
     {
       categories: {
-        Troops: [],
-        'Dark Troops': [],
-        'Super Troops': [],
-        'Siege Machines': [],
-        Pets: [],
-        Spells: [],
-        'Dark Spells': [],
-        Heroes: [],
-      } as Record<string, string[]>,
+        Troops: [] as string[],
+        'Dark Troops': [] as string[],
+        'Super Troops': [] as string[],
+        'Siege Machines': [] as string[],
+        Pets: [] as string[],
+        Spells: [] as string[],
+        'Dark Spells': [] as string[],
+        Heroes: [] as string[],
+      },
       unknowns: [] as unknown[],
     },
     (acc, unit) => {
@@ -102,7 +102,10 @@ export const categorizeUnits = (player: Player) => {
           ...acc,
           categories: {
             ...acc.categories,
-            [mapping.category]: [...acc.categories[mapping.category], `${mapping.emoji}**${unit.level}**/${unit.maxLevel}`],
+            [mapping.category]: [
+              ...(acc.categories[mapping.category as keyof typeof acc.categories] ?? []),
+              `${mapping.emoji}**${unit.level}**/${unit.maxLevel}`,
+            ],
           },
         };
       }

@@ -88,19 +88,19 @@ const makeHttpClient = Effect.sync(() => {
 
         promise
           .then((response) => resume(Effect.succeed(response)))
-          .catch((error) =>
+          .catch((cause) =>
             resume(
               Effect.fail(
-                isErrorLike<RequestError>(error)
+                isErrorLike<RequestError>(cause)
                   ? new HttpClientError({
-                      message: error.message || 'Request failed',
-                      code: error.code,
-                      status: error.response?.statusCode,
-                      cause: error,
+                      message: cause.message || 'Request failed',
+                      code: cause.code,
+                      status: cause.response?.statusCode,
+                      cause,
                     })
                   : new HttpClientError({
-                      message: String(error),
-                      cause: error,
+                      message: String(cause),
+                      cause,
                     }),
               ),
             ),
@@ -126,11 +126,11 @@ const makeHttpClient = Effect.sync(() => {
     const retryMs = total ?? 10_000;
     const checkGoogle = Effect.tryPromise({
       try: () => lookup('google.com'),
-      catch: (error) =>
+      catch: (cause) =>
         new HttpClientError({
           message: 'DNS lookup failed',
           code: 'ENOTFOUND',
-          cause: error,
+          cause,
         }),
     });
 

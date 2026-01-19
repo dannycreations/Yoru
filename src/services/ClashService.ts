@@ -1,6 +1,6 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Client, HTTPError } from 'clashofclans.js';
-import { Cause, Chunk, Context, Data, Deferred, Effect, Layer, Option, PubSub, Ref, Schedule } from 'effect';
+import { Cause, Chunk, Context, Data, Effect, Layer, Option, PubSub, Ref, Schedule } from 'effect';
 
 import { ClientEvents } from '../core/constants';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient';
@@ -52,39 +52,111 @@ const makeClashClient = Effect.gen(function* () {
   const clanCache = yield* Ref.make(new Map<string, Clan>());
   const events = yield* PubSub.unbounded<ClashEvent>();
   const ipRef = yield* Ref.make(Option.none<string>());
-  const rotationGate = yield* Ref.make(Option.none<Deferred.Deferred<void, never>>());
-  const rotationVersion = yield* Ref.make(0);
-  const rotationLock = yield* Effect.makeSemaphore(1);
+  const loginSemaphore = yield* Effect.makeSemaphore(1);
 
-  const login = () =>
+  const handleRequestError = (cause: unknown, requestStateRef: Ref.Ref<number>) =>
     Effect.gen(function* () {
-      yield* Effect.tryPromise({
-        try: () =>
-          client.rest.login({
-            email: config.email,
-            password: config.password,
-            keyName: config.keyName ?? 'Yoru',
-            keyCount: config.keyCount ?? 1,
-          }),
-        catch: (error) =>
+      const requestState = yield* Ref.get(requestStateRef);
+
+      if (requestState > 2) {
+        return yield* Effect.fail(
           new ClashError({
-            message: 'Failed to login to Clash API',
-            cause: error,
+            message: 'API problem, please check back later!',
+            cause,
           }),
-      });
+        );
+      }
+
+      if (isErrorLike(cause) && ERROR_CODES.includes(cause.code)) {
+        yield* waitForConnection();
+        return yield* Effect.fail(
+          new ClashError({
+            message: 'Retrying after connection recovery',
+            cause,
+          }),
+        );
+      }
+
+      if (cause instanceof HTTPError) {
+        if (cause.status === 503) {
+          return yield* Effect.fail(
+            new ClashError({
+              message: 'Service is temporarily unavailable!',
+              status: 503,
+            }),
+          );
+        }
+        if (cause.status === 403) {
+          if (cause.reason === 'accessDenied.invalidIp') {
+            client.rest.requestHandler['keys'].shift();
+            const ipMatch = cause.message.match(/(\d{1,3}\.){3}\d+/);
+            yield* Ref.set(ipRef, ipMatch ? Option.some(ipMatch[0]) : Option.none());
+          }
+
+          yield* Effect.tryPromise({
+            try: () =>
+              client.rest.login({
+                email: config.email,
+                password: config.password,
+                keyName: config.keyName ?? 'Yoru',
+                keyCount: config.keyCount ?? 1,
+              }),
+            catch: (cause) =>
+              new ClashError({
+                message: 'Failed to login to Clash API',
+                cause,
+              }),
+          }).pipe(loginSemaphore.withPermits(1));
+
+          yield* Ref.update(requestStateRef, (s) => s + 1);
+          return yield* Effect.fail(
+            new ClashError({
+              message: 'Retrying due to IP change',
+              status: 403,
+              cause,
+            }),
+          );
+        }
+        if (ERROR_STATUS_CODES.includes(cause.status)) {
+          return yield* Effect.fail(
+            new ClashError({
+              message: 'Transient API error',
+              status: cause.status,
+              cause,
+            }),
+          );
+        }
+      }
+
+      if (cause instanceof SyntaxError && cause.message.includes('not valid JSON')) {
+        return yield* Effect.fail(
+          new ClashError({
+            message: 'Invalid JSON response',
+            status: 500,
+            cause,
+          }),
+        );
+      }
+
+      return yield* Effect.fail(
+        new ClashError({
+          message: 'Request failed',
+          cause,
+        }),
+      );
     });
 
   client.rest.requestHandler['reValidateKeys'] = () => Promise.resolve();
 
   const requestHandler = client.rest.requestHandler;
 
-  const getIpOrig = requestHandler['getIp'].bind(requestHandler);
+  const getIpOrig = requestHandler['getIp'].bind(requestHandler) as (token: string) => Promise<void>;
   requestHandler['getIp'] = (token: string) =>
-    bridge.sync(
+    bridge.promise(
       Ref.get(ipRef).pipe(
         Effect.flatMap((ipOpt) =>
           Option.match(ipOpt, {
-            onNone: () => Effect.sync(() => getIpOrig(token)),
+            onNone: () => Effect.promise(() => getIpOrig(token)),
             onSome: (ip) => Ref.set(ipRef, Option.none()).pipe(Effect.as(ip)),
           }),
         ),
@@ -92,165 +164,43 @@ const makeClashClient = Effect.gen(function* () {
     );
 
   const requestOrig = requestHandler.request.bind(requestHandler);
-
-  const requestStateRef = yield* Ref.make(0);
-
-  requestHandler.request = async <T>(path: string, options: RequestOptions = {}) =>
+  requestHandler.request = <T>(path: string, options: RequestOptions = {}) =>
     bridge.promise(
-      Effect.gen(function* () {
-        yield* Ref.get(rotationGate).pipe(
-          Effect.flatMap(
-            Option.match({
-              onNone: () => Effect.void,
-              onSome: (d) => Deferred.await(d),
+      Ref.make(0).pipe(
+        Effect.flatMap((requestStateRef) =>
+          Effect.gen(function* () {
+            return yield* Effect.tryPromise({
+              try: () => requestOrig<T>(path, options),
+              catch: (error) => error,
+            }).pipe(
+              Effect.catchAll((error) => handleRequestError(error, requestStateRef)),
+              Effect.catchAllCause((cause) =>
+                Effect.gen(function* () {
+                  const error = Cause.failureOption(cause);
+                  if (Option.isSome(error) && error.value instanceof ClashError) {
+                    return yield* Effect.fail(error.value);
+                  }
+                  return yield* Effect.fail(
+                    new ClashError({
+                      message: 'Request failed',
+                      cause,
+                    }),
+                  );
+                }),
+              ),
+            );
+          }).pipe(
+            Effect.retry({
+              while: (error) => error instanceof ClashError && error.status !== 503,
+              schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
             }),
           ),
-        );
-
-        const startVersion = yield* Ref.get(rotationVersion);
-
-        return yield* Effect.tryPromise(() => requestOrig<T>(path, options))
-          .pipe(
-            Effect.tap(() => Ref.set(requestStateRef, 0)),
-            Effect.catchAll((error) =>
-              Effect.gen(function* () {
-                const requestState = yield* Ref.get(requestStateRef);
-                const isInvalidIp =
-                  (error instanceof HTTPError && error.status === 403 && error.reason === 'accessDenied.invalidIp') ||
-                  (isErrorLike<{ status?: number; reason?: string }>(error) && error.status === 403 && error.reason === 'accessDenied.invalidIp');
-
-                if (requestState > 2) {
-                  yield* Ref.set(requestStateRef, 2);
-                  return yield* Effect.fail(
-                    new ClashError({
-                      message: 'API problem, please check back later!',
-                      cause: error,
-                    }),
-                  );
-                }
-
-                if (isErrorLike(error) && ERROR_CODES.includes(error.code)) {
-                  yield* Ref.set(requestStateRef, 0);
-                  return yield* waitForConnection().pipe(
-                    Effect.flatMap(() =>
-                      Effect.fail(
-                        new ClashError({
-                          message: 'Retrying after connection recovery',
-                          cause: error,
-                        }),
-                      ),
-                    ),
-                  );
-                }
-
-                if (error instanceof HTTPError) {
-                  if (error.status === 503) {
-                    yield* Ref.set(requestStateRef, 0);
-                    return yield* Effect.fail(
-                      new ClashError({
-                        message: 'Service is temporarily unavailable because of maintenance!',
-                        status: 503,
-                      }),
-                    );
-                  }
-
-                  if (isInvalidIp) {
-                    yield* rotationLock.withPermits(1)(
-                      Effect.gen(function* () {
-                        const currentVersion = yield* Ref.get(rotationVersion);
-                        if (currentVersion === startVersion) {
-                          const d = yield* Deferred.make<void, never>();
-                          yield* Ref.set(rotationGate, Option.some(d));
-
-                          yield* Effect.gen(function* () {
-                            requestHandler['keys'].shift();
-                            const message = isErrorLike<{ message: string }>(error) ? error.message : String(error);
-                            const ipMatch = message.match(/(\d{1,3}\.){3}\d+/);
-                            if (ipMatch) yield* Ref.set(ipRef, Option.some(ipMatch[0]));
-                            yield* login();
-                            yield* Ref.update(rotationVersion, (v) => v + 1);
-                          }).pipe(
-                            Effect.ensuring(
-                              Effect.gen(function* () {
-                                yield* Ref.set(rotationGate, Option.none());
-                                yield* Deferred.succeed(d, undefined);
-                              }),
-                            ),
-                            Effect.catchAll(() => Effect.void),
-                          );
-                        }
-                      }),
-                    );
-
-                    yield* Ref.update(requestStateRef, (s) => s + 1);
-                    return yield* Effect.fail(
-                      new ClashError({
-                        message: 'Retrying due to IP change',
-                        status: 403,
-                        cause: error,
-                      }),
-                    );
-                  }
-
-                  if (ERROR_STATUS_CODES.includes(error.status)) {
-                    yield* Ref.set(requestStateRef, 0);
-                    return yield* Effect.fail(
-                      new ClashError({
-                        message: 'Transient API error',
-                        status: error.status,
-                        cause: error,
-                      }),
-                    );
-                  }
-                }
-
-                if (error instanceof SyntaxError && error.message.includes('not valid JSON')) {
-                  return yield* Effect.fail(
-                    new ClashError({
-                      message: 'Invalid JSON response',
-                      status: 500,
-                      cause: error,
-                    }),
-                  );
-                }
-
-                return yield* Effect.fail(
-                  new ClashError({
-                    message: 'Request failed',
-                    cause: error,
-                  }),
-                );
-              }),
-            ),
-          )
-          .pipe(
-            Effect.catchAllCause((cause) =>
-              Effect.gen(function* () {
-                const error = Cause.failureOption(cause);
-                if (Option.isSome(error) && error.value instanceof ClashError) {
-                  return yield* Effect.fail(error.value);
-                }
-                return yield* Effect.fail(
-                  new ClashError({
-                    message: 'Request failed',
-                    cause: cause,
-                  }),
-                );
-              }),
-            ),
-          );
-      }).pipe(
-        Effect.retry({
-          while: (error) => error instanceof ClashError && error.status !== 503,
-          schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
-        }),
+        ),
         Effect.provideService(HttpClientTag, http),
       ),
     );
 
-  yield* login();
-
-  const poll = Effect.gen(function* () {
+  yield* Effect.gen(function* () {
     const tags = yield* Ref.get(clanTags);
     const cache = yield* Ref.get(clanCache);
 
@@ -291,41 +241,41 @@ const makeClashClient = Effect.gen(function* () {
     Effect.fork,
   );
 
-  yield* poll;
+  const addClans = (tags: readonly string[]) =>
+    Ref.update(clanTags, (set) => {
+      const next = new Set(set);
+      tags.forEach((tag) => next.add(tag));
+      return next;
+    });
 
   const getClan = (tag: string) =>
     Effect.tryPromise({
       try: () => client.getClan(tag),
-      catch: (error) =>
-        error instanceof ClashError
-          ? error
+      catch: (cause) =>
+        cause instanceof ClashError
+          ? cause
           : new ClashError({
               message: `Failed to fetch clan ${tag}`,
-              cause: error,
+              cause,
             }),
     });
 
   const getPlayer = (tag: string) =>
     Effect.tryPromise({
       try: () => client.getPlayer(tag),
-      catch: (error) =>
-        error instanceof ClashError
-          ? error
+      catch: (cause) =>
+        cause instanceof ClashError
+          ? cause
           : new ClashError({
               message: `Failed to fetch player ${tag}`,
-              cause: error,
+              cause,
             }),
     });
 
   return {
     client,
     events,
-    addClans: (tags: readonly string[]) =>
-      Ref.update(clanTags, (set) => {
-        const next = new Set(set);
-        tags.forEach((tag) => next.add(tag));
-        return next;
-      }),
+    addClans,
     getClan,
     getPlayer,
   };

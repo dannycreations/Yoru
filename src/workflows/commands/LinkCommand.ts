@@ -58,7 +58,6 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       const configStore = yield* ConfigStoreTag;
       const config = yield* configStore.get;
       const isAuthorized = config.ownerIds.includes(message.author.id) || (message.member?.roles.cache.some(isModeratorRole) ?? false);
-
       if (!isAuthorized) return;
 
       const player = yield* clash.getPlayer(tag);
@@ -94,7 +93,6 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       yield* Effect.tryPromise(() => msg.react('❎'));
 
       const filter = (r: MessageReaction, u: DiscordUser) => ['✅', '❎'].includes(r.emoji.name ?? '') && u.id === message.author.id;
-
       const collected = yield* Effect.tryPromise(() => msg.awaitReactions({ filter, max: 1, time: 60_000 })).pipe(
         Effect.catchAll(() => Effect.succeed(null)),
       );

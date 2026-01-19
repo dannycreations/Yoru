@@ -222,10 +222,17 @@ const checkMembers = (message: Message<true>, page = 1) =>
     }
 
     if (guildMap.size > 0) {
-      const field = [...guildMap.entries()]
-        .map(([ownerId, members]) => `**<@${ownerId}>:**\n- ${members.map((m) => m.trim()).join('\n- ')}`)
-        .join('\n')
-        .slice(0, 1024);
+      const field = Array.join(
+        Array.map(
+          Array.fromIterable(guildMap.entries()),
+          ([ownerId, members]) =>
+            `**<@${ownerId}>:**\n- ${Array.join(
+              Array.map(members, (m) => m.trim()),
+              '\n- ',
+            )}`,
+        ),
+        '\n',
+      ).slice(0, 1024);
       embed.addFields({ name: '👍 Members on Discord', value: field });
     }
 

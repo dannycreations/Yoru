@@ -34,12 +34,12 @@ const loadStore = (filePath: string): Effect.Effect<unknown, StoreClientError> =
         catch: (cause) => new StoreClientError({ message: `Failed to parse store: ${filePath}`, cause }),
       }),
     ),
-    Effect.catchAll((error) =>
-      isErrorLike<{ readonly code: string }>(error) && error.code === 'ENOENT'
+    Effect.catchAll((cause) =>
+      isErrorLike<{ readonly code: string }>(cause) && cause.code === 'ENOENT'
         ? Effect.succeed({})
-        : error instanceof StoreClientError
-          ? Effect.fail(error)
-          : Effect.fail(new StoreClientError({ message: `Failed to load store: ${filePath}`, cause: error })),
+        : cause instanceof StoreClientError
+          ? Effect.fail(cause)
+          : Effect.fail(new StoreClientError({ message: `Failed to load store: ${filePath}`, cause })),
     ),
   );
 
@@ -49,7 +49,7 @@ const saveStore = <A, I, R>(filePath: string, schema: Schema.Schema<A, I, R>, da
 
     const encode = Schema.encode(schema);
     const encoded = yield* encode(data).pipe(
-      Effect.mapError((error) => new StoreClientError({ message: `Failed to encode store: ${filePath}`, cause: error })),
+      Effect.mapError((cause) => new StoreClientError({ message: `Failed to encode store: ${filePath}`, cause })),
     );
 
     const tempPath = `${filePath}.tmp`;

@@ -53,6 +53,7 @@ const makeDiscordClient = Effect.gen(function* () {
   const timeoutFiber = yield* Effect.logWarning('Discord client login timed out...').pipe(
     Effect.zipRight(Effect.sync(() => void client.destroy())),
     Effect.delay('60 seconds'),
+    Effect.interruptible,
     Effect.fork,
   );
 
@@ -60,14 +61,14 @@ const makeDiscordClient = Effect.gen(function* () {
 
   const clearLoginTimeout = () =>
     bridge.fork(
-      Ref.get(loginTimeoutRef).pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.void,
-            onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.zipRight(Ref.set(loginTimeoutRef, Option.none()))),
-          }),
-        ),
-      ),
+      Effect.gen(function* () {
+        const maybeFiber = yield* Ref.get(loginTimeoutRef);
+
+        if (Option.isSome(maybeFiber)) {
+          yield* Fiber.interrupt(maybeFiber.value);
+          yield* Ref.set(loginTimeoutRef, Option.none());
+        }
+      }),
     );
 
   client.once('ready', () => clearLoginTimeout());
@@ -76,7 +77,7 @@ const makeDiscordClient = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* Effect.tryPromise({
         try: () => client.login(env.DISCORD_TOKEN),
-        catch: (error) => new DiscordError({ message: 'Failed to login to Discord', cause: error }),
+        catch: (cause) => new DiscordError({ message: 'Failed to login to Discord', cause }),
       });
     });
 

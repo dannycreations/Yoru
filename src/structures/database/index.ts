@@ -74,10 +74,10 @@ export const SqliteClientLayer = (options: SqliteOptions): Layer.Layer<SqliteCli
           migrate(db, { migrationsFolder: options.out });
           return { db, client };
         },
-        catch: (error) =>
+        catch: (cause) =>
           new SqliteClientError({
-            message: error instanceof Error ? error.message : 'Failed to initialize SQLite database',
-            cause: error,
+            message: cause instanceof Error ? cause.message : 'Failed to initialize SQLite database',
+            cause,
           }),
       }),
       ({ client }) => Effect.sync(() => client.close()),

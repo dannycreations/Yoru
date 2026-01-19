@@ -117,7 +117,7 @@ const withTrace = <A>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL
     const db = yield* SqliteClientTag;
     return yield* Effect.try({
       try: () => fn(db, trace),
-      catch: (error) => {
+      catch: (cause) => {
         let query: unknown;
         if (trace.value) {
           try {
@@ -126,8 +126,8 @@ const withTrace = <A>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL
           } catch {}
         }
         return new SqliteClientError({
-          message: error instanceof Error ? error.message : String(error),
-          cause: error,
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
           query,
         });
       },
@@ -152,7 +152,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return Object.assign(cache, table);
   };
 
-  const buildWhereComparison = (key: unknown, val: unknown): Array<SQL> => {
+  const buildWhereComparison = (key: unknown, val: unknown): ReadonlyArray<SQL> => {
     const column = table[key as keyof A] as unknown as SQL;
     if (!column) return [sql`0`];
     if (val === undefined) return [];
@@ -161,7 +161,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       return [val === null ? isNull(column) : eq(column, val as SQL)];
     }
 
-    return Object.entries(val as Record<string, unknown>).reduce((acc, [operator, operand]) => {
+    return Array.reduce(Object.entries(val as Record<string, unknown>), [] as ReadonlyArray<SQL>, (acc, [operator, operand]) => {
       if (operator === '$not') {
         const negated = buildWhereComparison(key, operand);
         return negated.length > 0 ? [...acc, not(and(...negated)!)] : acc;
@@ -181,11 +181,11 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
 
       const handler = OPERATOR_MAP[operator];
       return [...acc, handler ? handler(column, operand as SQL) : sql`0`];
-    }, [] as Array<SQL>);
+    });
   };
 
-  const buildWhereLogical = (filter: QueryFilter<A>): Array<SQL> =>
-    Object.entries(filter).reduce((acc, [key, value]) => {
+  const buildWhereLogical = (filter: QueryFilter<A>): ReadonlyArray<SQL> =>
+    Array.reduce(Object.entries(filter), [] as ReadonlyArray<SQL>, (acc, [key, value]) => {
       if (['$and', '$nand', '$or', '$nor'].includes(key)) {
         const nested = Array.isArray(value) ? (value as QueryFilter<A>[]).flatMap((v) => buildWhereLogical(v)) : [];
         const isPositive = key === '$and' || key === '$nor';
@@ -204,7 +204,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       }
 
       return [...acc, ...buildWhereComparison(key, value)];
-    }, [] as Array<SQL>);
+    });
 
   const buildWhereClause = (filter?: QueryFilter<A>): SQL | undefined => {
     if (!filter || !hasKeys(filter)) {
@@ -218,10 +218,10 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const buildOrderClause = <S>(columnCache: Record<string, unknown>, order?: S): SQL | undefined => {
     if (!order || !hasKeys(order)) return undefined;
 
-    const clauses = Object.entries(order as Record<string, string>).reduce((acc, [key, direction]) => {
+    const clauses = Array.reduce(Object.entries(order as Record<string, string>), [] as SQL[], (acc, [key, direction]) => {
       const column = columnCache[key] as SQL;
       return column ? [...acc, direction?.toLowerCase() === 'desc' ? desc(column) : asc(column)] : acc;
-    }, [] as SQL[]);
+    });
 
     return clauses.length === 0 ? undefined : (sql.join(clauses, sql.raw(', ')) as unknown as SQL);
   };
@@ -230,12 +230,13 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     if (!select || !hasKeys(select)) return undefined;
 
     const selectObj = select as unknown as Record<string, number>;
-    const columns = Object.entries(selectObj).reduce(
+    const columns = Array.reduce(
+      Object.entries(selectObj),
+      selectObj['id'] !== 0 && columnCache['id'] ? { id: columnCache['id'] } : ({} as Record<string, unknown>),
       (acc, [key, value]) => {
         if (key === 'id' || value === 0 || !columnCache[key]) return acc;
         return { ...acc, [key]: columnCache[key] };
       },
-      selectObj['id'] !== 0 && columnCache['id'] ? { id: columnCache['id'] } : ({} as Record<string, unknown>),
     );
 
     return hasKeys(columns) ? (columns as InferColumn<A>) : undefined;
@@ -397,17 +398,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
           const { id, ...newRec } = rec as Record<string, unknown>;
           query.onConflictDoUpdate({ target, set: newRec as Insert });
         } else {
-          const mergeSet = Object.entries(rec).reduce(
-            (acc, [key, val]) => {
-              if (key === 'id') return acc;
-              const col = table[key as keyof A];
-              if (!col) {
-                throw new Error(`Conflict set column "${key}" not found in table "${getTableName(table)}"`);
-              }
-              return { ...acc, [key]: sql`COALESCE(${col}, ${sql`${val}`})` };
-            },
-            {} as Record<string, unknown>,
-          );
+          const mergeSet = Array.reduce(Object.entries(rec), {} as Record<string, unknown>, (acc, [key, val]) => {
+            if (key === 'id') return acc;
+            const col = table[key as keyof A];
+            if (!col) {
+              throw new Error(`Conflict set column "${key}" not found in table "${getTableName(table)}"`);
+            }
+            return { ...acc, [key]: sql`COALESCE(${col}, ${sql`${val}`})` };
+          });
           query.onConflictDoUpdate({ target, set: mergeSet as Insert });
         }
       }

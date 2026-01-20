@@ -17,20 +17,32 @@ export const createDiscordListener = (
     const configStore = yield* ConfigStoreTag;
     const commandService = yield* CommandHandlerTag;
 
+    const setPresence = (client: SapphireClient<true>) =>
+      Effect.sync(() =>
+        client.user.setPresence({
+          status: 'idle',
+          activities: [{ name: 'Clash of Clans', type: ActivityType.Playing }],
+        }),
+      );
+
     const onReady = (client: SapphireClient<true>): Effect.Effect<void, never, never> =>
       Effect.gen(function* () {
         yield* Effect.sleep(1000);
         discordHandler.clearLoginTimeout();
 
-        client.user.setPresence({
-          status: 'idle',
-          activities: [{ name: 'Clash of Clans', type: ActivityType.Playing }],
-        });
+        yield* setPresence(client);
 
         yield* Effect.logInfo(
           `Bot has started with ${client.users.cache.size} users, ${client.channels.cache.size} channels, and ${client.guilds.cache.size} guilds.`,
         );
       }).pipe(Effect.asVoid);
+
+    const onShardResume = (_: number): Effect.Effect<void, never, never> =>
+      Effect.gen(function* () {
+        if (discordHandler.client.user) {
+          yield* setPresence(discordHandler.client as SapphireClient<true>);
+        }
+      });
 
     const onMessageCreate = (message: Message): Effect.Effect<void, unknown, any> =>
       Effect.gen(function* () {
@@ -48,5 +60,6 @@ export const createDiscordListener = (
       }).pipe(Effect.asVoid);
 
     register(discordHandler.client, Events.ClientReady, onReady, true);
+    register(discordHandler.client, Events.ShardResume, onShardResume);
     register(discordHandler.client, Events.MessageCreate, onMessageCreate);
   });

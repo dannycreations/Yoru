@@ -1,11 +1,11 @@
 import { lookup } from 'node:dns/promises';
 import { defaultsDeep } from '@vegapunk/utilities/common';
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Context, Data, Effect, Layer, Schedule } from 'effect';
-import got from 'got';
+import { Context, Data, Effect, Either, Layer, Schedule } from 'effect';
+import got, { RequestError } from 'got';
 import UserAgent from 'user-agents';
 
-import type { CancelableRequest, Got, Options, RequestError, Response } from 'got';
+import type { CancelableRequest, Got, Options, Response } from 'got';
 
 export class HttpClientError extends Data.TaggedError('HttpClientError')<{
   readonly message: string;
@@ -91,7 +91,7 @@ const makeHttpClient = Effect.sync(() => {
           .catch((cause) =>
             resume(
               Effect.fail(
-                isErrorLike<RequestError>(cause)
+                cause instanceof RequestError
                   ? new HttpClientError({
                       message: cause.message || 'Request failed',
                       code: cause.code,
@@ -125,16 +125,28 @@ const makeHttpClient = Effect.sync(() => {
   const waitForConnectionFn = (total?: number): Effect.Effect<void, never> => {
     const retryMs = total ?? 10_000;
 
-    const checkGoogle = Effect.tryPromise(() => lookup('google.com'));
+    const checkGoogle = Effect.tryPromise({
+      try: () => lookup('google.com'),
+      catch: (cause) =>
+        new HttpClientError({
+          message: 'DNS lookup failed',
+          cause,
+        }),
+    }).pipe(Effect.asVoid, Effect.either);
 
     const checkApple = requestFn({
       url: 'https://captive.apple.com/hotspot-detect.html',
       headers: { 'user-agent': 'CaptiveNetworkSupport/1.0 wispr' },
       timeout: { total: retryMs },
-    });
+    }).pipe(Effect.asVoid, Effect.either);
 
     return Effect.race(checkGoogle, checkApple).pipe(
-      Effect.asVoid,
+      Effect.flatMap(
+        Either.match({
+          onLeft: (error) => Effect.fail(error),
+          onRight: () => Effect.void,
+        }),
+      ),
       Effect.retry(Schedule.spaced(`${retryMs} millis`)),
       Effect.catchAll(() => waitForConnectionFn(total)),
     );

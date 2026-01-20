@@ -41,7 +41,7 @@ export interface DefaultOptions extends Omit<Options, 'prefixUrl' | 'retry' | 't
 
 export interface HttpClient {
   readonly request: <T = string>(options: string | DefaultOptions) => Effect.Effect<Response<T>, HttpClientError>;
-  readonly waitForConnection: (total?: number) => Effect.Effect<void, HttpClientError>;
+  readonly waitForConnection: (total?: number) => Effect.Effect<void, never>;
 }
 
 export class HttpClientTag extends Context.Tag('@structures/HttpClient')<HttpClientTag, HttpClient>() {}
@@ -52,7 +52,7 @@ export const isErrorTimeout = (error: unknown): boolean =>
 export const request = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError, HttpClientTag> =>
   Effect.flatMap(HttpClientTag, (service) => service.request<T>(options));
 
-export const waitForConnection = (total?: number): Effect.Effect<void, HttpClientError, HttpClientTag> =>
+export const waitForConnection = (total?: number): Effect.Effect<void, never, HttpClientTag> =>
   Effect.flatMap(HttpClientTag, (service) => service.waitForConnection(total));
 
 const makeHttpClient = Effect.sync(() => {
@@ -122,17 +122,10 @@ const makeHttpClient = Effect.sync(() => {
       );
     });
 
-  const waitForConnectionFn = (total?: number): Effect.Effect<void, HttpClientError> => {
+  const waitForConnectionFn = (total?: number): Effect.Effect<void, never> => {
     const retryMs = total ?? 10_000;
-    const checkGoogle = Effect.tryPromise({
-      try: () => lookup('google.com'),
-      catch: (cause) =>
-        new HttpClientError({
-          message: 'DNS lookup failed',
-          code: 'ENOTFOUND',
-          cause,
-        }),
-    });
+
+    const checkGoogle = Effect.tryPromise(() => lookup('google.com'));
 
     const checkApple = requestFn({
       url: 'https://captive.apple.com/hotspot-detect.html',
@@ -141,9 +134,9 @@ const makeHttpClient = Effect.sync(() => {
     });
 
     return Effect.race(checkGoogle, checkApple).pipe(
-      Effect.retry({ schedule: Schedule.spaced(`${retryMs} millis`) }),
-      Effect.mapError((e) => (e instanceof HttpClientError ? e : new HttpClientError({ message: String(e), cause: e }))),
       Effect.asVoid,
+      Effect.retry(Schedule.spaced(`${retryMs} millis`)),
+      Effect.catchAll(() => waitForConnectionFn(total)),
     );
   };
 

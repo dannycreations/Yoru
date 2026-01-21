@@ -6,24 +6,27 @@ import { ClashError } from '../services/ClashService';
 
 import type { Message } from 'discord.js';
 
+const getErrorMessage = (error: unknown): Option.Option<string> => {
+  const cause = error instanceof ClashError ? error.cause : error;
+
+  if (cause instanceof HTTPError) {
+    return Option.some(cause.reason === 'notFound' && cause.path.includes('/players/') ? 'Error, Player tag not found!' : cause.message);
+  }
+
+  if (error instanceof ClashError) {
+    return Option.some(error.message);
+  }
+
+  if (isErrorLike<{ readonly message: string }>(error)) {
+    return Option.some(error.message);
+  }
+
+  return Option.none();
+};
+
 export const replyWithError = (message: Message<true>, error: unknown): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const cause = error instanceof ClashError ? error.cause : error;
-
-    const errorMessage = Option.fromNullable(
-      (() => {
-        if (cause instanceof HTTPError) {
-          return cause.reason === 'notFound' && cause.path.includes('/players/') ? 'Error, Player tag not found!' : cause.message;
-        }
-        if (error instanceof ClashError) {
-          return error.message;
-        }
-        if (isErrorLike(error)) {
-          return error.message;
-        }
-        return null;
-      })(),
-    );
+    const errorMessage = getErrorMessage(error);
 
     const reply = Option.match(errorMessage, {
       onNone: () => `> ${message.content}\nUnhandled Rejection, please contact owner!`,

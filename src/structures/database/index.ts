@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { Effect, Layer } from 'effect';
+import { Context, Effect, Layer } from 'effect';
 
 import { Adapter, SqliteClientError, SqliteClientTag } from './Adapter';
 
@@ -13,25 +13,27 @@ export * from 'drizzle-orm/better-sqlite3';
 export * from 'drizzle-orm/sqlite-core';
 export { Adapter, Database, SqliteClientError, SqliteClientTag };
 
+export class SqliteConfigTag extends Context.Tag('@database/SqliteConfig')<SqliteConfigTag, SqliteOptions>() {}
+
 export interface SqliteOptions {
-  out: string;
-  schema: string | string[];
-  dbCredentials: { url: string };
-  logger?: boolean;
-  breakpoints?: boolean;
-  tablesFilter?: string | string[];
-  extensionsFilters?: string[];
-  schemaFilter?: string | string[];
-  verbose?: boolean;
-  strict?: boolean;
-  casing?: 'camelCase' | 'snake_case';
-  migrations?: {
-    table?: string;
-    schema?: string;
-    prefix?: 'index' | 'timestamp' | 'supabase' | 'unix' | 'none';
+  readonly out: string;
+  readonly schema: string | string[];
+  readonly dbCredentials: { readonly url: string };
+  readonly logger?: boolean;
+  readonly breakpoints?: boolean;
+  readonly tablesFilter?: string | string[];
+  readonly extensionsFilters?: string[];
+  readonly schemaFilter?: string | string[];
+  readonly verbose?: boolean;
+  readonly strict?: boolean;
+  readonly casing?: 'camelCase' | 'snake_case';
+  readonly migrations?: {
+    readonly table?: string;
+    readonly schema?: string;
+    readonly prefix?: 'index' | 'timestamp' | 'supabase' | 'unix' | 'none';
   };
-  introspect?: {
-    casing: 'camel' | 'preserve';
+  readonly introspect?: {
+    readonly casing: 'camel' | 'preserve';
   };
 }
 
@@ -53,37 +55,38 @@ export const patchDialect = (dialect: PatchedDialect): void => {
 
 export const makeSqliteConfig = (options: Partial<SqliteOptions> = {}): SqliteOptions => defaultsDeep({}, options, baseOptions);
 
-export const SqliteClientLayer = (options: SqliteOptions): Layer.Layer<SqliteClientTag, SqliteClientError, never> =>
-  Layer.scoped(
-    SqliteClientTag,
-    Effect.gen(function* () {
-      const { db } = yield* Effect.acquireRelease(
-        Effect.try({
-          try: () => {
-            const client = new Database(options.dbCredentials.url);
-            client.pragma('foreign_keys = ON');
-            client.pragma('journal_mode = WAL');
+export const SqliteClientLayer = Layer.scoped(
+  SqliteClientTag,
+  Effect.gen(function* () {
+    const options = yield* SqliteConfigTag;
 
-            const db = drizzle(client, {
-              casing: options.casing,
-              logger: options.logger,
-            });
+    const { db } = yield* Effect.acquireRelease(
+      Effect.try({
+        try: () => {
+          const client = new Database(options.dbCredentials.url);
+          client.pragma('foreign_keys = ON');
+          client.pragma('journal_mode = WAL');
 
-            // @ts-expect-error Internal drizzle access.
-            patchDialect(db.dialect);
+          const db = drizzle(client, {
+            casing: options.casing,
+            logger: options.logger,
+          });
 
-            migrate(db, { migrationsFolder: options.out });
-            return { db, client };
-          },
-          catch: (cause) =>
-            new SqliteClientError({
-              message: cause instanceof Error ? cause.message : 'Failed to initialize SQLite database',
-              cause,
-            }),
-        }),
-        ({ client }) => Effect.sync(() => client.close()),
-      );
+          // @ts-expect-error Internal drizzle access.
+          patchDialect(db.dialect as PatchedDialect);
 
-      return db;
-    }),
-  );
+          migrate(db, { migrationsFolder: options.out });
+          return { db, client };
+        },
+        catch: (cause) =>
+          new SqliteClientError({
+            message: cause instanceof Error ? cause.message : 'Failed to initialize SQLite database',
+            cause,
+          }),
+      }),
+      ({ client }) => Effect.sync(() => client.close()),
+    );
+
+    return db;
+  }),
+);

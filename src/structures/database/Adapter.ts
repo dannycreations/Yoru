@@ -72,17 +72,17 @@ export interface Adapter<A extends Table, Select extends InferSelect<A> = InferS
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: Partial<InferSelect<A>>,
       data: Partial<Omit<Insert, 'id'>>,
-      options: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { upsert: true },
+      options: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { readonly upsert: true },
     ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: QueryFilter<A>,
       data: Partial<Omit<Insert, 'id'>>,
-      options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { upsert?: false },
+      options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { readonly upsert?: false },
     ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: Partial<InferSelect<A>> | QueryFilter<A>,
       data: Partial<Omit<Insert, 'id'>>,
-      options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { upsert?: boolean },
+      options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { readonly upsert?: boolean },
     ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
   };
   readonly findOneAndDelete: <B extends Array<Table>, S extends SelectClause<A, B, S>>(
@@ -258,12 +258,19 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
 
   const count = (filter: QueryFilter<A> = {}): Effect.Effect<number, SqliteClientError, SqliteClientTag> =>
     withTrace((db, trace) =>
-      Effect.sync(() => {
-        const query = db.select({ count: countSql() }).from(table);
-        query.where(buildWhereClause(filter));
+      Effect.try({
+        try: () => {
+          const query = db.select({ count: countSql() }).from(table);
+          query.where(buildWhereClause(filter));
 
-        trace.value = () => query.getSQL();
-        return query.get()?.count ?? 0;
+          trace.value = () => query.getSQL();
+          return query.get()?.count ?? 0;
+        },
+        catch: (cause) =>
+          new SqliteClientError({
+            message: cause instanceof Error ? cause.message : 'Count operation failed',
+            cause,
+          }),
       }),
     );
 
@@ -320,7 +327,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         }
 
         trace.value = () => query.getSQL();
-        return query.all() as unknown as Array<ReturnAlias<A, ExtractTables<J>, S, J>>;
+        return yield* Effect.try({
+          try: () => query.all() as unknown as Array<ReturnAlias<A, ExtractTables<J>, S, J>>,
+          catch: (cause) =>
+            new SqliteClientError({
+              message: cause instanceof Error ? cause.message : 'Find operation failed',
+              cause,
+            }),
+        });
       }),
     );
 
@@ -334,7 +348,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     filter: Partial<InferSelect<A>> | QueryFilter<A>,
     data: Partial<Omit<Insert, 'id'>>,
     options: Omit<QueryOptions<A, Array<Table>, unknown, unknown>, 'limit' | 'joins'> & {
-      upsert?: boolean;
+      readonly upsert?: boolean;
     } = {},
   ) =>
     Effect.gen(function* () {
@@ -351,16 +365,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
           );
         }
 
-        // @ts-expect-error Avoid extensive casting.
-        const s: Array<any> = yield* insert({ ...filter, ...data }, options);
-        return Option.fromNullable(s[0]);
+        const s = yield* insert({ ...filter, ...data } as Omit<Insert, 'id'>, options as any);
+        return Array.head(s);
       }
 
       if (Option.isSome(rOpt)) {
         const r = rOpt.value;
-        // @ts-expect-error Avoid extensive casting.
-        const s: Array<any> = yield* update({ ...r, ...data }, options);
-        return Option.fromNullable(s[0]);
+        const s = yield* update({ ...r, ...data } as unknown as Select, options as any);
+        return Array.head(s);
       }
 
       return Option.none();
@@ -373,8 +385,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     Effect.gen(function* () {
       const rOpt = yield* findOne(filter, { ...options, select: undefined });
       if (Option.isNone(rOpt)) return Option.none();
-      const s: Array<any> = yield* deleteFn((rOpt as Option.Some<any>).value as unknown as Select, options);
-      return Option.fromNullable(s[0]) as Option.Option<ReturnAlias<A, B, S>>;
+      const s = yield* deleteFn(rOpt.value as unknown as Select, options);
+      return Array.head(s) as Option.Option<ReturnAlias<A, B, S>>;
     });
 
   const insert = <B extends Array<Table>, S extends SelectClause<A, B, S>>(
@@ -388,49 +400,56 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     } = {},
   ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag> =>
     withTrace((db, trace) =>
-      Effect.sync(() => {
-        const input = Array.isArray(record) ? record : [record];
-        const values = Array.filterMap(input, (rec) => {
-          if (!hasKeys(rec)) return Option.none();
-          const { id, ...newRec } = rec as Record<string, unknown>;
-          return Option.some(newRec as Insert);
-        });
-
-        if (values.length === 0) {
-          return [];
-        }
-
-        const query = db.insert(table).values(values);
-
-        const conflictOpt = options.conflict;
-        if (hasKeys(conflictOpt)) {
-          const target = Array.filterMap(conflictOpt.target, (r) => {
-            const col = table[r as keyof A];
-            return col ? Option.some(col as unknown as SQL) : Option.none();
+      Effect.try({
+        try: () => {
+          const input = Array.isArray(record) ? record : [record];
+          const values = Array.filterMap(input, (rec) => {
+            if (!hasKeys(rec)) return Option.none();
+            const { id, ...newRec } = rec as Record<string, unknown>;
+            return Option.some(newRec as Insert);
           });
 
-          const rec = (hasKeys(conflictOpt.set) ? conflictOpt.set : values[0]) as Record<string, unknown>;
-
-          if (conflictOpt.resolution === 'ignore') {
-            query.onConflictDoNothing({ target });
-          } else if (conflictOpt.resolution === 'update') {
-            const { id, ...newRec } = rec as Record<string, unknown>;
-            query.onConflictDoUpdate({ target, set: newRec as Insert });
-          } else {
-            const mergeSet = Array.reduce(Object.entries(rec), {} as Record<string, unknown>, (acc, [key, val]) => {
-              if (key === 'id') return acc;
-              const col = table[key as keyof A];
-              return col ? { ...acc, [key]: sql`COALESCE(${col}, ${sql`${val}`})` } : acc;
-            });
-            query.onConflictDoUpdate({ target, set: mergeSet as Insert });
+          if (values.length === 0) {
+            return [];
           }
-        }
 
-        const select = buildSelectClause(buildColumnCache(), options.select);
-        select ? query.returning(select) : query.returning();
+          const query = db.insert(table).values(values);
 
-        trace.value = () => query.getSQL();
-        return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
+          const conflictOpt = options.conflict;
+          if (hasKeys(conflictOpt)) {
+            const target = Array.filterMap(conflictOpt.target, (r) => {
+              const col = table[r as keyof A];
+              return col ? Option.some(col as unknown as SQL) : Option.none();
+            });
+
+            const rec = (hasKeys(conflictOpt.set) ? conflictOpt.set : values[0]) as Record<string, unknown>;
+
+            if (conflictOpt.resolution === 'ignore') {
+              query.onConflictDoNothing({ target });
+            } else if (conflictOpt.resolution === 'update') {
+              const { id, ...newRec } = rec as Record<string, unknown>;
+              query.onConflictDoUpdate({ target, set: newRec as Insert });
+            } else {
+              const mergeSet = Array.reduce(Object.entries(rec), {} as Record<string, unknown>, (acc, [key, val]) => {
+                if (key === 'id') return acc;
+                const col = table[key as keyof A];
+                return col ? { ...acc, [key]: sql`COALESCE(${col}, ${sql`${val}`})` } : acc;
+              });
+              query.onConflictDoUpdate({ target, set: mergeSet as Insert });
+            }
+          }
+
+          const select = buildSelectClause(buildColumnCache(), options.select);
+          select ? query.returning(select) : query.returning();
+
+          trace.value = () => query.getSQL();
+          return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
+        },
+        catch: (cause) =>
+          new SqliteClientError({
+            message: cause instanceof Error ? cause.message : 'Insert operation failed',
+            cause,
+          }),
       }),
     );
 
@@ -451,7 +470,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         select ? query.returning(select) : query.returning();
 
         trace.value = () => query.getSQL();
-        return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
+        return yield* Effect.try({
+          try: () => query.all() as unknown as Array<ReturnAlias<A, B, S>>,
+          catch: (cause) =>
+            new SqliteClientError({
+              message: cause instanceof Error ? cause.message : 'Update operation failed',
+              cause,
+            }),
+        });
       }),
     );
 
@@ -472,7 +498,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         select ? query.returning(select) : query.returning();
 
         trace.value = () => query.getSQL();
-        return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
+        return yield* Effect.try({
+          try: () => query.all() as unknown as Array<ReturnAlias<A, B, S>>,
+          catch: (cause) =>
+            new SqliteClientError({
+              message: cause instanceof Error ? cause.message : 'Delete operation failed',
+              cause,
+            }),
+        });
       }),
     );
 

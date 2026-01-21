@@ -35,7 +35,7 @@ export class ClashConfigTag extends Context.Tag('@services/ClashConfig')<ClashCo
 export interface ClashClient {
   readonly client: Client;
   readonly events: PubSub.PubSub<ClashEvent>;
-  readonly addClans: (tags: readonly string[]) => Effect.Effect<void>;
+  readonly addClans: (tags: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly getClan: (tag: string) => Effect.Effect<Clan, ClashError>;
   readonly getPlayer: (tag: string) => Effect.Effect<Player, ClashError>;
 }
@@ -68,7 +68,7 @@ const makeClashClient = Effect.gen(function* () {
         );
       }
 
-      if (isErrorLike(cause) && ERROR_CODES.includes(cause.code)) {
+      if (isErrorLike<{ readonly code: string }>(cause) && ERROR_CODES.includes(cause.code)) {
         yield* waitForConnection();
         return yield* Effect.fail(
           new ClashError({
@@ -151,7 +151,7 @@ const makeClashClient = Effect.gen(function* () {
 
   const requestHandler = client.rest.requestHandler;
 
-  const getIpOrig = requestHandler['getIp'].bind(requestHandler) as (token: string) => Promise<void>;
+  const getIpOrig = requestHandler['getIp'].bind(requestHandler) as (token: string) => Promise<string>;
   requestHandler['getIp'] = (token: string) =>
     bridge.runPromise(
       Ref.get(ipRef).pipe(
@@ -167,44 +167,39 @@ const makeClashClient = Effect.gen(function* () {
   const requestOrig = requestHandler.request.bind(requestHandler);
   requestHandler.request = <T>(path: string, options: RequestOptions = {}) =>
     bridge.runPromise(
-      Ref.make(0).pipe(
-        Effect.flatMap((requestStateRef) =>
-          Effect.gen(function* () {
-            return yield* Effect.tryPromise({
-              try: () => requestOrig<T>(path, options),
-              catch: (cause) => cause,
-            }).pipe(
-              Effect.catchAll((cause) => handleRequestError(cause, requestStateRef)),
-              Effect.catchAllCause((cause) =>
-                Option.match(Cause.failureOption(cause), {
-                  onNone: () =>
-                    Effect.fail(
+      Effect.gen(function* () {
+        const requestStateRef = yield* Ref.make(0);
+        return yield* Effect.tryPromise({
+          try: () => requestOrig<T>(path, options),
+          catch: (cause) => cause,
+        }).pipe(
+          Effect.catchAll((cause) => handleRequestError(cause, requestStateRef)),
+          Effect.catchAllCause((cause) =>
+            Option.match(Cause.failureOption(cause), {
+              onNone: () =>
+                Effect.fail(
+                  new ClashError({
+                    message: 'Request failed',
+                    cause,
+                  }),
+                ),
+              onSome: (error) =>
+                error instanceof ClashError
+                  ? Effect.fail(error)
+                  : Effect.fail(
                       new ClashError({
                         message: 'Request failed',
-                        cause,
+                        cause: error,
                       }),
                     ),
-                  onSome: (error) =>
-                    error instanceof ClashError
-                      ? Effect.fail(error)
-                      : Effect.fail(
-                          new ClashError({
-                            message: 'Request failed',
-                            cause: error,
-                          }),
-                        ),
-                }),
-              ),
-            );
-          }).pipe(
-            Effect.retry({
-              while: (error) => error instanceof ClashError && error.status !== 503,
-              schedule: Schedule.spaced('10 seconds'),
             }),
           ),
-        ),
-        Effect.provideService(HttpClientTag, http),
-      ),
+          Effect.retry({
+            while: (error) => error instanceof ClashError && error.status !== 503,
+            schedule: Schedule.spaced('10 seconds'),
+          }),
+        );
+      }).pipe(Effect.provideService(HttpClientTag, http)),
     );
   const addClans = (tags: readonly string[]) =>
     Ref.update(clanTags, (set) => {

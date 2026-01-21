@@ -42,11 +42,7 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       );
     }
 
-    yield* Ref.update(linkQueueRef, (set) => {
-      const next = new Set(set);
-      next.add(message.author.id);
-      return next;
-    });
+    yield* Ref.update(linkQueueRef, (set) => new Set(set).add(message.author.id));
 
     yield* Effect.gen(function* () {
       const mentionId = parseMentionOrSnowflake(mention);
@@ -61,8 +57,8 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       if (!isAuthorized) return;
 
       const player = yield* clash.getPlayer(tag);
-      const embed = createPlayerEmbed(player);
-      const titleField = `${formatPlayerStats(player)}\n`;
+      const embed = yield* createPlayerEmbed(player);
+      const titleField = `${yield* formatPlayerStats(player)}\n`;
 
       const accountOpt = yield* accountDatabase.findOne({ tag });
       if (Option.isSome(accountOpt)) {

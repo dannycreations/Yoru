@@ -3,9 +3,13 @@ import { Array, Effect, Option } from 'effect';
 
 import { DiscordHandlerTag } from '../workflows/DiscordHandler';
 
-import type { EmbedBuilder, Guild, GuildMember, Role } from 'discord.js';
+import type { Guild, GuildMember, Role } from 'discord.js';
 
-export const addSplitFields = (embed: EmbedBuilder, name: string, list: readonly string[], separator = ' '): void => {
+export const getSplitFields = (
+  name: string,
+  list: readonly string[],
+  separator = ' ',
+): ReadonlyArray<{ readonly name: string; readonly value: string }> => {
   const { fields, currentValue, count } = Array.reduce(
     list,
     { fields: [] as Array<{ readonly name: string; readonly value: string }>, currentValue: '', count: 0 },
@@ -25,16 +29,14 @@ export const addSplitFields = (embed: EmbedBuilder, name: string, list: readonly
     },
   );
 
-  const allFields = currentValue ? [...fields, { name: count === 0 ? name : `${name} (cont.)`, value: currentValue }] : fields;
-  if (allFields.length > 0) {
-    embed.addFields(allFields);
-  }
+  return currentValue ? [...fields, { name: count === 0 ? name : `${name} (cont.)`, value: currentValue }] : fields;
 };
 
-export const removeMemberRoles = (member: GuildMember, filter: (role: Role) => boolean): Effect.Effect<void, Error> => {
-  const roles = member.roles.cache.filter(filter);
-  return roles.size > 0 ? Effect.tryPromise(() => member.roles.remove(roles)).pipe(Effect.asVoid) : Effect.void;
-};
+export const removeMemberRoles = (member: GuildMember, filter: (role: Role) => boolean): Effect.Effect<void, Error> =>
+  Effect.suspend(() => {
+    const roles = member.roles.cache.filter(filter);
+    return roles.size > 0 ? Effect.tryPromise(() => member.roles.remove(roles)).pipe(Effect.asVoid) : Effect.void;
+  });
 
 export const parseMentionOrSnowflake = (input?: string | null): string | null => {
   if (!input) return null;
@@ -71,5 +73,5 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
       { concurrency: 'inherit' },
     );
 
-    return Array.findFirst(results, Option.isSome).pipe(Option.flatten);
+    return Array.findFirst(results, (opt) => Option.isSome(opt)).pipe(Option.flatten);
   });

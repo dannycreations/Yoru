@@ -1,9 +1,10 @@
 import 'dotenv/config';
 
-import { Context, Effect, Layer, Logger } from 'effect';
+import { Effect, Layer, Logger } from 'effect';
 
+import { EmojiLayer } from './core/emojis';
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, SessionStoreLayer } from './core/schemas';
-import { AccountDatabaseLayer, SqliteConfigLayer, SqliteConfigTag, UserDatabaseLayer } from './database';
+import { AccountDatabaseLayer, SqliteConfigLayer, UserDatabaseLayer } from './database';
 import { ClashClientLayer, ClashClientTag, ClashConfigLayer } from './services/ClashService';
 import { SqliteClientLayer } from './structures/database';
 import { HttpClientLayer } from './structures/HttpClient';
@@ -32,22 +33,16 @@ const logger = makeLoggerClient();
 
 const BaseLayer = Layer.mergeAll(
   EnvLayer,
+  EmojiLayer,
   HttpClientLayer,
   ConfigStoreLayer,
   SessionStoreLayer,
-  UserDatabaseLayer,
-  AccountDatabaseLayer,
   LoggerClientLayer(Logger.defaultLogger, logger),
 ).pipe(
-  Layer.provideMerge(
-    Layer.unwrapEffect(
-      Effect.gen(function* () {
-        const context = yield* Layer.build(SqliteConfigLayer);
-        const config = Context.get(context, SqliteConfigTag);
-        return SqliteClientLayer(config);
-      }),
-    ),
-  ),
+  Layer.provideMerge(UserDatabaseLayer),
+  Layer.provideMerge(AccountDatabaseLayer),
+  Layer.provideMerge(SqliteClientLayer),
+  Layer.provideMerge(SqliteConfigLayer),
 );
 
 const MainLayer = EventHandlerLayer.pipe(

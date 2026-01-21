@@ -60,15 +60,15 @@ const makeDiscordClient = Effect.gen(function* () {
   yield* Ref.set(loginTimeoutRef, Option.some(timeoutFiber));
 
   const clearLoginTimeout = () =>
-    bridge.runFork(
-      Effect.gen(function* () {
-        const maybeFiber = yield* Ref.get(loginTimeoutRef);
-
-        if (Option.isSome(maybeFiber)) {
-          yield* Fiber.interrupt(maybeFiber.value);
-          yield* Ref.set(loginTimeoutRef, Option.none());
-        }
-      }),
+    bridge.runPromise(
+      Ref.get(loginTimeoutRef).pipe(
+        Effect.flatMap((maybeFiber) =>
+          Option.match(maybeFiber, {
+            onNone: () => Effect.void,
+            onSome: (fiber) => Effect.zipRight(Fiber.interrupt(fiber), Ref.set(loginTimeoutRef, Option.none())),
+          }),
+        ),
+      ),
     );
 
   client.once('ready', () => clearLoginTimeout());

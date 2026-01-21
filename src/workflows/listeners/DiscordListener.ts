@@ -8,9 +8,18 @@ import { DiscordHandlerTag } from '../DiscordHandler';
 
 import type { SapphireClient } from '@sapphire/framework';
 import type { Message } from 'discord.js';
+import type { ClashClientTag } from '../../services/ClashService';
+import type { SqliteClientTag } from '../../structures/database';
+import type { DiscordHandler } from '../DiscordHandler';
+import type { MemberHandlerTag } from '../MemberHandler';
 
 export const createDiscordListener = (
-  register: (client: SapphireClient, event: string, handler: (...args: any[]) => Effect.Effect<void, unknown, any>, once?: boolean) => void,
+  register: <Args extends readonly unknown[], R>(
+    client: SapphireClient,
+    event: string,
+    handler: (...args: Args) => Effect.Effect<void, unknown, R>,
+    once?: boolean,
+  ) => void,
 ) =>
   Effect.gen(function* () {
     const discordHandler = yield* DiscordHandlerTag;
@@ -44,7 +53,9 @@ export const createDiscordListener = (
         }
       });
 
-    const onMessageCreate = (message: Message): Effect.Effect<void, unknown, any> =>
+    const onMessageCreate = (
+      message: Message,
+    ): Effect.Effect<void, unknown, DiscordHandler | ConfigStoreTag | SqliteClientTag | ClashClientTag | MemberHandlerTag> =>
       Effect.gen(function* () {
         if (message.webhookId !== null || message.system || message.author.bot) return;
 

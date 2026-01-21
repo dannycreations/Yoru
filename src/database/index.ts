@@ -1,18 +1,14 @@
 import { resolve } from 'node:path';
 import { Config, Context, Effect, Layer } from 'effect';
 
-import { Adapter, makeSqliteConfig, SqliteClientTag } from '../structures/database';
+import { Adapter, makeSqliteConfig, SqliteClientTag, SqliteConfigTag } from '../structures/database';
 import { accountTable, userTable } from './schema';
-
-import type { SqliteOptions } from '../structures/database';
 
 const isDrizzleKit = process.argv.toString().includes('drizzle-kit');
 const projectDir = resolve(__dirname, '..', '..');
 
 const out = './migrations';
 const schema = './src/database/schema.ts';
-
-export class SqliteConfigTag extends Context.Tag('@database/SqliteConfig')<SqliteConfigTag, SqliteOptions>() {}
 
 export const SqliteConfigLayer = Layer.effect(
   SqliteConfigTag,

@@ -11,16 +11,16 @@ export const EventHandler = Effect.gen(function* () {
   const bridge = yield* makeRuntimeBridge;
   const scope = yield* Effect.scope;
 
-  const register = <Args extends readonly unknown[]>(
+  const register = <Args extends readonly unknown[], R>(
     emitter: {
       readonly on: (event: string, cb: (...args: Args) => void) => void;
       readonly once?: (event: string, cb: (...args: Args) => void) => void;
     },
     event: string,
-    handler: (...args: Args) => Effect.Effect<void, unknown, any>,
+    handler: (...args: Args) => Effect.Effect<void, unknown, R>,
     once = false,
   ): void => {
-    const cb = (...args: Args) =>
+    const cb = (...args: Args) => {
       bridge.runFork(
         handler(...args).pipe(
           Effect.provideService(Scope.Scope, scope),
@@ -28,6 +28,7 @@ export const EventHandler = Effect.gen(function* () {
         ),
         { name: event },
       );
+    };
 
     if (once && emitter.once) {
       emitter.once(event, cb);

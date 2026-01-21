@@ -2,11 +2,11 @@ import { Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
 import { Array, Effect, Either, Option, Record } from 'effect';
 
-import { emoji } from '../../core/emojis';
+import { EmojiTag } from '../../core/emojis';
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/ClashHelper';
-import { addSplitFields, getGuildMember, parseMentionOrSnowflake } from '../../helpers/DiscordHelper';
+import { getGuildMember, getSplitFields, parseMentionOrSnowflake } from '../../helpers/DiscordHelper';
 import { ClashClientTag } from '../../services/ClashService';
 import { MemberHandlerTag } from '../MemberHandler';
 
@@ -15,6 +15,7 @@ import type { AccountTable } from '../../database/schema';
 
 const checkProfile = (message: Message<true>, ownerId: string, accounts: ReadonlyArray<AccountTable>) =>
   Effect.gen(function* () {
+    const emoji = yield* EmojiTag;
     const memberHandler = yield* MemberHandlerTag;
     const memberOpt = yield* getGuildMember(ownerId, message.guild);
 
@@ -39,23 +40,31 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
       { concurrency: 'inherit' },
     );
 
-    const fields = Array.filterMap(results, (result, i) => {
-      if (Either.isLeft(result)) return Option.none();
-      const data = result.right;
-      const count = i + 1;
+    const fields = yield* Effect.all(
+      Array.map(results, (result, i) =>
+        Effect.gen(function* () {
+          if (Either.isLeft(result)) return Option.none();
+          const data = result.right;
+          const count = i + 1;
 
-      if (data.banned) {
-        return Option.some({
-          name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
-          value: '⛔ Has been banned!',
-        });
-      }
+          if (data.banned) {
+            return Option.some({
+              name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
+              value: '⛔ Has been banned!',
+            });
+          }
 
-      return Option.map(data.player, (player) => ({
-        name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
-        value: formatPlayerField(player),
-      }));
-    });
+          if (Option.isNone(data.player)) return Option.none();
+          const player = data.player.value;
+          const field = yield* formatPlayerField(player);
+          return Option.some({
+            name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
+            value: field,
+          });
+        }),
+      ),
+      { concurrency: 'inherit' },
+    ).pipe(Effect.map((arr) => Array.flatten(Array.map(arr, (o) => (Option.isSome(o) ? [o.value] : [])))));
 
     if (fields.length > 0) {
       embed.addFields([...fields]);
@@ -67,9 +76,10 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
 
 const checkPlayer = (message: Message<true>, tag: string) =>
   Effect.gen(function* () {
+    const emoji = yield* EmojiTag;
     const clash = yield* ClashClientTag;
     const player = yield* clash.getPlayer(tag);
-    const embed = createPlayerEmbed(player);
+    const embed = yield* createPlayerEmbed(player);
 
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
@@ -83,17 +93,17 @@ const checkPlayer = (message: Message<true>, tag: string) =>
       return `👤 ${member ? member.user.tag : userOpt.value.ownerId}\n`;
     });
 
-    const statsValue = `${isOwned}${formatPlayerStats(player)}`;
+    const statsValue = `${isOwned}${yield* formatPlayerStats(player)}`;
     embed.addFields({
       name: 'Profiles',
       value: statsValue,
     });
 
-    const { categories, unknowns } = categorizeUnits(player);
+    const { categories, unknowns } = yield* categorizeUnits(player);
 
     Array.forEach(Record.toEntries(categories), ([name, list]) => {
       if (list.length > 0) {
-        addSplitFields(embed, name, list);
+        embed.addFields([...getSplitFields(name, list)]);
       }
     });
 

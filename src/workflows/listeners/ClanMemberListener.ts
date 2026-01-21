@@ -105,7 +105,10 @@ export const createClanMemberListener = () =>
               yield* Effect.all(Array.map(toAdd, (m: ClanMemberTag) => Queue.offer(leavingQueue, m)));
               yield* sessionStore.update((s) => ({
                 ...s,
-                leavers: Array.flatten([s.leavers ?? [], Array.map(toAdd, (m: ClanMemberTag) => m.tag)]),
+                leavers: Array.appendAll(
+                  s.leavers ?? [],
+                  Array.map(toAdd, (m: ClanMemberTag) => m.tag),
+                ),
               }));
             }
           }

@@ -14,7 +14,7 @@ export class HttpClientError extends Data.TaggedError('HttpClientError')<{
   readonly cause?: unknown;
 }> {}
 
-export const ERROR_CODES: readonly string[] = [
+export const ERROR_CODES: ReadonlyArray<string> = [
   'EADDRINUSE',
   'EAI_AGAIN',
   'ECONNREFUSED',
@@ -28,7 +28,7 @@ export const ERROR_CODES: readonly string[] = [
   'UND_ERR_CONNECT_TIMEOUT',
 ];
 
-export const ERROR_STATUS_CODES: readonly number[] = [408, 413, 429, 500, 502, 503, 504, 521, 522, 524];
+export const ERROR_STATUS_CODES: ReadonlyArray<number> = [408, 413, 429, 500, 502, 503, 504, 521, 522, 524];
 
 export interface DefaultOptions extends Omit<Options, 'prefixUrl' | 'retry' | 'timeout' | 'resolveBodyOnly'> {
   readonly retry?: number;
@@ -41,7 +41,7 @@ export interface DefaultOptions extends Omit<Options, 'prefixUrl' | 'retry' | 't
 
 export interface HttpClient {
   readonly request: <T = string>(options: string | DefaultOptions) => Effect.Effect<Response<T>, HttpClientError>;
-  readonly waitForConnection: (total?: number) => Effect.Effect<void, never>;
+  readonly waitForConnection: (total?: number) => Effect.Effect<void>;
 }
 
 export class HttpClientTag extends Context.Tag('@structures/HttpClient')<HttpClientTag, HttpClient>() {}
@@ -121,7 +121,7 @@ const makeHttpClient = Effect.gen(function* () {
       );
     });
 
-  const waitForConnectionFn = (total?: number): Effect.Effect<void, never> => {
+  const waitForConnectionFn = (total?: number): Effect.Effect<void> => {
     const retryMs = total ?? 10_000;
 
     const checkGoogle = Effect.tryPromise({

@@ -1,6 +1,8 @@
-import { Data, Schema } from 'effect';
+import { Context, Data, Layer, Schema } from 'effect';
 
 import { EmojiSchema } from './schemas';
+
+export class EmojiTag extends Context.Tag('@core/Emoji')<EmojiTag, Emoji>() {}
 
 const emojiData = Data.struct({
   thumbnail: 'https://raw.githubusercontent.com/dannycreations/yoru/main/discord/emojis/{0}',
@@ -139,4 +141,4 @@ const emojiData = Data.struct({
 
 export type Emoji = Schema.Schema.Type<typeof EmojiSchema>;
 
-export const emoji: Emoji = Schema.decodeSync(EmojiSchema)(emojiData);
+export const EmojiLayer = Layer.effect(EmojiTag, Schema.decodeUnknown(EmojiSchema)(emojiData));

@@ -84,7 +84,7 @@ export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: 
         }),
       ),
       Effect.repeat(Schedule.forever),
-      Effect.asVoid,
+      Effect.ignore,
     );
 
     const fiber = runFork(cycle);

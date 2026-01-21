@@ -107,15 +107,15 @@ export const makeStoreClient = <A extends object, I, R>(
       ),
     );
 
-    const autoSaveLoop = Effect.gen(function* () {
-      const delay = yield* Ref.get(delayRef);
-      yield* Effect.sleep(`${Math.max(1000, delay)} millis`);
-      yield* save;
-    }).pipe(Effect.repeat(Schedule.forever));
+    yield* Effect.forkScoped(
+      Effect.gen(function* () {
+        const delay = yield* Ref.get(delayRef);
+        yield* Effect.sleep(`${Math.max(1000, delay)} millis`);
+        yield* save;
+      }).pipe(Effect.repeat(Schedule.forever)),
+    );
 
-    yield* Effect.forkScoped(autoSaveLoop);
-
-    yield* Effect.addFinalizer(() => save.pipe(Effect.catchAllCause(() => Effect.void)));
+    yield* Effect.addFinalizer(() => save.pipe(Effect.ignore));
 
     return {
       get: Ref.get(dataRef),

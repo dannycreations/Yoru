@@ -1,10 +1,11 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Client, HTTPError } from 'clashofclans.js';
-import { Cause, Chunk, Context, Data, Effect, Layer, Option, PubSub, Ref, Schedule } from 'effect';
+import { Array, Cause, Chunk, Context, Data, Effect, Layer, Option, PubSub, Ref, Schedule } from 'effect';
 
 import { ClientEvents } from '../core/constants';
+import { EnvTag } from '../core/schemas';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient';
-import { makeBridge } from '../structures/RuntimeClient';
+import { makeRuntimeBridge } from '../structures/RuntimeClient';
 
 import type { Clan, Player, RequestOptions } from 'clashofclans.js';
 
@@ -44,7 +45,7 @@ export class ClashClientTag extends Context.Tag('@services/Clash')<ClashClientTa
 const makeClashClient = Effect.gen(function* () {
   const http = yield* HttpClientTag;
   const config = yield* ClashConfigTag;
-  const bridge = yield* makeBridge;
+  const bridge = yield* makeRuntimeBridge;
 
   const client = new Client({ keys: [] });
 
@@ -90,7 +91,7 @@ const makeClashClient = Effect.gen(function* () {
           if (cause.reason === 'accessDenied.invalidIp') {
             client.rest.requestHandler['keys'].shift();
             const ipMatch = cause.message.match(/(\d{1,3}\.){3}\d+/);
-            yield* Ref.set(ipRef, ipMatch ? Option.some(ipMatch[0]) : Option.none());
+            yield* Ref.set(ipRef, Option.fromNullable(ipMatch?.[0]));
           }
 
           yield* Effect.tryPromise({
@@ -152,7 +153,7 @@ const makeClashClient = Effect.gen(function* () {
 
   const getIpOrig = requestHandler['getIp'].bind(requestHandler) as (token: string) => Promise<void>;
   requestHandler['getIp'] = (token: string) =>
-    bridge.promise(
+    bridge.runPromise(
       Ref.get(ipRef).pipe(
         Effect.flatMap((ipOpt) =>
           Option.match(ipOpt, {
@@ -165,40 +166,72 @@ const makeClashClient = Effect.gen(function* () {
 
   const requestOrig = requestHandler.request.bind(requestHandler);
   requestHandler.request = <T>(path: string, options: RequestOptions = {}) =>
-    bridge.promise(
+    bridge.runPromise(
       Ref.make(0).pipe(
         Effect.flatMap((requestStateRef) =>
           Effect.gen(function* () {
             return yield* Effect.tryPromise({
               try: () => requestOrig<T>(path, options),
-              catch: (error) => error,
+              catch: (cause) => cause,
             }).pipe(
-              Effect.catchAll((error) => handleRequestError(error, requestStateRef)),
+              Effect.catchAll((cause) => handleRequestError(cause, requestStateRef)),
               Effect.catchAllCause((cause) =>
-                Effect.gen(function* () {
-                  const error = Cause.failureOption(cause);
-                  if (Option.isSome(error) && error.value instanceof ClashError) {
-                    return yield* Effect.fail(error.value);
-                  }
-                  return yield* Effect.fail(
-                    new ClashError({
-                      message: 'Request failed',
-                      cause,
-                    }),
-                  );
+                Option.match(Cause.failureOption(cause), {
+                  onNone: () =>
+                    Effect.fail(
+                      new ClashError({
+                        message: 'Request failed',
+                        cause,
+                      }),
+                    ),
+                  onSome: (error) =>
+                    error instanceof ClashError
+                      ? Effect.fail(error)
+                      : Effect.fail(
+                          new ClashError({
+                            message: 'Request failed',
+                            cause: error,
+                          }),
+                        ),
                 }),
               ),
             );
           }).pipe(
             Effect.retry({
               while: (error) => error instanceof ClashError && error.status !== 503,
-              schedule: Schedule.spaced('10 seconds').pipe(Schedule.compose(Schedule.recurs(3))),
+              schedule: Schedule.spaced('10 seconds'),
             }),
           ),
         ),
         Effect.provideService(HttpClientTag, http),
       ),
     );
+  const addClans = (tags: readonly string[]) =>
+    Ref.update(clanTags, (set) => {
+      const next = new Set(set);
+      Array.forEach(tags, (tag) => next.add(tag));
+      return next;
+    });
+
+  const getClan = (tag: string) =>
+    Effect.tryPromise({
+      try: () => client.getClan(tag),
+      catch: (cause) =>
+        new ClashError({
+          message: `Failed to fetch clan ${tag}`,
+          cause,
+        }),
+    });
+
+  const getPlayer = (tag: string) =>
+    Effect.tryPromise({
+      try: () => client.getPlayer(tag),
+      catch: (cause) =>
+        new ClashError({
+          message: `Failed to fetch player ${tag}`,
+          cause,
+        }),
+    });
 
   yield* Effect.gen(function* () {
     const tags = yield* Ref.get(clanTags);
@@ -207,26 +240,24 @@ const makeClashClient = Effect.gen(function* () {
     const updates = yield* Effect.forEach(
       tags,
       (tag) =>
-        Effect.gen(function* () {
-          const newClan = yield* Effect.tryPromise({
-            try: () => client.getClan(tag),
-            catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
-
-          if (!newClan) return Option.none();
-
-          const oldClan = cache.get(tag);
-          if (oldClan) {
-            yield* PubSub.publish(events, {
-              _tag: ClientEvents.ClanMember,
-              oldClan,
-              newClan,
-            });
-          }
-
-          return Option.some({ tag, newClan });
-        }),
-      { concurrency: 'unbounded' },
+        getClan(tag).pipe(
+          Effect.matchEffect({
+            onFailure: () => Effect.succeed(Option.none()),
+            onSuccess: (newClan) =>
+              Effect.gen(function* () {
+                const oldClan = cache.get(tag);
+                if (oldClan) {
+                  yield* PubSub.publish(events, {
+                    _tag: ClientEvents.ClanMember,
+                    oldClan,
+                    newClan,
+                  });
+                }
+                return Option.some({ tag, newClan });
+              }),
+          }),
+        ),
+      { concurrency: 'inherit' },
     ).pipe(Effect.map((arr) => Chunk.compact(Chunk.fromIterable(arr))));
 
     yield* Ref.update(clanCache, (prev) =>
@@ -238,39 +269,8 @@ const makeClashClient = Effect.gen(function* () {
   }).pipe(
     Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
     Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),
-    Effect.fork,
+    Effect.forkScoped,
   );
-
-  const addClans = (tags: readonly string[]) =>
-    Ref.update(clanTags, (set) => {
-      const next = new Set(set);
-      tags.forEach((tag) => next.add(tag));
-      return next;
-    });
-
-  const getClan = (tag: string) =>
-    Effect.tryPromise({
-      try: () => client.getClan(tag),
-      catch: (cause) =>
-        cause instanceof ClashError
-          ? cause
-          : new ClashError({
-              message: `Failed to fetch clan ${tag}`,
-              cause,
-            }),
-    });
-
-  const getPlayer = (tag: string) =>
-    Effect.tryPromise({
-      try: () => client.getPlayer(tag),
-      catch: (cause) =>
-        cause instanceof ClashError
-          ? cause
-          : new ClashError({
-              message: `Failed to fetch player ${tag}`,
-              cause,
-            }),
-    });
 
   return {
     client,
@@ -282,3 +282,14 @@ const makeClashClient = Effect.gen(function* () {
 });
 
 export const ClashClientLayer = Layer.scoped(ClashClientTag, makeClashClient);
+
+export const ClashConfigLayer = Layer.effect(
+  ClashConfigTag,
+  Effect.gen(function* () {
+    const env = yield* EnvTag;
+    return {
+      email: env.CLASH_EMAIL,
+      password: env.CLASH_PASSWORD,
+    };
+  }),
+);

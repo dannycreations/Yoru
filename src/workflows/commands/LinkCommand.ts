@@ -1,5 +1,5 @@
 import { Util } from 'clashofclans.js';
-import { Effect, Option, Ref } from 'effect';
+import { Array, Effect, Option, Ref } from 'effect';
 
 import { ConfigStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
@@ -33,13 +33,13 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
     const mention = args[1];
 
     if (tag === undefined || !Util.isValidTag(tag)) {
-      yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nError, Player tag not valid!`));
-      return;
+      return yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nError, Player tag not valid!`)).pipe(Effect.asVoid);
     }
 
     if (linkQueue.has(message.author.id)) {
-      yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nYou must complete previous operation before create new one.`));
-      return;
+      return yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nYou must complete previous operation before create new one.`)).pipe(
+        Effect.asVoid,
+      );
     }
 
     yield* Ref.update(linkQueueRef, (set) => {
@@ -57,7 +57,7 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
 
       const configStore = yield* ConfigStoreTag;
       const config = yield* configStore.get;
-      const isAuthorized = config.ownerIds.includes(message.author.id) || (message.member?.roles.cache.some(isModeratorRole) ?? false);
+      const isAuthorized = Array.contains(config.ownerIds, message.author.id) || (message.member?.roles.cache.some(isModeratorRole) ?? false);
       if (!isAuthorized) return;
 
       const player = yield* clash.getPlayer(tag);
@@ -67,7 +67,7 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       const accountOpt = yield* accountDatabase.findOne({ tag });
       if (Option.isSome(accountOpt)) {
         const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
-        const user = Option.getOrNull(userOpt);
+        const user = Option.getOrUndefined(userOpt);
         const member = message.guild.members.cache.get(user?.ownerId ?? '');
 
         if (user && user.ownerId === mentionId) {
@@ -101,9 +101,10 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
 
       if (collected?.first()?.emoji.name === '✅') {
         const userOpt = yield* userDatabase.findOneAndUpdate({ ownerId: mentionId }, { ownerId: mentionId }, { upsert: true });
-        if (Option.isSome(userOpt)) {
-          yield* accountDatabase.findOneAndUpdate({ tag }, { tag, userId: userOpt.value.id }, { upsert: true });
-        }
+        yield* Option.match(userOpt, {
+          onNone: () => Effect.void,
+          onSome: (user) => accountDatabase.findOneAndUpdate({ tag }, { tag, userId: user.id }, { upsert: true }),
+        });
         yield* linkedTag(message.guild, mentionId, player);
         const member = message.guild.members.cache.get(mentionId);
         embed.setDescription(`${titleField}Linked to **${member?.user.tag ?? mentionId}**.`);

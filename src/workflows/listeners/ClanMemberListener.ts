@@ -34,16 +34,18 @@ export const createClanMemberListener = () =>
         const cleanupLeaver = (tags: ReadonlyArray<string>) =>
           sessionStore.update((s) => ({
             ...s,
-            leavers: (s.leavers ?? []).filter((t) => !tags.includes(t)),
+            leavers: Array.filter(s.leavers ?? [], (t) => !Array.contains(tags, t)),
           }));
 
         const accountOpt = yield* accountDatabase.findOne({ tag: player.tag });
-        if (Option.isNone(accountOpt) || !accountOpt.value.userId) {
+        const userId = Option.flatMap(accountOpt, (acc) => Option.fromNullable(acc.userId));
+
+        if (Option.isNone(userId)) {
           yield* cleanupLeaver([player.tag]);
           return;
         }
 
-        const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
+        const userOpt = yield* userDatabase.findOne({ id: userId.value });
         if (Option.isNone(userOpt)) {
           yield* cleanupLeaver([player.tag]);
           return;
@@ -60,24 +62,25 @@ export const createClanMemberListener = () =>
         }
       });
 
-    yield* Effect.fork(
-      Effect.forever(
-        Effect.gen(function* () {
-          const player = yield* Queue.take(leavingQueue);
-          yield* handleMemberLeave(player).pipe(
-            Effect.catchAllCause((cause) => Effect.logError(`Error processing leaving member ${player.tag}`, cause)),
-          );
-        }),
-      ),
-    );
+    yield* Effect.forever(
+      Effect.gen(function* () {
+        const player = yield* Queue.take(leavingQueue);
+        yield* handleMemberLeave(player).pipe(
+          Effect.catchAllCause((cause) => Effect.logError(`Error processing leaving member ${player.tag}`, cause)),
+        );
+      }),
+    ).pipe(Effect.forkScoped);
 
     const onClanMemberUpdate = (oldClan: ClanData, newClan: ClanData) =>
       updateSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const session = yield* sessionStore.get;
           const clans = session.clans ?? [];
-          if (!clans.some((r) => r.tag === oldClan.tag)) {
-            yield* sessionStore.update((s) => ({ ...s, clans: [...(s.clans ?? []), { name: oldClan.name, tag: oldClan.tag }] }));
+          if (!Array.some(clans, (r) => r.tag === oldClan.tag)) {
+            yield* sessionStore.update((s) => ({
+              ...s,
+              clans: Array.append(s.clans ?? [], { name: oldClan.name, tag: oldClan.tag }),
+            }));
           }
 
           const clanStores = yield* Ref.get(clanStoresRef);
@@ -96,13 +99,13 @@ export const createClanMemberListener = () =>
           if (leftMembers.length > 0) {
             const session = yield* sessionStore.get;
             const currentPending = new Set(session.leavers ?? []);
-            const toAdd = leftMembers.filter((m: ClanMemberTag) => !currentPending.has(m.tag));
+            const toAdd = Array.filter(leftMembers, (m: ClanMemberTag) => !currentPending.has(m.tag));
 
             if (toAdd.length > 0) {
               yield* Effect.all(Array.map(toAdd, (m: ClanMemberTag) => Queue.offer(leavingQueue, m)));
               yield* sessionStore.update((s) => ({
                 ...s,
-                leavers: [...(s.leavers ?? []), ...Array.map(toAdd, (m: ClanMemberTag) => m.tag)],
+                leavers: Array.flatten([s.leavers ?? [], Array.map(toAdd, (m: ClanMemberTag) => m.tag)]),
               }));
             }
           }
@@ -126,11 +129,11 @@ export const createClanMemberListener = () =>
                     );
                   }
                 }),
-              { concurrency: 'unbounded' },
+              { concurrency: 'inherit' },
             );
           }),
         ),
       ),
-      Effect.fork,
+      Effect.forkScoped,
     );
   });

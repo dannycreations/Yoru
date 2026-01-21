@@ -21,7 +21,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { Array, Context, Data, Effect, Option } from 'effect';
+import { Array, Cause, Context, Data, Effect, Option } from 'effect';
 
 import type { SQL, Table } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -111,13 +111,18 @@ export interface Adapter<A extends Table, Select extends InferSelect<A> = InferS
 
 const hasKeys = (obj?: object | null): obj is object => (obj == null ? false : Object.keys(obj).length > 0);
 
-const withTrace = <A>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => A) => {
+const withTrace = <A, E, R>(
+  fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, SqliteClientError | E, SqliteClientTag | R> => {
   const trace: { value?: () => SQL } = {};
-  return Effect.gen(function* () {
-    const db = yield* SqliteClientTag;
-    return yield* Effect.try({
-      try: () => fn(db, trace),
-      catch: (cause) => {
+  return Effect.flatMap(SqliteClientTag, (db) =>
+    fn(db, trace).pipe(
+      Effect.catchAllCause((cause): Effect.Effect<never, SqliteClientError | E> => {
+        const failure = Cause.failureOption(cause);
+        if (Option.isSome(failure) && failure.value instanceof SqliteClientError) {
+          return Effect.failCause(cause);
+        }
+
         let query: unknown;
         if (trace.value) {
           try {
@@ -125,14 +130,23 @@ const withTrace = <A>(fn: (db: BetterSQLite3Database, trace: { value?: () => SQL
             query = db.dialect.sqlToQuery(trace.value());
           } catch {}
         }
-        return new SqliteClientError({
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-          query,
-        });
-      },
-    });
-  });
+
+        const defect = Cause.dieOption(cause);
+        const error = Option.orElse(failure, () => defect).pipe(
+          Option.map((f) => (f instanceof Error ? f.message : String(f))),
+          Option.getOrElse(() => 'Unknown database error'),
+        );
+
+        return Effect.fail(
+          new SqliteClientError({
+            message: error,
+            cause,
+            query,
+          }),
+        );
+      }),
+    ),
+  );
 };
 
 export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>>(
@@ -148,8 +162,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       return table as unknown as Record<string, unknown>;
     }
 
-    const cache = Array.reduceRight(joins, {} as Record<string, unknown>, (acc, join) => Object.assign(acc, join.table));
-    return Object.assign(cache, table);
+    const cache = Array.reduceRight(joins, {} as Record<string, unknown>, (acc, join) => ({ ...acc, ...join.table }));
+    return { ...cache, ...table };
   };
 
   const buildWhereComparison = (key: unknown, val: unknown): ReadonlyArray<SQL> => {
@@ -164,23 +178,23 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return Array.reduce(Object.entries(val as Record<string, unknown>), [] as ReadonlyArray<SQL>, (acc, [operator, operand]) => {
       if (operator === '$not') {
         const negated = buildWhereComparison(key, operand);
-        return negated.length > 0 ? [...acc, not(and(...negated)!)] : acc;
+        return negated.length > 0 ? Array.append(acc, not(and(...negated)!)) : acc;
       }
 
       if (operand === null && !['$eq', '$ne', '$null'].includes(operator)) {
-        return [...acc, sql`0`];
+        return Array.append(acc, sql`0`);
       }
 
       if (operator === '$eq' && operand === null) {
-        return [...acc, isNull(column)];
+        return Array.append(acc, isNull(column));
       }
 
       if (operator === '$ne' && operand === null) {
-        return [...acc, isNotNull(column)];
+        return Array.append(acc, isNotNull(column));
       }
 
       const handler = OPERATOR_MAP[operator];
-      return [...acc, handler ? handler(column, operand as SQL) : sql`0`];
+      return Array.append(acc, handler ? handler(column, operand as SQL) : sql`0`);
     });
   };
 
@@ -191,19 +205,19 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         const isPositive = key === '$and' || key === '$nor';
 
         if (nested.length === 0) {
-          return [...acc, sql.raw(isPositive ? '1' : '0')];
+          return Array.append(acc, sql.raw(isPositive ? '1' : '0'));
         }
 
         const joined = key === '$and' || key === '$nand' ? and(...nested) : or(...nested);
-        return [...acc, ['$nand', '$nor'].includes(key) ? not(joined!) : joined!];
+        return Array.append(acc, ['$nand', '$nor'].includes(key) ? not(joined!) : joined!);
       }
 
       if (key === '$not') {
         const conds = isObjectLike(value) && !Array.isArray(value) ? buildWhereLogical(value as QueryFilter<A>) : buildWhereComparison(key, value);
-        return conds.length > 0 ? [...acc, not(and(...conds)!)] : acc;
+        return conds.length > 0 ? Array.append(acc, not(and(...conds)!)) : acc;
       }
 
-      return [...acc, ...buildWhereComparison(key, value)];
+      return Array.appendAll(acc, buildWhereComparison(key, value));
     });
 
   const buildWhereClause = (filter?: QueryFilter<A>): SQL | undefined => {
@@ -220,7 +234,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
 
     const clauses = Array.reduce(Object.entries(order as Record<string, string>), [] as SQL[], (acc, [key, direction]) => {
       const column = columnCache[key] as SQL;
-      return column ? [...acc, direction?.toLowerCase() === 'desc' ? desc(column) : asc(column)] : acc;
+      return column ? Array.append(acc, direction?.toLowerCase() === 'desc' ? desc(column) : asc(column)) : acc;
     });
 
     return clauses.length === 0 ? undefined : (sql.join(clauses, sql.raw(', ')) as unknown as SQL);
@@ -242,72 +256,79 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return hasKeys(columns) ? (columns as InferColumn<A>) : undefined;
   };
 
-  const count = (filter: QueryFilter<A> = {}) =>
-    withTrace((db, trace) => {
-      const query = db.select({ count: countSql() }).from(table);
-      query.where(buildWhereClause(filter));
+  const count = (filter: QueryFilter<A> = {}): Effect.Effect<number, SqliteClientError, SqliteClientTag> =>
+    withTrace((db, trace) =>
+      Effect.sync(() => {
+        const query = db.select({ count: countSql() }).from(table);
+        query.where(buildWhereClause(filter));
 
-      trace.value = () => query.getSQL();
-      return query.get()?.count ?? 0;
-    });
+        trace.value = () => query.getSQL();
+        return query.get()?.count ?? 0;
+      }),
+    );
 
   const find = <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter: QueryFilter<A> = {},
     options: QueryOptions<A, ExtractTables<J>, S, J> = {},
-  ) =>
-    withTrace((db, trace) => {
-      const columnCache = buildColumnCache(options.joins);
-      const select = buildSelectClause(columnCache, options.select);
-      const query = select ? db.select(select).from(table) : db.select().from(table);
-      if (hasKeys(options.joins)) {
-        Array.forEach(options.joins, (join) => {
-          if (!hasKeys(join)) return;
+  ): Effect.Effect<Array<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError, SqliteClientTag> =>
+    withTrace((db, trace) =>
+      Effect.gen(function* () {
+        const columnCache = buildColumnCache(options.joins);
+        const select = buildSelectClause(columnCache, options.select);
+        const query = select ? db.select(select).from(table) : db.select().from(table);
+        if (hasKeys(options.joins)) {
+          yield* Effect.forEach(options.joins, (join) =>
+            Effect.gen(function* () {
+              if (!hasKeys(join)) return;
 
-          const isCrossJoin = join.type === 'cross';
-          if (!(isCrossJoin || (join.on && hasKeys(join.on)))) {
-            throw new Error(`Join conditions (on) must be specified for join type "${join.type}"`);
-          }
-
-          if (isCrossJoin) {
-            query.crossJoin(join.table);
-          } else {
-            const conds = Object.entries(join.on as Record<string, string>).map(([leftKey, rightKey]) => {
-              const leftCol = table[leftKey as keyof A];
-              const rightCol = (join.table as unknown as Record<string, unknown>)[rightKey!];
-              if (!(leftCol && rightCol)) {
-                throw new Error(`Invalid join keys: ${leftKey}, ${rightKey}`);
+              const isCrossJoin = join.type === 'cross';
+              if (!(isCrossJoin || (join.on && hasKeys(join.on)))) {
+                return yield* Effect.die(new Error(`Join conditions (on) must be specified for join type "${join.type}"`));
               }
-              return sql`${leftCol} = ${rightCol as SQL}`;
-            });
 
-            const joinMethod = JOIN_MAP[join.type as keyof typeof JOIN_MAP] ?? 'innerJoin';
-            query[joinMethod](join.table, sql`(${sql.join(conds, sql.raw(' AND '))})`);
-          }
-        });
-      }
+              if (isCrossJoin) {
+                query.crossJoin(join.table);
+              } else {
+                const conds = yield* Effect.forEach(Object.entries(join.on as Record<string, string>), ([leftKey, rightKey]) => {
+                  const leftCol = table[leftKey as keyof A];
+                  const rightCol = (join.table as unknown as Record<string, unknown>)[rightKey!];
+                  if (!(leftCol && rightCol)) {
+                    return Effect.die(new Error(`Invalid join keys: ${leftKey}, ${rightKey}`));
+                  }
+                  return Effect.succeed(sql`${leftCol} = ${rightCol as SQL}`);
+                });
 
-      query.where(buildWhereClause(filter));
-      const orderClause = buildOrderClause(columnCache, options.order);
-      if (orderClause) {
-        query.orderBy(orderClause);
-      }
+                const joinMethod = JOIN_MAP[join.type as keyof typeof JOIN_MAP] ?? 'innerJoin';
+                query[joinMethod](join.table, sql`(${sql.join(conds, sql.raw(' AND '))})`);
+              }
+            }),
+          );
+        }
 
-      if (typeof options.limit === 'number') {
-        query.limit(options.limit);
-      }
+        query.where(buildWhereClause(filter));
+        const orderClause = buildOrderClause(columnCache, options.order);
+        if (orderClause) {
+          query.orderBy(orderClause);
+        }
 
-      if (typeof options.offset === 'number') {
-        query.offset(options.offset);
-      }
+        if (typeof options.limit === 'number') {
+          query.limit(options.limit);
+        }
 
-      trace.value = () => query.getSQL();
-      return query.all() as unknown as Array<ReturnAlias<A, ExtractTables<J>, S, J>>;
-    });
+        if (typeof options.offset === 'number') {
+          query.offset(options.offset);
+        }
+
+        trace.value = () => query.getSQL();
+        return query.all() as unknown as Array<ReturnAlias<A, ExtractTables<J>, S, J>>;
+      }),
+    );
 
   const findOne = <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter: QueryFilter<A> = {},
     options: Omit<QueryOptions<A, ExtractTables<J>, S, J>, 'limit'> = {},
-  ) => Effect.map(find(filter, { ...options, limit: 1 }), (r) => Option.fromNullable(r[0]));
+  ): Effect.Effect<Option.Option<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError, SqliteClientTag> =>
+    Effect.map(find(filter, { ...options, limit: 1 }), (arr) => Array.head(arr));
 
   const findOneAndUpdate = ((
     filter: Partial<InferSelect<A>> | QueryFilter<A>,
@@ -331,14 +352,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         }
 
         // @ts-expect-error Avoid extensive casting.
-        const s = yield* insert({ ...filter, ...data }, options);
+        const s: Array<any> = yield* insert({ ...filter, ...data }, options);
         return Option.fromNullable(s[0]);
       }
 
       if (Option.isSome(rOpt)) {
         const r = rOpt.value;
         // @ts-expect-error Avoid extensive casting.
-        const s = yield* update({ ...r, ...data }, options);
+        const s: Array<any> = yield* update({ ...r, ...data }, options);
         return Option.fromNullable(s[0]);
       }
 
@@ -352,7 +373,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     Effect.gen(function* () {
       const rOpt = yield* findOne(filter, { ...options, select: undefined });
       if (Option.isNone(rOpt)) return Option.none();
-      const s = yield* deleteFn(rOpt.value as unknown as Select, options);
+      const s: Array<any> = yield* deleteFn((rOpt as Option.Some<any>).value as unknown as Select, options);
       return Option.fromNullable(s[0]) as Option.Option<ReturnAlias<A, B, S>>;
     });
 
@@ -365,95 +386,95 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         set?: { [K in keyof Omit<Insert, 'id'>]?: Insert[K] | SQL<A> };
       };
     } = {},
-  ) =>
-    withTrace((db, trace) => {
-      const input = Array.isArray(record) ? record : [record];
-      const values = Array.filterMap(input, (rec) => {
-        if (!hasKeys(rec)) return Option.none();
-        const { id, ...newRec } = rec as Record<string, unknown>;
-        return Option.some(newRec as Insert);
-      });
-
-      if (values.length === 0) {
-        return [];
-      }
-
-      const query = db.insert(table).values(values);
-
-      const conflictOpt = options.conflict;
-      if (hasKeys(conflictOpt)) {
-        const target = conflictOpt.target.map((r) => {
-          const col = table[r as keyof A];
-          if (!col) {
-            throw new Error(`Conflict target column "${String(r)}" not found in table "${getTableName(table)}"`);
-          }
-          return col as unknown as SQL;
+  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag> =>
+    withTrace((db, trace) =>
+      Effect.sync(() => {
+        const input = Array.isArray(record) ? record : [record];
+        const values = Array.filterMap(input, (rec) => {
+          if (!hasKeys(rec)) return Option.none();
+          const { id, ...newRec } = rec as Record<string, unknown>;
+          return Option.some(newRec as Insert);
         });
 
-        const rec = (hasKeys(conflictOpt.set) ? conflictOpt.set : values[0]) as Record<string, unknown>;
-
-        if (conflictOpt.resolution === 'ignore') {
-          query.onConflictDoNothing({ target });
-        } else if (conflictOpt.resolution === 'update') {
-          const { id, ...newRec } = rec as Record<string, unknown>;
-          query.onConflictDoUpdate({ target, set: newRec as Insert });
-        } else {
-          const mergeSet = Array.reduce(Object.entries(rec), {} as Record<string, unknown>, (acc, [key, val]) => {
-            if (key === 'id') return acc;
-            const col = table[key as keyof A];
-            if (!col) {
-              throw new Error(`Conflict set column "${key}" not found in table "${getTableName(table)}"`);
-            }
-            return { ...acc, [key]: sql`COALESCE(${col}, ${sql`${val}`})` };
-          });
-          query.onConflictDoUpdate({ target, set: mergeSet as Insert });
+        if (values.length === 0) {
+          return [];
         }
-      }
 
-      const select = buildSelectClause(buildColumnCache(), options.select);
-      select ? query.returning(select) : query.returning();
+        const query = db.insert(table).values(values);
 
-      trace.value = () => query.getSQL();
-      return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
-    });
+        const conflictOpt = options.conflict;
+        if (hasKeys(conflictOpt)) {
+          const target = Array.filterMap(conflictOpt.target, (r) => {
+            const col = table[r as keyof A];
+            return col ? Option.some(col as unknown as SQL) : Option.none();
+          });
+
+          const rec = (hasKeys(conflictOpt.set) ? conflictOpt.set : values[0]) as Record<string, unknown>;
+
+          if (conflictOpt.resolution === 'ignore') {
+            query.onConflictDoNothing({ target });
+          } else if (conflictOpt.resolution === 'update') {
+            const { id, ...newRec } = rec as Record<string, unknown>;
+            query.onConflictDoUpdate({ target, set: newRec as Insert });
+          } else {
+            const mergeSet = Array.reduce(Object.entries(rec), {} as Record<string, unknown>, (acc, [key, val]) => {
+              if (key === 'id') return acc;
+              const col = table[key as keyof A];
+              return col ? { ...acc, [key]: sql`COALESCE(${col}, ${sql`${val}`})` } : acc;
+            });
+            query.onConflictDoUpdate({ target, set: mergeSet as Insert });
+          }
+        }
+
+        const select = buildSelectClause(buildColumnCache(), options.select);
+        select ? query.returning(select) : query.returning();
+
+        trace.value = () => query.getSQL();
+        return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
+      }),
+    );
 
   const update = <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     record: Select,
     options: Pick<QueryOptions<A, B, S, unknown>, 'select'> = {},
-  ) =>
-    withTrace((db, trace) => {
-      if (record?.id == null) {
-        throw new Error('Missing required "id" for update operation');
-      }
+  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag> =>
+    withTrace((db, trace) =>
+      Effect.gen(function* () {
+        if (record?.id == null) {
+          return yield* Effect.die(new Error('Missing required "id" for update operation'));
+        }
 
-      const query = db.update(table).set(record);
-      query.where(buildWhereClause({ id: record.id } as unknown as QueryFilter<A>));
+        const query = db.update(table).set(record);
+        query.where(buildWhereClause({ id: record.id } as unknown as QueryFilter<A>));
 
-      const select = buildSelectClause(buildColumnCache(), options.select);
-      select ? query.returning(select) : query.returning();
+        const select = buildSelectClause(buildColumnCache(), options.select);
+        select ? query.returning(select) : query.returning();
 
-      trace.value = () => query.getSQL();
-      return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
-    });
+        trace.value = () => query.getSQL();
+        return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
+      }),
+    );
 
   const deleteFn = <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     record: Select,
     options: Pick<QueryOptions<A, B, S, unknown>, 'select'> = {},
-  ) =>
-    withTrace((db, trace) => {
-      if (record?.id == null) {
-        throw new Error('Missing required "id" for delete operation');
-      }
+  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag> =>
+    withTrace((db, trace) =>
+      Effect.gen(function* () {
+        if (record?.id == null) {
+          return yield* Effect.die(new Error('Missing required "id" for delete operation'));
+        }
 
-      const query = db.delete(table);
-      query.where(buildWhereClause({ id: record.id } as unknown as QueryFilter<A>));
+        const query = db.delete(table);
+        query.where(buildWhereClause({ id: record.id } as unknown as QueryFilter<A>));
 
-      const select = buildSelectClause(buildColumnCache(), options.select);
-      select ? query.returning(select) : query.returning();
+        const select = buildSelectClause(buildColumnCache(), options.select);
+        select ? query.returning(select) : query.returning();
 
-      trace.value = () => query.getSQL();
-      return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
-    });
+        trace.value = () => query.getSQL();
+        return query.all() as unknown as Array<ReturnAlias<A, B, S>>;
+      }),
+    );
 
   return {
     count,

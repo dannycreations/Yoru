@@ -1,6 +1,6 @@
 import { Events } from '@sapphire/framework';
 import { ActivityType } from 'discord.js';
-import { Effect } from 'effect';
+import { Array, Effect } from 'effect';
 
 import { ConfigStoreTag } from '../../core/schemas';
 import { CommandHandlerTag } from '../CommandHandler';
@@ -49,7 +49,7 @@ export const createDiscordListener = (
         if (message.webhookId !== null || message.system || message.author.bot) return;
 
         const config = yield* configStore.get;
-        if (discordHandler.isMaintenance && !config.ownerIds.includes(message.author.id)) {
+        if (discordHandler.isMaintenance && !Array.contains(config.ownerIds, message.author.id)) {
           yield* Effect.tryPromise(() => message.reply('⚠️ Under Maintenance!')).pipe(Effect.ignore);
           return;
         }

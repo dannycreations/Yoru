@@ -53,22 +53,23 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
 
     const { client } = yield* DiscordHandlerTag;
 
-    const guilds = globalThis.Array.from(client.guilds.cache.values());
+    const guilds = Array.fromIterable(client.guilds.cache.values());
 
-    const cachedMember = guilds.find((g) => g.members.cache.has(userId))?.members.cache.get(userId);
-    if (cachedMember) {
-      return Option.some(cachedMember);
+    const cachedMember = Array.findFirst(guilds, (g) => g.members.cache.has(userId)).pipe(Option.map((g) => g.members.cache.get(userId)!));
+
+    if (Option.isSome(cachedMember)) {
+      return cachedMember;
     }
 
     const results = yield* Effect.all(
-      guilds.map((g) =>
+      Array.map(guilds, (g) =>
         Effect.tryPromise(() => g.members.fetch(userId)).pipe(
-          Effect.map(Option.some),
+          Effect.option,
           Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())),
         ),
       ),
-      { concurrency: 'unbounded' },
+      { concurrency: 'inherit' },
     );
 
-    return results.find(Option.isSome) ?? Option.none<GuildMember>();
+    return Array.findFirst(results, Option.isSome).pipe(Option.flatten);
   });

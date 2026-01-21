@@ -56,30 +56,34 @@ export const makeSqliteConfig = (options: Partial<SqliteOptions> = {}): SqliteOp
 export const SqliteClientLayer = (options: SqliteOptions): Layer.Layer<SqliteClientTag, SqliteClientError, never> =>
   Layer.scoped(
     SqliteClientTag,
-    Effect.acquireRelease(
-      Effect.try({
-        try: () => {
-          const client = new Database(options.dbCredentials.url);
-          client.pragma('foreign_keys = ON');
-          client.pragma('journal_mode = WAL');
+    Effect.gen(function* () {
+      const { db } = yield* Effect.acquireRelease(
+        Effect.try({
+          try: () => {
+            const client = new Database(options.dbCredentials.url);
+            client.pragma('foreign_keys = ON');
+            client.pragma('journal_mode = WAL');
 
-          const db = drizzle(client, {
-            casing: options.casing,
-            logger: options.logger,
-          });
+            const db = drizzle(client, {
+              casing: options.casing,
+              logger: options.logger,
+            });
 
-          // @ts-expect-error Internal drizzle access.
-          patchDialect(db.dialect);
+            // @ts-expect-error Internal drizzle access.
+            patchDialect(db.dialect);
 
-          migrate(db, { migrationsFolder: options.out });
-          return { db, client };
-        },
-        catch: (cause) =>
-          new SqliteClientError({
-            message: cause instanceof Error ? cause.message : 'Failed to initialize SQLite database',
-            cause,
-          }),
-      }),
-      ({ client }) => Effect.sync(() => client.close()),
-    ).pipe(Effect.map(({ db }) => db)),
+            migrate(db, { migrationsFolder: options.out });
+            return { db, client };
+          },
+          catch: (cause) =>
+            new SqliteClientError({
+              message: cause instanceof Error ? cause.message : 'Failed to initialize SQLite database',
+              cause,
+            }),
+        }),
+        ({ client }) => Effect.sync(() => client.close()),
+      );
+
+      return db;
+    }),
   );

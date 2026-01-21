@@ -78,38 +78,36 @@ const UNIT_LOOKUP: ReadonlyMap<string, { readonly category: string; readonly emo
 ]);
 
 export const categorizeUnits = (player: Player) => {
-  const units = Array.filter([...player.troops, ...player.spells, ...player.heroes], (u) => u.village === 'home');
+  const units = Array.filter(Array.flatten([player.troops, player.spells, player.heroes]), (u) => u.village === 'home');
 
   return Array.reduce(
     units,
     {
       categories: {
-        Troops: [] as string[],
-        'Dark Troops': [] as string[],
-        'Super Troops': [] as string[],
-        'Siege Machines': [] as string[],
-        Pets: [] as string[],
-        Spells: [] as string[],
-        'Dark Spells': [] as string[],
-        Heroes: [] as string[],
+        Troops: [] as ReadonlyArray<string>,
+        'Dark Troops': [] as ReadonlyArray<string>,
+        'Super Troops': [] as ReadonlyArray<string>,
+        'Siege Machines': [] as ReadonlyArray<string>,
+        Pets: [] as ReadonlyArray<string>,
+        Spells: [] as ReadonlyArray<string>,
+        'Dark Spells': [] as ReadonlyArray<string>,
+        Heroes: [] as ReadonlyArray<string>,
       },
-      unknowns: [] as unknown[],
+      unknowns: [] as ReadonlyArray<unknown>,
     },
     (acc, unit) => {
       const mapping = UNIT_LOOKUP.get(unit.name);
       if (mapping) {
+        const category = mapping.category as keyof typeof acc.categories;
         return {
           ...acc,
           categories: {
             ...acc.categories,
-            [mapping.category]: [
-              ...(acc.categories[mapping.category as keyof typeof acc.categories] ?? []),
-              `${mapping.emoji}**${unit.level}**/${unit.maxLevel}`,
-            ],
+            [category]: Array.append(acc.categories[category], `${mapping.emoji}**${unit.level}**/${unit.maxLevel}`),
           },
         };
       }
-      return { ...acc, unknowns: [...acc.unknowns, unit] };
+      return { ...acc, unknowns: Array.append(acc.unknowns, unit) };
     },
   );
 };

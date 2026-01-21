@@ -19,8 +19,7 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
     const memberOpt = yield* getGuildMember(ownerId, message.guild);
 
     if (Option.isNone(memberOpt)) {
-      yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUser leaving discord server!`));
-      return;
+      return yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUser leaving discord server!`)).pipe(Effect.asVoid);
     }
 
     const member = memberOpt.value;
@@ -37,36 +36,25 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
           : memberHandler.getPlayer(account)
         ).pipe(Effect.either),
       ),
-      { concurrency: 'unbounded' },
+      { concurrency: 'inherit' },
     );
 
-    const fields = Array.reduce(results, [] as ReadonlyArray<{ readonly name: string; readonly value: string }>, (acc, result, i) => {
-      if (Either.isLeft(result)) return acc;
+    const fields = Array.filterMap(results, (result, i) => {
+      if (Either.isLeft(result)) return Option.none();
       const data = result.right;
       const count = i + 1;
 
       if (data.banned) {
-        return [
-          ...acc,
-          {
-            name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
-            value: '⛔ Has been banned!',
-          },
-        ];
+        return Option.some({
+          name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
+          value: '⛔ Has been banned!',
+        });
       }
 
-      if (Option.isSome(data.player)) {
-        const player = data.player.value;
-        return [
-          ...acc,
-          {
-            name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
-            value: formatPlayerField(player),
-          },
-        ];
-      }
-
-      return acc;
+      return Option.map(data.player, (player) => ({
+        name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
+        value: formatPlayerField(player),
+      }));
     });
 
     if (fields.length > 0) {
@@ -133,8 +121,7 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
     const accounts = Option.isSome(userOpt) ? yield* accountDatabase.find({ userId: userOpt.value.id }) : [];
 
     if (Option.isNone(userOpt) || accounts.length === 0) {
-      yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nThere is no tag linked to this user!`));
-      return;
+      return yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nThere is no tag linked to this user!`)).pipe(Effect.asVoid);
     }
 
     if (page > 0 && page <= accounts.length) {
@@ -152,8 +139,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const { clanTags } = config;
 
     if (clanTags.length === 0) {
-      yield* Effect.tryPromise(() => message.reply('No clans are currently configured.'));
-      return;
+      return yield* Effect.tryPromise(() => message.reply('No clans are currently configured.')).pipe(Effect.asVoid);
     }
 
     const index = Math.max(0, Math.min(page - 1, clanTags.length - 1));
@@ -184,7 +170,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
           return { type: 'guild' as const, ownerId: user.ownerId, field };
         }),
       ),
-      { concurrency: 'unbounded' },
+      { concurrency: 'inherit' },
     );
 
     const { guildMap, leave, unknown } = Array.reduce(
@@ -197,12 +183,12 @@ const checkMembers = (message: Message<true>, page = 1) =>
       (acc, result) => {
         switch (result.type) {
           case 'unknown':
-            return { ...acc, unknown: [...acc.unknown, result.field] };
+            return { ...acc, unknown: Array.append(acc.unknown, result.field) };
           case 'leave':
-            return { ...acc, leave: [...acc.leave, result.field] };
+            return { ...acc, leave: Array.append(acc.leave, result.field) };
           case 'guild': {
             const list = acc.guildMap.get(result.ownerId) ?? [];
-            acc.guildMap.set(result.ownerId, [...list, result.field]);
+            acc.guildMap.set(result.ownerId, Array.append(list, result.field));
             return acc;
           }
         }
@@ -249,8 +235,7 @@ export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>
     const page = parseInt(args[1], 10) || 0;
 
     if (tag === undefined || tag === '') {
-      yield* Effect.tryPromise(() => message.reply('Please provide a player tag or mention a user.'));
-      return;
+      return yield* Effect.tryPromise(() => message.reply('Please provide a player tag or mention a user.')).pipe(Effect.asVoid);
     }
 
     if (/member/i.test(tag)) {
@@ -262,9 +247,9 @@ export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>
       if (mentionId) {
         const configStore = yield* ConfigStoreTag;
         const config = yield* configStore.get;
-        const isOwner = config.ownerIds.includes(message.author.id);
+        const isOwner = Array.contains(config.ownerIds, message.author.id);
 
-        if (isOwner || tag.includes('<@')) {
+        if (isOwner || Array.contains(tag, '<@')) {
           yield* checkUser(message, mentionId, page);
         } else {
           yield* Effect.tryPromise(() => message.reply('Invalid player tag!'));

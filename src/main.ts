@@ -1,14 +1,14 @@
 import 'dotenv/config';
 
-import { Effect, Layer, Logger } from 'effect';
+import { Context, Effect, Layer, Logger } from 'effect';
 
-import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, EnvTag, SessionStoreLayer } from './core/schemas';
-import { AccountDatabaseLayer, UserDatabaseLayer } from './database';
-import { ClashClientLayer, ClashClientTag, ClashConfigTag } from './services/ClashService';
+import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, SessionStoreLayer } from './core/schemas';
+import { AccountDatabaseLayer, SqliteConfigLayer, SqliteConfigTag, UserDatabaseLayer } from './database';
+import { ClashClientLayer, ClashClientTag, ClashConfigLayer } from './services/ClashService';
 import { SqliteClientLayer } from './structures/database';
 import { HttpClientLayer } from './structures/HttpClient';
 import { LoggerClientLayer, makeLoggerClient } from './structures/LoggerClient';
-import { cycleMidnightRestart, runMain } from './structures/RuntimeClient';
+import { cycleUntilMidnight, runMainCycle } from './structures/RuntimeClient';
 import { CommandHandlerLayer } from './workflows/CommandHandler';
 import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandler';
 import { EventHandlerLayer } from './workflows/EventHandler';
@@ -25,10 +25,10 @@ const program = Effect.gen(function* () {
   }
 
   yield* discord.login();
-  yield* cycleMidnightRestart;
+  yield* cycleUntilMidnight;
 });
 
-const logger = makeLoggerClient({ exception: false, rejection: false });
+const logger = makeLoggerClient();
 
 const BaseLayer = Layer.mergeAll(
   EnvLayer,
@@ -42,8 +42,8 @@ const BaseLayer = Layer.mergeAll(
   Layer.provideMerge(
     Layer.unwrapEffect(
       Effect.gen(function* () {
-        const { sqliteConfig } = yield* Effect.promise(() => import('./database/index.js'));
-        const config = yield* sqliteConfig;
+        const context = yield* Layer.build(SqliteConfigLayer);
+        const config = Context.get(context, SqliteConfigTag);
         return SqliteClientLayer(config);
       }),
     ),
@@ -55,20 +55,7 @@ const MainLayer = EventHandlerLayer.pipe(
   Layer.provideMerge(CommandHandlerLayer),
   Layer.provideMerge(MemberHandlerLayer),
   Layer.provideMerge(ClashClientLayer),
-  Layer.provideMerge(
-    Layer.effect(
-      ClashConfigTag,
-      Effect.gen(function* () {
-        const env = yield* EnvTag;
-        return {
-          email: env.CLASH_EMAIL,
-          password: env.CLASH_PASSWORD,
-        };
-      }),
-    ),
-  ),
+  Layer.provideMerge(ClashConfigLayer),
 );
 
-runMain(program.pipe(Effect.provide(MainLayer)), {
-  runtimeBaseLayer: BaseLayer,
-});
+runMainCycle(program.pipe(Effect.provide(MainLayer), Effect.provide(BaseLayer)));

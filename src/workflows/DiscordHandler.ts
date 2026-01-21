@@ -3,7 +3,7 @@ import { GatewayIntentBits, Partials } from 'discord.js';
 import { Context, Data, Effect, Fiber, Layer, Option, Ref } from 'effect';
 
 import { EnvTag } from '../core/schemas';
-import { makeBridge } from '../structures/RuntimeClient';
+import { makeRuntimeBridge } from '../structures/RuntimeClient';
 
 export class DiscordError extends Data.TaggedError('DiscordError')<{
   readonly message: string;
@@ -21,7 +21,7 @@ export class DiscordHandlerTag extends Context.Tag('@workflows/DiscordHandler')<
 
 const makeDiscordClient = Effect.gen(function* () {
   const env = yield* EnvTag;
-  const bridge = yield* makeBridge;
+  const bridge = yield* makeRuntimeBridge;
 
   const client = new SapphireClient({
     typing: true,
@@ -39,7 +39,7 @@ const makeDiscordClient = Effect.gen(function* () {
   const bridgeLogger =
     (effect: (...args: unknown[]) => Effect.Effect<void>) =>
     (...args: unknown[]) =>
-      bridge.sync(effect(...args));
+      bridge.runSync(effect(...args));
 
   client.logger.trace = bridgeLogger(Effect.logTrace);
   client.logger.debug = bridgeLogger(Effect.logDebug);
@@ -51,16 +51,16 @@ const makeDiscordClient = Effect.gen(function* () {
   const loginTimeoutRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void, never>>());
 
   const timeoutFiber = yield* Effect.logWarning('Discord client login timed out...').pipe(
-    Effect.zipRight(Effect.sync(() => void client.destroy())),
+    Effect.andThen(Effect.sync(() => void client.destroy())),
     Effect.delay('60 seconds'),
     Effect.interruptible,
-    Effect.fork,
+    Effect.forkScoped,
   );
 
   yield* Ref.set(loginTimeoutRef, Option.some(timeoutFiber));
 
   const clearLoginTimeout = () =>
-    bridge.fork(
+    bridge.runFork(
       Effect.gen(function* () {
         const maybeFiber = yield* Ref.get(loginTimeoutRef);
 

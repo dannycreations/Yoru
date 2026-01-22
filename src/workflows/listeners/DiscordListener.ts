@@ -37,7 +37,6 @@ export const createDiscordListener = (
     const onReady = (client: SapphireClient<true>): Effect.Effect<void, never, never> =>
       Effect.gen(function* () {
         yield* Effect.sleep(1000);
-        discordHandler.clearLoginTimeout();
 
         yield* setPresence(client);
 

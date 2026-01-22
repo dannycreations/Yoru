@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { Effect, Layer, Logger } from 'effect';
+import { Effect, Layer, Logger, Schedule } from 'effect';
 
 import { EmojiLayer } from './core/emojis';
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, SessionStoreLayer } from './core/schemas';
@@ -25,7 +25,12 @@ const program = Effect.gen(function* () {
     yield* clash.addClans(config.clanTags);
   }
 
-  yield* discord.login();
+  yield* discord.login().pipe(
+    Effect.retry({
+      schedule: Schedule.exponential('1 seconds'),
+      while: (error) => error._tag === 'DiscordError',
+    }),
+  );
   yield* cycleUntilMidnight;
 });
 

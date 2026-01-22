@@ -1,6 +1,7 @@
 import { Logger, LogLevel, SapphireClient } from '@sapphire/framework';
+import { chalk } from '@vegapunk/utilities';
 import { GatewayIntentBits, Partials } from 'discord.js';
-import { Context, Data, Effect, Fiber, Layer, Option, Ref } from 'effect';
+import { Context, Data, Effect, Layer } from 'effect';
 
 import { EnvTag } from '../core/schemas';
 import { makeRuntimeBridge } from '../structures/RuntimeClient';
@@ -14,7 +15,6 @@ export interface DiscordHandler {
   readonly client: SapphireClient;
   readonly login: () => Effect.Effect<void, DiscordError>;
   readonly isMaintenance: boolean;
-  readonly clearLoginTimeout: () => void;
 }
 
 export class DiscordHandlerTag extends Context.Tag('@workflows/DiscordHandler')<DiscordHandlerTag, DiscordHandler>() {}
@@ -48,38 +48,22 @@ const makeDiscordClient = Effect.gen(function* () {
   client.logger.error = bridgeLogger(Effect.logError);
   client.logger.fatal = bridgeLogger(Effect.logFatal);
 
-  const loginTimeoutRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void, never>>());
-
-  const timeoutFiber = yield* Effect.logWarning('Discord client login timed out...').pipe(
-    Effect.andThen(Effect.sync(() => void client.destroy())),
-    Effect.delay('60 seconds'),
-    Effect.interruptible,
-    Effect.forkScoped,
-  );
-
-  yield* Ref.set(loginTimeoutRef, Option.some(timeoutFiber));
-
-  const clearLoginTimeout = () =>
-    bridge.runPromise(
-      Ref.get(loginTimeoutRef).pipe(
-        Effect.flatMap((maybeFiber) =>
-          Option.match(maybeFiber, {
-            onNone: () => Effect.void,
-            onSome: (fiber) => Effect.zipRight(Fiber.interrupt(fiber), Ref.set(loginTimeoutRef, Option.none())),
-          }),
-        ),
+  const login = (): Effect.Effect<void, DiscordError> =>
+    Effect.tryPromise({
+      try: () => client.login(env.DISCORD_TOKEN),
+      catch: (cause) => new DiscordError({ message: 'Failed to login to Discord', cause }),
+    }).pipe(
+      Effect.timeoutFail({
+        duration: '60 seconds',
+        onTimeout: () => new DiscordError({ message: 'Discord login timed out' }),
+      }),
+      Effect.tapErrorCause((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logInfo(chalk`{yellow Discord client login failed or timed out...}`, cause);
+          yield* Effect.sync(() => client.destroy());
+        }),
       ),
     );
-
-  client.once('ready', () => clearLoginTimeout());
-
-  const login = (): Effect.Effect<void, DiscordError> =>
-    Effect.gen(function* () {
-      yield* Effect.tryPromise({
-        try: () => client.login(env.DISCORD_TOKEN),
-        catch: (cause) => new DiscordError({ message: 'Failed to login to Discord', cause }),
-      });
-    });
 
   const isMaintenance = false;
 
@@ -87,7 +71,6 @@ const makeDiscordClient = Effect.gen(function* () {
     client,
     login,
     isMaintenance,
-    clearLoginTimeout,
   } as const;
 });
 

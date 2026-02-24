@@ -68,7 +68,7 @@ const makeClashClient = Effect.gen(function* () {
         );
       }
 
-      if (isErrorLike<{ readonly code: string }>(cause) && ERROR_CODES.includes(cause.code)) {
+      if (isErrorLike<{ readonly code: string }>(cause) && ERROR_CODES.has(cause.code)) {
         yield* waitForConnection();
         return yield* Effect.fail(
           new ClashError({
@@ -118,7 +118,7 @@ const makeClashClient = Effect.gen(function* () {
             }),
           );
         }
-        if (ERROR_STATUS_CODES.includes(cause.status)) {
+        if (ERROR_STATUS_CODES.has(cause.status)) {
           return yield* Effect.fail(
             new ClashError({
               message: 'Transient API error',

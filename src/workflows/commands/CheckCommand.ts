@@ -158,37 +158,50 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
 
-    const tags = Array.map(clan.members, (m) => m.tag);
-    const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
+    const members = clan.members;
+    const tags = members.map((m) => m.tag);
 
+    const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
     const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
-    const userIds = [...new Set(accounts.map((acc) => acc.userId).filter((id): id is number => id != null))];
+    const userIds = Array.fromIterable(new Set(Array.filterMap(accounts, (acc) => Option.fromNullable(acc.userId))));
 
     const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
     const userMap = new Map(users.map((u) => [u.id, u]));
 
     const memberResults = yield* Effect.all(
-      clan.members.map((member) =>
+      members.map((member) =>
         Effect.gen(function* () {
           const field = `**${member.name}** ${member.tag}\n`;
           const account = accountMap.get(member.tag);
           const user = account?.userId ? userMap.get(account.userId) : null;
           if (!user) return { type: 'unknown' as const, field };
 
-          const memberOpt = yield* getGuildMember(user.ownerId, message.guild);
-          if (Option.isNone(memberOpt)) return { type: 'leave' as const, field };
+          const cachedMember = message.guild.members.cache.get(user.ownerId);
+          if (cachedMember) return { type: 'guild' as const, ownerId: user.ownerId, field };
 
-          return { type: 'guild' as const, ownerId: user.ownerId, field };
+          return { type: 'fetch' as const, ownerId: user.ownerId, field };
         }),
       ),
-      { concurrency: 10 },
+      { concurrency: 'inherit' },
     );
+
+    const membersToFetch = [...new Set(Array.filterMap(memberResults, (r) => (r.type === 'fetch' ? Option.some(r.ownerId) : Option.none())))];
+
+    if (membersToFetch.length > 0) {
+      yield* Effect.tryPromise(() => message.guild.members.fetch({ user: membersToFetch })).pipe(Effect.ignore);
+    }
+
+    const finalResults = memberResults.map((r) => {
+      if (r.type !== 'fetch') return r;
+      const member = message.guild.members.cache.get(r.ownerId);
+      return member ? { type: 'guild' as const, ownerId: r.ownerId, field: r.field } : { type: 'leave' as const, field: r.field };
+    });
 
     const guildMap = new Map<string, string[]>();
     const leave: string[] = [];
     const unknown: string[] = [];
 
-    for (const result of memberResults) {
+    for (const result of finalResults) {
       switch (result.type) {
         case 'unknown':
           unknown.push(result.field);

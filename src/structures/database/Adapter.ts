@@ -166,7 +166,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     for (let i = joins.length - 1; i >= 0; i--) {
       Object.assign(cache, joins[i].table);
     }
-    return Object.assign(cache, table);
+    Object.assign(cache, table);
+    return cache;
   };
 
   const buildWhereComparison = (key: unknown, val: unknown): ReadonlyArray<SQL> => {
@@ -178,50 +179,72 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       return [val === null ? isNull(column) : eq(column, val as SQL)];
     }
 
-    return Array.reduce(Object.entries(val as Record<string, unknown>), [] as ReadonlyArray<SQL>, (acc, [operator, operand]) => {
+    const acc: SQL[] = [];
+    for (const operator in val) {
+      const operand = (val as Record<string, unknown>)[operator];
       if (operator === '$not') {
         const negated = buildWhereComparison(key, operand);
-        return negated.length > 0 ? Array.append(acc, not(and(...negated)!)) : acc;
+        if (negated.length > 0) acc.push(not(and(...negated)!));
+        continue;
       }
 
       if (operand === null && !['$eq', '$ne', '$null'].includes(operator)) {
-        return Array.append(acc, sql`0`);
+        acc.push(sql`0`);
+        continue;
       }
 
       if (operator === '$eq' && operand === null) {
-        return Array.append(acc, isNull(column));
+        acc.push(isNull(column));
+        continue;
       }
 
       if (operator === '$ne' && operand === null) {
-        return Array.append(acc, isNotNull(column));
+        acc.push(isNotNull(column));
+        continue;
       }
 
       const handler = OPERATOR_MAP[operator];
-      return Array.append(acc, handler ? handler(column, operand as SQL) : sql`0`);
-    });
+      acc.push(handler ? handler(column, operand as SQL) : sql`0`);
+    }
+    return acc;
   };
 
-  const buildWhereLogical = (filter: QueryFilter<A>): ReadonlyArray<SQL> =>
-    Array.reduce(Object.entries(filter), [] as ReadonlyArray<SQL>, (acc, [key, value]) => {
-      if (['$and', '$nand', '$or', '$nor'].includes(key)) {
-        const nested = Array.isArray(value) ? (value as QueryFilter<A>[]).flatMap((v) => buildWhereLogical(v)) : [];
-        const isPositive = key === '$and' || key === '$nor';
+  const buildWhereLogical = (filter: QueryFilter<A>): ReadonlyArray<SQL> => {
+    const acc: SQL[] = [];
 
+    for (const key in filter) {
+      const value = (filter as Record<string, unknown>)[key];
+      if (['$and', '$nand', '$or', '$nor'].includes(key)) {
+        const nested: SQL[] = [];
+        if (Array.isArray(value)) {
+          for (let j = 0; j < value.length; j++) {
+            const result = buildWhereLogical(value[j] as QueryFilter<A>);
+            for (let k = 0; k < result.length; k++) nested.push(result[k]);
+          }
+        }
+
+        const isPositive = key === '$and' || key === '$nor';
         if (nested.length === 0) {
-          return Array.append(acc, sql.raw(isPositive ? '1' : '0'));
+          acc.push(sql.raw(isPositive ? '1' : '0'));
+          continue;
         }
 
         const joined = key === '$and' || key === '$nand' ? and(...nested) : or(...nested);
-        return Array.append(acc, ['$nand', '$nor'].includes(key) ? not(joined!) : joined!);
+        acc.push(['$nand', '$nor'].includes(key) ? not(joined!) : joined!);
+        continue;
       }
 
       if (key === '$not') {
         const conds = isObjectLike(value) && !Array.isArray(value) ? buildWhereLogical(value as QueryFilter<A>) : buildWhereComparison(key, value);
-        return conds.length > 0 ? Array.append(acc, not(and(...conds)!)) : acc;
+        if (conds.length > 0) acc.push(not(and(...conds)!));
+        continue;
       }
 
-      return Array.appendAll(acc, buildWhereComparison(key, value));
-    });
+      const result = buildWhereComparison(key, value);
+      for (let j = 0; j < result.length; j++) acc.push(result[j]);
+    }
+    return acc;
+  };
 
   const buildWhereClause = (filter?: QueryFilter<A>): SQL | undefined => {
     if (!filter || !hasKeys(filter)) {
@@ -236,10 +259,11 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     if (!order || !hasKeys(order)) return undefined;
 
     const clauses: SQL[] = [];
-    for (const [key, direction] of Object.entries(order as Record<string, string>)) {
+    const orderObj = order as Record<string, string>;
+    for (const key in orderObj) {
       const column = columnCache[key] as SQL;
       if (column) {
-        clauses.push(direction?.toLowerCase() === 'desc' ? desc(column) : asc(column));
+        clauses.push(orderObj[key]?.toLowerCase() === 'desc' ? desc(column) : asc(column));
       }
     }
 
@@ -256,8 +280,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       columns['id'] = columnCache['id'];
     }
 
-    for (const [key, value] of Object.entries(selectObj)) {
-      if (key === 'id' || value === 0 || !columnCache[key]) continue;
+    for (const key in selectObj) {
+      if (key === 'id' || selectObj[key] === 0 || !columnCache[key]) continue;
       columns[key] = columnCache[key];
     }
 
@@ -360,19 +384,20 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     } = {},
   ) =>
     Effect.gen(function* () {
+      const isComplex =
+        Object.keys(filter).some((k) => k.startsWith('$')) ||
+        Object.values(filter).some((v) => isObjectLike(v) && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith('$')));
+
+      if (options.upsert && isComplex) {
+        return yield* Effect.fail(
+          new SqliteClientError({
+            message: 'Cannot use complex filter when upserting',
+          }),
+        );
+      }
+
       const rOpt = yield* findOne(filter as QueryFilter<A>, { ...options, select: undefined });
       if (options.upsert && Option.isNone(rOpt)) {
-        const isComplex =
-          Object.keys(filter).some((k) => k.startsWith('$')) ||
-          Object.values(filter).some((v) => isObjectLike(v) && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith('$')));
-        if (isComplex) {
-          return yield* Effect.fail(
-            new SqliteClientError({
-              message: 'Cannot use complex filter when upserting',
-            }),
-          );
-        }
-
         const s = yield* insert({ ...filter, ...data } as Omit<Insert, 'id'>, options as any);
         return Array.head(s);
       }
@@ -411,11 +436,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       Effect.try({
         try: () => {
           const input = Array.isArray(record) ? record : [record];
-          const values = Array.filterMap(input, (rec) => {
-            if (!hasKeys(rec)) return Option.none();
-            const { id, ...newRec } = rec as Record<string, unknown>;
-            return Option.some(newRec as Insert);
-          });
+          const values: Insert[] = [];
+          for (let i = 0; i < input.length; i++) {
+            const rec = input[i] as Record<string, unknown>;
+            if (hasKeys(rec)) {
+              const { id, ...newRec } = rec;
+              values.push(newRec as Insert);
+            }
+          }
 
           if (values.length === 0) {
             return [];
@@ -425,24 +453,26 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
 
           const conflictOpt = options.conflict;
           if (hasKeys(conflictOpt)) {
-            const target = Array.filterMap(conflictOpt.target, (r) => {
-              const col = table[r as keyof A];
-              return col ? Option.some(col as unknown as SQL) : Option.none();
-            });
+            const target: SQL[] = [];
+            for (let i = 0; i < conflictOpt.target.length; i++) {
+              const col = table[conflictOpt.target[i] as keyof A];
+              if (col) target.push(col as unknown as SQL);
+            }
 
             const rec = (hasKeys(conflictOpt.set) ? conflictOpt.set : values[0]) as Record<string, unknown>;
 
             if (conflictOpt.resolution === 'ignore') {
               query.onConflictDoNothing({ target });
             } else if (conflictOpt.resolution === 'update') {
-              const { id, ...newRec } = rec as Record<string, unknown>;
+              const { id, ...newRec } = rec;
               query.onConflictDoUpdate({ target, set: newRec as Insert });
             } else {
-              const mergeSet = Array.reduce(Object.entries(rec), {} as Record<string, unknown>, (acc, [key, val]) => {
-                if (key === 'id') return acc;
+              const mergeSet: Record<string, unknown> = {};
+              for (const key in rec) {
+                if (key === 'id') continue;
                 const col = table[key as keyof A];
-                return col ? { ...acc, [key]: sql`COALESCE(${col}, ${sql`${val}`})` } : acc;
-              });
+                if (col) mergeSet[key] = sql`COALESCE(${col}, ${sql`${rec[key]}`})`;
+              }
               query.onConflictDoUpdate({ target, set: mergeSet as Insert });
             }
           }

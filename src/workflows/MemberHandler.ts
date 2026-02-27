@@ -62,14 +62,15 @@ export const MemberHandlerLayer = Layer.effect(
         if (otherAccounts.length === 0) return Option.none();
 
         const clanTagsSet = new Set(config.clanTags);
-        const results = yield* Effect.all(
-          otherAccounts.map((account) =>
-            getPlayer(account).pipe(Effect.map(({ player: pOpt }) => Option.filter(pOpt, (p) => !!p.clan && clanTagsSet.has(p.clan!.tag)))),
-          ),
-          { concurrency: 'inherit' },
-        );
+        const findInClans = (account: AccountTable) =>
+          getPlayer(account).pipe(
+            Effect.flatMap(({ player: pOpt }) => {
+              const p = Option.getOrUndefined(pOpt);
+              return p?.clan && clanTagsSet.has(p.clan.tag) ? Effect.succeed(Option.some(p)) : Effect.succeed(Option.none<Player>());
+            }),
+          );
 
-        return results.find(Option.isSome) ?? Option.none();
+        return yield* Effect.firstSuccessOf(otherAccounts.map(findInClans)).pipe(Effect.catchAll(() => Effect.succeed(Option.none())));
       }).pipe(Effect.catchAllCause(() => Effect.succeed(Option.none())));
 
     const updatePresence = (member: GuildMember, playerOpt: Option.Option<Player>) =>

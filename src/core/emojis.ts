@@ -148,7 +148,9 @@ export const EmojiLayer = Layer.effect(
       const unitLookup = new Map<string, { readonly category: string; readonly emoji: string }>();
 
       const add = (record: Record<string, string>, category: string) => {
-        for (const [name, emoji] of Object.entries(record)) {
+        const entries = Object.entries(record);
+        for (let i = 0; i < entries.length; i++) {
+          const [name, emoji] = entries[i];
           unitLookup.set(name, { category, emoji });
         }
       };

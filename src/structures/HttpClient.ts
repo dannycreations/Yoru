@@ -69,67 +69,67 @@ const makeHttpClient = Effect.gen(function* () {
   const gotInstance: Got = got.bind(got);
   const userAgent = new UserAgent({ deviceCategory: 'desktop' }).toString();
 
-  const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError> =>
-    Effect.gen(function* () {
-      const isString = typeof options === 'string';
-      const payload: DefaultOptions = isString ? { url: options } : options;
+  const requestFn = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError> => {
+    const isString = typeof options === 'string';
+    const payload: DefaultOptions = isString ? { url: options } : (options as DefaultOptions);
 
-      const headers = { 'user-agent': userAgent, ...payload.headers };
-      const retryCount = isString ? 3 : (payload.retry ?? 3);
-      const { initial = 10_000, transmission = 30_000, total = 60_000 } = payload.timeout || {};
+    const headers = { 'user-agent': userAgent, ...payload.headers };
+    const retryCount = isString ? 3 : (payload.retry ?? 3);
+    const timeout = payload.timeout || {};
+    const initial = timeout.initial ?? 10_000;
+    const transmission = timeout.transmission ?? 30_000;
+    const total = timeout.total ?? 60_000;
 
-      const response = yield* Effect.async<Response<T>, HttpClientError>((resume) => {
-        const promise = gotInstance({
-          ...payload,
-          headers,
-          http2: true,
-          retry: 0,
-          timeout: {
-            lookup: initial,
-            connect: initial,
-            secureConnect: initial,
-            socket: transmission,
-            response: transmission,
-            send: transmission,
-            request: total,
-          },
-          resolveBodyOnly: false,
-        }) as CancelableRequest<Response<T>>;
+    return Effect.async<Response<T>, HttpClientError>((resume) => {
+      const promise = gotInstance({
+        ...payload,
+        headers,
+        http2: true,
+        retry: 0,
+        timeout: {
+          lookup: initial,
+          connect: initial,
+          secureConnect: initial,
+          socket: transmission,
+          response: transmission,
+          send: transmission,
+          request: total,
+        },
+        resolveBodyOnly: false,
+      }) as CancelableRequest<Response<T>>;
 
-        promise.then(
-          (response) => resume(Effect.succeed(response)),
-          (cause) =>
-            resume(
-              Effect.fail(
-                new HttpClientError({
-                  message: cause.message || 'Request failed',
-                  code: cause.code,
-                  status: cause.response?.statusCode,
-                  cause,
-                }),
-              ),
+      promise.then(
+        (response) => resume(Effect.succeed(response)),
+        (cause) =>
+          resume(
+            Effect.fail(
+              new HttpClientError({
+                message: cause.message || 'Request failed',
+                code: cause.code,
+                status: cause.response?.statusCode,
+                cause,
+              }),
             ),
-        );
-
-        return Effect.sync(() => {
-          promise.cancel();
-        });
-      }).pipe(
-        Effect.retry({
-          while: isNetworkError,
-          schedule: retryCount < 0 ? Schedule.forever : Schedule.recurs(retryCount),
-        }),
+          ),
       );
 
-      return response;
-    });
+      return Effect.sync(() => {
+        promise.cancel();
+      });
+    }).pipe(
+      Effect.retry({
+        while: isNetworkError,
+        schedule: retryCount < 0 ? Schedule.forever : Schedule.recurs(retryCount),
+      }),
+    );
+  };
 
   const waitForConnectionFn = (total?: number): Effect.Effect<void> =>
     Effect.gen(function* () {
       const retryMs = total ?? 10_000;
+      const schedule = Schedule.spaced(`${retryMs} millis`);
 
       const checkGoogle = Effect.promise(() => lookup('google.com'));
-
       const checkApple = requestFn({
         url: 'https://captive.apple.com/hotspot-detect.html',
         headers: { 'user-agent': 'CaptiveNetworkSupport/1.0 wispr' },
@@ -138,7 +138,7 @@ const makeHttpClient = Effect.gen(function* () {
 
       yield* Effect.firstSuccessOf([checkGoogle, checkApple]).pipe(
         Effect.sandbox,
-        Effect.retry(Schedule.spaced(`${retryMs} millis`)),
+        Effect.retry(schedule),
         Effect.catchAll(() => Effect.void),
       );
     });

@@ -204,8 +204,14 @@ const makeClashClient = Effect.gen(function* () {
   const addClans = (tags: readonly string[]) =>
     Ref.update(clanTags, (set) => {
       const next = new Set(set);
-      Array.forEach(tags, (tag) => next.add(tag));
-      return next;
+      let changed = false;
+      for (const tag of tags) {
+        if (!next.has(tag)) {
+          next.add(tag);
+          changed = true;
+        }
+      }
+      return changed ? next : set;
     });
 
   const getClan = (tag: string) =>
@@ -241,7 +247,16 @@ const makeClashClient = Effect.gen(function* () {
           Effect.map((newClan) => {
             const oldClan = cache.get(tag);
             if (oldClan && oldClan.memberCount === newClan.memberCount) {
-              const isIdentical = oldClan.members.every((m, i) => m.tag === newClan.members[i]?.tag && m.role === newClan.members[i]?.role);
+              const oldMembers = oldClan.members;
+              const newMembers = newClan.members;
+
+              const isIdentical =
+                oldMembers.length === newMembers.length &&
+                oldMembers.every((m, i) => {
+                  const nm = newMembers[i];
+                  return nm && m.tag === nm.tag && m.role === nm.role;
+                });
+
               if (isIdentical) return { tag, newClan, changed: false };
             }
             return { tag, newClan, oldClan, changed: true };
@@ -249,7 +264,7 @@ const makeClashClient = Effect.gen(function* () {
           Effect.option,
         ),
       { concurrency: 'inherit' },
-    ).pipe(Effect.map((arr) => Chunk.compact(Chunk.fromIterable(arr))));
+    ).pipe(Effect.map((arr) => Array.fromIterable(Chunk.compact(Chunk.fromIterable(arr)))));
 
     if (updates.length > 0) {
       yield* Ref.update(clanCache, (prev) => {

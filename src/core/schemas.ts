@@ -21,18 +21,15 @@ export class EnvTag extends Context.Tag('@core/Env')<EnvTag, Env>() {}
 
 export const EnvLayer = Layer.effect(
   EnvTag,
-  Effect.gen(function* () {
-    const config = yield* Config.all({
-      NODE_ENV: Config.string('NODE_ENV').pipe(Config.withDefault('development')),
-      DISCORD_TOKEN: Config.string('DISCORD_TOKEN'),
-      CLASH_EMAIL: Config.string('CLASH_EMAIL'),
-      CLASH_PASSWORD: Config.string('CLASH_PASSWORD'),
-    });
-
-    return yield* Schema.decodeUnknown(EnvSchema)(config).pipe(
-      Effect.mapError((error) => new EnvError({ message: `Invalid environment variables: ${error}` })),
-    );
-  }),
+  Config.all({
+    NODE_ENV: Config.string('NODE_ENV').pipe(Config.withDefault('development')),
+    DISCORD_TOKEN: Config.string('DISCORD_TOKEN'),
+    CLASH_EMAIL: Config.string('CLASH_EMAIL'),
+    CLASH_PASSWORD: Config.string('CLASH_PASSWORD'),
+  }).pipe(
+    Effect.flatMap(Schema.decodeUnknown(EnvSchema)),
+    Effect.mapError((error) => new EnvError({ message: `Invalid environment variables: ${error}` })),
+  ),
 );
 
 const EmojiFields = {

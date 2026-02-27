@@ -186,7 +186,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
           return { type: 'guild' as const, ownerId: user.ownerId, field };
         }),
       ),
-      { concurrency: 'inherit' },
+      { concurrency: 10 },
     );
 
     const guildMap = new Map<string, string[]>();

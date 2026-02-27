@@ -46,31 +46,23 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
   Effect.gen(function* () {
     if (guild) {
       const cached = guild.members.cache.get(userId);
-      if (cached) {
-        return Option.some(cached);
-      }
+      if (cached) return Option.some(cached);
       return yield* Effect.tryPromise(() => guild.members.fetch(userId)).pipe(Effect.option);
     }
 
     const { client } = yield* DiscordHandlerTag;
 
-    const guilds = Array.fromIterable(client.guilds.cache.values());
-
-    const cachedMember = Array.findFirst(guilds, (g) => g.members.cache.has(userId)).pipe(Option.map((g) => g.members.cache.get(userId)!));
-
-    if (Option.isSome(cachedMember)) {
-      return cachedMember;
+    for (const g of client.guilds.cache.values()) {
+      const cached = g.members.cache.get(userId);
+      if (cached) return Option.some(cached);
     }
 
-    const results = yield* Effect.all(
-      Array.map(guilds, (g) =>
-        Effect.tryPromise(() => g.members.fetch(userId)).pipe(
-          Effect.option,
-          Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())),
-        ),
-      ),
-      { concurrency: 'inherit' },
-    );
+    const guilds = Array.fromIterable(client.guilds.cache.values());
+    const fetchMember = (g: Guild) =>
+      Effect.tryPromise(() => g.members.fetch(userId)).pipe(
+        Effect.option,
+        Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())),
+      );
 
-    return Array.findFirst(results, (opt) => Option.isSome(opt)).pipe(Option.flatten);
+    return yield* Effect.firstSuccessOf(Array.map(guilds, fetchMember)).pipe(Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())));
   });

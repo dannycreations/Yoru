@@ -241,6 +241,11 @@ const makeClashClient = Effect.gen(function* () {
             onSuccess: (newClan) =>
               Effect.gen(function* () {
                 const oldClan = cache.get(tag);
+                if (oldClan && oldClan.memberCount === newClan.memberCount) {
+                  const isIdentical = oldClan.members.every((m, i) => m.tag === newClan.members[i]?.tag && m.role === newClan.members[i]?.role);
+                  if (isIdentical) return Option.some({ tag, newClan });
+                }
+
                 if (oldClan) {
                   yield* PubSub.publish(events, {
                     _tag: ClientEvents.ClanMember,
@@ -255,13 +260,15 @@ const makeClashClient = Effect.gen(function* () {
       { concurrency: 'inherit' },
     ).pipe(Effect.map((arr) => Chunk.compact(Chunk.fromIterable(arr))));
 
-    yield* Ref.update(clanCache, (prev) => {
-      const next = new Map(prev);
-      for (const update of updates) {
-        next.set(update.tag, update.newClan);
-      }
-      return next;
-    });
+    if (updates.length > 0) {
+      yield* Ref.update(clanCache, (prev) => {
+        const next = new Map(prev);
+        for (const update of updates) {
+          next.set(update.tag, update.newClan);
+        }
+        return next;
+      });
+    }
   }).pipe(
     Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
     Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),

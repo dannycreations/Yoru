@@ -111,7 +111,10 @@ export const createClanMemberListener = () =>
             }
 
             if (toAdd.length > 0) {
-              yield* Effect.all(toAdd.map((m) => Queue.offer(leavingQueue, m)));
+              yield* Effect.all(
+                toAdd.map((m) => Queue.offer(leavingQueue, m)),
+                { concurrency: 'inherit' },
+              );
               yield* sessionStore.update((s) => ({
                 ...s,
                 leavers: [...(s.leavers ?? []), ...toAddTags],

@@ -59,6 +59,7 @@ export const MemberHandlerLayer = Layer.effect(
         const config = yield* configStore.get;
         const userAccounts = yield* accountDatabase.find({ userId });
         const otherAccounts = Array.filter(userAccounts, (acc) => !acc.bannedAt && acc.tag !== currentTag);
+        if (otherAccounts.length === 0) return Option.none();
 
         const clanTagsSet = new Set(config.clanTags);
         const results = yield* Effect.all(

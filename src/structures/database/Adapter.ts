@@ -162,8 +162,11 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       return table as unknown as Record<string, unknown>;
     }
 
-    const cache = Array.reduceRight(joins, {} as Record<string, unknown>, (acc, join) => ({ ...acc, ...join.table }));
-    return { ...cache, ...table };
+    const cache: Record<string, unknown> = {};
+    for (let i = joins.length - 1; i >= 0; i--) {
+      Object.assign(cache, joins[i].table);
+    }
+    return Object.assign(cache, table);
   };
 
   const buildWhereComparison = (key: unknown, val: unknown): ReadonlyArray<SQL> => {
@@ -232,10 +235,13 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const buildOrderClause = <S>(columnCache: Record<string, unknown>, order?: S): SQL | undefined => {
     if (!order || !hasKeys(order)) return undefined;
 
-    const clauses = Array.reduce(Object.entries(order as Record<string, string>), [] as SQL[], (acc, [key, direction]) => {
+    const clauses: SQL[] = [];
+    for (const [key, direction] of Object.entries(order as Record<string, string>)) {
       const column = columnCache[key] as SQL;
-      return column ? Array.append(acc, direction?.toLowerCase() === 'desc' ? desc(column) : asc(column)) : acc;
-    });
+      if (column) {
+        clauses.push(direction?.toLowerCase() === 'desc' ? desc(column) : asc(column));
+      }
+    }
 
     return clauses.length === 0 ? undefined : (sql.join(clauses, sql.raw(', ')) as unknown as SQL);
   };
@@ -244,16 +250,18 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     if (!select || !hasKeys(select)) return undefined;
 
     const selectObj = select as unknown as Record<string, number>;
-    const columns = Array.reduce(
-      Object.entries(selectObj),
-      selectObj['id'] !== 0 && columnCache['id'] ? { id: columnCache['id'] } : ({} as Record<string, unknown>),
-      (acc, [key, value]) => {
-        if (key === 'id' || value === 0 || !columnCache[key]) return acc;
-        return { ...acc, [key]: columnCache[key] };
-      },
-    );
+    const columns: Record<string, unknown> = {};
 
-    return hasKeys(columns) ? (columns as InferColumn<A>) : undefined;
+    if (selectObj['id'] !== 0 && columnCache['id']) {
+      columns['id'] = columnCache['id'];
+    }
+
+    for (const [key, value] of Object.entries(selectObj)) {
+      if (key === 'id' || value === 0 || !columnCache[key]) continue;
+      columns[key] = columnCache[key];
+    }
+
+    return Object.keys(columns).length > 0 ? (columns as InferColumn<A>) : undefined;
   };
 
   const count = (filter: QueryFilter<A> = {}): Effect.Effect<number, SqliteClientError, SqliteClientTag> =>

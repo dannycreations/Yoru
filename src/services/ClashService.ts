@@ -255,12 +255,13 @@ const makeClashClient = Effect.gen(function* () {
       { concurrency: 'inherit' },
     ).pipe(Effect.map((arr) => Chunk.compact(Chunk.fromIterable(arr))));
 
-    yield* Ref.update(clanCache, (prev) =>
-      Chunk.reduce(updates, new Map(prev), (next, update) => {
+    yield* Ref.update(clanCache, (prev) => {
+      const next = new Map(prev);
+      for (const update of updates) {
         next.set(update.tag, update.newClan);
-        return next;
-      }),
-    );
+      }
+      return next;
+    });
   }).pipe(
     Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
     Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),

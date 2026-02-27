@@ -60,9 +60,10 @@ export const MemberHandlerLayer = Layer.effect(
         const userAccounts = yield* accountDatabase.find({ userId });
         const otherAccounts = Array.filter(userAccounts, (acc) => !acc.bannedAt && acc.tag !== currentTag);
 
+        const clanTagsSet = new Set(config.clanTags);
         const results = yield* Effect.all(
           Array.map(otherAccounts, (account) =>
-            getPlayer(account).pipe(Effect.map(({ player: pOpt }) => Option.filter(pOpt, (p) => !!p.clan && config.clanTags.includes(p.clan!.tag)))),
+            getPlayer(account).pipe(Effect.map(({ player: pOpt }) => Option.filter(pOpt, (p) => !!p.clan && clanTagsSet.has(p.clan!.tag)))),
           ),
           { concurrency: 'inherit' },
         );

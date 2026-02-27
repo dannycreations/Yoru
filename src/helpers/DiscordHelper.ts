@@ -10,26 +10,25 @@ export const getSplitFields = (
   list: readonly string[],
   separator = ' ',
 ): ReadonlyArray<{ readonly name: string; readonly value: string }> => {
-  const { fields, currentValue, count } = Array.reduce(
-    list,
-    { fields: [] as Array<{ readonly name: string; readonly value: string }>, currentValue: '', count: 0 },
-    (acc, item) => {
-      const isOverLimit = acc.currentValue.length + item.length + separator.length > 1024;
-      if (isOverLimit && acc.currentValue) {
-        return {
-          fields: [...acc.fields, { name: acc.count === 0 ? name : `${name} (cont.)`, value: acc.currentValue }],
-          currentValue: item,
-          count: acc.count + 1,
-        };
-      }
-      return {
-        ...acc,
-        currentValue: acc.currentValue ? `${acc.currentValue}${separator}${item}` : item,
-      };
-    },
-  );
+  const fields: { name: string; value: string }[] = [];
+  let currentValue = '';
+  let count = 0;
 
-  return currentValue ? [...fields, { name: count === 0 ? name : `${name} (cont.)`, value: currentValue }] : fields;
+  for (const item of list) {
+    if (currentValue && currentValue.length + item.length + separator.length > 1024) {
+      fields.push({ name: count === 0 ? name : `${name} (cont.)`, value: currentValue });
+      currentValue = item;
+      count++;
+    } else {
+      currentValue = currentValue ? `${currentValue}${separator}${item}` : item;
+    }
+  }
+
+  if (currentValue) {
+    fields.push({ name: count === 0 ? name : `${name} (cont.)`, value: currentValue });
+  }
+
+  return fields;
 };
 
 export const removeMemberRoles = (member: GuildMember, filter: (role: Role) => boolean): Effect.Effect<void, Error> =>

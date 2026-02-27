@@ -160,10 +160,16 @@ const checkMembers = (message: Message<true>, page = 1) =>
 
     const tags = Array.map(clan.members, (m) => m.tag);
     const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
-    const userIds = Array.fromIterable(new Set(Array.filterMap(accounts, (acc) => Option.fromNullable(acc.userId))));
-    const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
 
-    const accountMap = new Map(Array.map(accounts, (acc) => [acc.tag, acc]));
+    const userIdsSet = new Set<number>();
+    const accountMap = new Map<string, (typeof accounts)[number]>();
+    for (const acc of accounts) {
+      accountMap.set(acc.tag, acc);
+      if (acc.userId != null) userIdsSet.add(acc.userId);
+    }
+
+    const userIds = Array.fromIterable(userIdsSet);
+    const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
     const userMap = new Map(Array.map(users, (u) => [u.id, u]));
 
     const memberResults = yield* Effect.all(
@@ -183,27 +189,26 @@ const checkMembers = (message: Message<true>, page = 1) =>
       { concurrency: 'inherit' },
     );
 
-    const { guildMap, leave, unknown } = Array.reduce(
-      memberResults,
-      {
-        guildMap: new Map<string, ReadonlyArray<string>>(),
-        leave: [] as ReadonlyArray<string>,
-        unknown: [] as ReadonlyArray<string>,
-      },
-      (acc, result) => {
-        switch (result.type) {
-          case 'unknown':
-            return { ...acc, unknown: Array.append(acc.unknown, result.field) };
-          case 'leave':
-            return { ...acc, leave: Array.append(acc.leave, result.field) };
-          case 'guild': {
-            const list = acc.guildMap.get(result.ownerId) ?? [];
-            acc.guildMap.set(result.ownerId, Array.append(list, result.field));
-            return acc;
-          }
+    const guildMap = new Map<string, string[]>();
+    const leave: string[] = [];
+    const unknown: string[] = [];
+
+    for (const result of memberResults) {
+      switch (result.type) {
+        case 'unknown':
+          unknown.push(result.field);
+          break;
+        case 'leave':
+          leave.push(result.field);
+          break;
+        case 'guild': {
+          const list = guildMap.get(result.ownerId) ?? [];
+          list.push(result.field);
+          guildMap.set(result.ownerId, list);
+          break;
         }
-      },
-    );
+      }
+    }
 
     const embed = new EmbedBuilder()
       .setColor('#0099ff')

@@ -31,11 +31,13 @@ export const createClanMemberListener = () =>
         const leavers = session.leavers ?? [];
         if (!leavers.includes(player.tag)) return;
 
-        const cleanupLeaver = (tags: ReadonlyArray<string>) =>
-          sessionStore.update((s) => ({
+        const cleanupLeaver = (tags: ReadonlyArray<string>) => {
+          const tagSet = new Set(tags);
+          return sessionStore.update((s) => ({
             ...s,
-            leavers: Array.filter(s.leavers ?? [], (t) => !Array.contains(tags, t)),
+            leavers: (s.leavers ?? []).filter((t) => !tagSet.has(t)),
           }));
+        };
 
         const accountOpt = yield* accountDatabase.findOne({ tag: player.tag });
         const userId = Option.flatMap(accountOpt, (acc) => Option.fromNullable(acc.userId));
@@ -99,16 +101,20 @@ export const createClanMemberListener = () =>
           if (leftMembers.length > 0) {
             const session = yield* sessionStore.get;
             const currentPending = new Set(session.leavers ?? []);
-            const toAdd = Array.filter(leftMembers, (m: ClanMemberTag) => !currentPending.has(m.tag));
+            const toAdd: ClanMemberTag[] = [];
+            const toAddTags: string[] = [];
+            for (const m of leftMembers) {
+              if (!currentPending.has(m.tag)) {
+                toAdd.push(m);
+                toAddTags.push(m.tag);
+              }
+            }
 
             if (toAdd.length > 0) {
-              yield* Effect.all(Array.map(toAdd, (m: ClanMemberTag) => Queue.offer(leavingQueue, m)));
+              yield* Effect.all(toAdd.map((m) => Queue.offer(leavingQueue, m)));
               yield* sessionStore.update((s) => ({
                 ...s,
-                leavers: Array.appendAll(
-                  s.leavers ?? [],
-                  Array.map(toAdd, (m: ClanMemberTag) => m.tag),
-                ),
+                leavers: [...(s.leavers ?? []), ...toAddTags],
               }));
             }
           }

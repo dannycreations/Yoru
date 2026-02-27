@@ -1,4 +1,4 @@
-import { Context, Data, Layer, Schema } from 'effect';
+import { Context, Data, Effect, Layer, Schema } from 'effect';
 
 import { EmojiSchema } from './schemas';
 
@@ -141,4 +141,28 @@ const emojiData = Data.struct({
 
 export type Emoji = Schema.Schema.Type<typeof EmojiSchema>;
 
-export const EmojiLayer = Layer.effect(EmojiTag, Schema.decodeUnknown(EmojiSchema)(emojiData));
+export const EmojiLayer = Layer.effect(
+  EmojiTag,
+  Schema.decodeUnknown(EmojiSchema)(emojiData).pipe(
+    Effect.map((emoji) => {
+      const unitLookup = new Map<string, { readonly category: string; readonly emoji: string }>();
+
+      const add = (record: Record<string, string>, category: string) => {
+        for (const [name, emoji] of Object.entries(record)) {
+          unitLookup.set(name, { category, emoji });
+        }
+      };
+
+      add(emoji.troops.normal, 'Troops');
+      add(emoji.troops.dark, 'Dark Troops');
+      add(emoji.troops.super, 'Super Troops');
+      add(emoji.troops.siege, 'Siege Machines');
+      add(emoji.troops.pets, 'Pets');
+      add(emoji.spells.normal, 'Spells');
+      add(emoji.spells.dark, 'Dark Spells');
+      add(emoji.heroes, 'Heroes');
+
+      return { ...emoji, unitLookup } as Emoji;
+    }),
+  ),
+);

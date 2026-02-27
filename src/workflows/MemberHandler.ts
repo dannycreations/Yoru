@@ -1,5 +1,5 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Array, Context, Effect, Layer, Option } from 'effect';
+import { Context, Effect, Layer, Option } from 'effect';
 
 import { MemberRoles, RegisterRoles } from '../core/constants';
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
@@ -58,18 +58,18 @@ export const MemberHandlerLayer = Layer.effect(
       Effect.gen(function* () {
         const config = yield* configStore.get;
         const userAccounts = yield* accountDatabase.find({ userId });
-        const otherAccounts = Array.filter(userAccounts, (acc) => !acc.bannedAt && acc.tag !== currentTag);
+        const otherAccounts = userAccounts.filter((acc) => !acc.bannedAt && acc.tag !== currentTag);
         if (otherAccounts.length === 0) return Option.none();
 
         const clanTagsSet = new Set(config.clanTags);
         const results = yield* Effect.all(
-          Array.map(otherAccounts, (account) =>
+          otherAccounts.map((account) =>
             getPlayer(account).pipe(Effect.map(({ player: pOpt }) => Option.filter(pOpt, (p) => !!p.clan && clanTagsSet.has(p.clan!.tag)))),
           ),
           { concurrency: 'inherit' },
         );
 
-        return Option.flatten(Array.findFirst(results, Option.isSome));
+        return results.find(Option.isSome) ?? Option.none();
       }).pipe(Effect.catchAllCause(() => Effect.succeed(Option.none())));
 
     const updatePresence = (member: GuildMember, playerOpt: Option.Option<Player>) =>

@@ -35,7 +35,7 @@ export const EnvLayer = Layer.effect(
   }),
 );
 
-export const EmojiSchema = Schema.Struct({
+const EmojiFields = {
   thumbnail: Schema.String,
   level: Schema.String,
   hashtag: Schema.String,
@@ -60,9 +60,13 @@ export const EmojiSchema = Schema.Struct({
     dark: Schema.Record({ key: Schema.String, value: Schema.String }),
   }),
   heroes: Schema.Record({ key: Schema.String, value: Schema.String }),
-});
+} as const;
 
-export interface Emoji extends Schema.Schema.Type<typeof EmojiSchema> {}
+export const EmojiSchema = Schema.Struct(EmojiFields);
+
+export interface Emoji extends Schema.Struct.Type<typeof EmojiFields> {
+  readonly unitLookup: Map<string, { readonly category: string; readonly emoji: string }>;
+}
 
 export const ClanSchema = Schema.Struct({
   tag: Schema.String,

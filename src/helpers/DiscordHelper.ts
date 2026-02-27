@@ -1,5 +1,5 @@
 import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
-import { Array, Effect, Option } from 'effect';
+import { Effect, Option } from 'effect';
 
 import { DiscordHandlerTag } from '../workflows/DiscordHandler';
 
@@ -57,12 +57,12 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
       if (cached) return Option.some(cached);
     }
 
-    const guilds = Array.fromIterable(client.guilds.cache.values());
+    const guilds = [...client.guilds.cache.values()];
     const fetchMember = (g: Guild) =>
       Effect.tryPromise(() => g.members.fetch(userId)).pipe(
         Effect.option,
         Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())),
       );
 
-    return yield* Effect.firstSuccessOf(Array.map(guilds, fetchMember)).pipe(Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())));
+    return yield* Effect.firstSuccessOf(guilds.map(fetchMember)).pipe(Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())));
   });

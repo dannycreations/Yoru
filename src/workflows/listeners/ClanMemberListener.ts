@@ -95,20 +95,13 @@ export const createClanMemberListener = () =>
             ));
 
           const storedClan = yield* currentStore.get;
-          const newMemberTags = new Set(Array.map(newClan.members, (m) => m.tag));
-          const leftMembers = Array.filter(storedClan.members, (m: ClanMemberTag) => !newMemberTags.has(m.tag));
+          const newMemberTags = new Set(newClan.members.map((m) => m.tag));
+          const leftMembers = storedClan.members.filter((m: ClanMemberTag) => !newMemberTags.has(m.tag));
 
           if (leftMembers.length > 0) {
             const session = yield* sessionStore.get;
             const currentPending = new Set(session.leavers ?? []);
-            const toAdd: ClanMemberTag[] = [];
-            const toAddTags: string[] = [];
-            for (const m of leftMembers) {
-              if (!currentPending.has(m.tag)) {
-                toAdd.push(m);
-                toAddTags.push(m.tag);
-              }
-            }
+            const toAdd = leftMembers.filter((m) => !currentPending.has(m.tag));
 
             if (toAdd.length > 0) {
               yield* Effect.all(
@@ -117,7 +110,7 @@ export const createClanMemberListener = () =>
               );
               yield* sessionStore.update((s) => ({
                 ...s,
-                leavers: [...(s.leavers ?? []), ...toAddTags],
+                leavers: [...(s.leavers ?? []), ...toAdd.map((m) => m.tag)],
               }));
             }
           }

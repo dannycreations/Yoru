@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import { Context, Effect, Layer } from 'effect';
+import { Effect } from 'effect';
 
 import { MemberRoles } from '../core/constants';
 import { EmojiTag } from '../core/emojis';
@@ -15,7 +15,7 @@ const CLAN_ROLE_MAP: Readonly<Record<string, ValueOf<typeof MemberRoles>>> = {
   elder: MemberRoles.Elder,
 } as const;
 
-const getThumbnailUrl = (emoji: Emoji, name: string): string => emoji.thumbnail.replace('{0}', name);
+const getThumbnailUrl = (emoji: { readonly thumbnail: string }, name: string): string => emoji.thumbnail.replace('{0}', name);
 
 export const getPlayerNickname = (member: GuildMember, player: { readonly name: string; readonly tag: string }): string => {
   const isSameName = member.user.username.toLowerCase() === player.name.toLowerCase();
@@ -72,25 +72,10 @@ export const createPlayerEmbed = (player: Player) =>
     return embed;
   });
 
-class UnitLookupTag extends Context.Tag('@helpers/UnitLookup')<UnitLookupTag, Map<string, { readonly category: string; readonly emoji: string }>>() {}
-
-const makeUnitLookup = Effect.gen(function* () {
-  const emoji = yield* EmojiTag;
-  return new Map<string, { readonly category: string; readonly emoji: string }>([
-    ...Object.entries(emoji.troops.normal).map(([name, emoji]) => [name, { category: 'Troops', emoji }] as const),
-    ...Object.entries(emoji.troops.dark).map(([name, emoji]) => [name, { category: 'Dark Troops', emoji }] as const),
-    ...Object.entries(emoji.troops.super).map(([name, emoji]) => [name, { category: 'Super Troops', emoji }] as const),
-    ...Object.entries(emoji.troops.siege).map(([name, emoji]) => [name, { category: 'Siege Machines', emoji }] as const),
-    ...Object.entries(emoji.troops.pets).map(([name, emoji]) => [name, { category: 'Pets', emoji }] as const),
-    ...Object.entries(emoji.spells.normal).map(([name, emoji]) => [name, { category: 'Spells', emoji }] as const),
-    ...Object.entries(emoji.spells.dark).map(([name, emoji]) => [name, { category: 'Dark Spells', emoji }] as const),
-    ...Object.entries(emoji.heroes).map(([name, emoji]) => [name, { category: 'Heroes', emoji }] as const),
-  ]);
-});
-
 export const categorizeUnits = (player: Player) =>
   Effect.gen(function* () {
-    const lookup = yield* UnitLookupTag;
+    const emoji = yield* EmojiTag;
+    const lookup = (emoji as Emoji).unitLookup;
 
     const categories: Record<string, string[]> = {
       Troops: [],
@@ -118,4 +103,4 @@ export const categorizeUnits = (player: Player) =>
     }
 
     return { categories, unknowns };
-  }).pipe(Effect.provide(Layer.effect(UnitLookupTag, makeUnitLookup)));
+  });

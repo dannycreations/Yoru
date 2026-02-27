@@ -230,32 +230,23 @@ const makeClashClient = Effect.gen(function* () {
 
   yield* Effect.gen(function* () {
     const tags = yield* Ref.get(clanTags);
+    if (tags.size === 0) return;
+
     const cache = yield* Ref.get(clanCache);
 
     const updates = yield* Effect.forEach(
       tags,
       (tag) =>
         getClan(tag).pipe(
-          Effect.matchEffect({
-            onFailure: () => Effect.succeed(Option.none()),
-            onSuccess: (newClan) =>
-              Effect.gen(function* () {
-                const oldClan = cache.get(tag);
-                if (oldClan && oldClan.memberCount === newClan.memberCount) {
-                  const isIdentical = oldClan.members.every((m, i) => m.tag === newClan.members[i]?.tag && m.role === newClan.members[i]?.role);
-                  if (isIdentical) return Option.some({ tag, newClan });
-                }
-
-                if (oldClan) {
-                  yield* PubSub.publish(events, {
-                    _tag: ClientEvents.ClanMember,
-                    oldClan,
-                    newClan,
-                  });
-                }
-                return Option.some({ tag, newClan });
-              }),
+          Effect.map((newClan) => {
+            const oldClan = cache.get(tag);
+            if (oldClan && oldClan.memberCount === newClan.memberCount) {
+              const isIdentical = oldClan.members.every((m, i) => m.tag === newClan.members[i]?.tag && m.role === newClan.members[i]?.role);
+              if (isIdentical) return { tag, newClan, changed: false };
+            }
+            return { tag, newClan, oldClan, changed: true };
           }),
+          Effect.option,
         ),
       { concurrency: 'inherit' },
     ).pipe(Effect.map((arr) => Chunk.compact(Chunk.fromIterable(arr))));
@@ -268,6 +259,19 @@ const makeClashClient = Effect.gen(function* () {
         }
         return next;
       });
+
+      yield* Effect.forEach(
+        updates,
+        (u) =>
+          u.changed && u.oldClan
+            ? PubSub.publish(events, {
+                _tag: ClientEvents.ClanMember,
+                oldClan: u.oldClan,
+                newClan: u.newClan,
+              })
+            : Effect.void,
+        { concurrency: 'inherit' },
+      );
     }
   }).pipe(
     Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),

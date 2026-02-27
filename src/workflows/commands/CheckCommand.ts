@@ -161,19 +161,14 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const tags = Array.map(clan.members, (m) => m.tag);
     const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
 
-    const userIdsSet = new Set<number>();
-    const accountMap = new Map<string, (typeof accounts)[number]>();
-    for (const acc of accounts) {
-      accountMap.set(acc.tag, acc);
-      if (acc.userId != null) userIdsSet.add(acc.userId);
-    }
+    const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
+    const userIds = [...new Set(accounts.map((acc) => acc.userId).filter((id): id is number => id != null))];
 
-    const userIds = Array.fromIterable(userIdsSet);
     const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
-    const userMap = new Map(Array.map(users, (u) => [u.id, u]));
+    const userMap = new Map(users.map((u) => [u.id, u]));
 
     const memberResults = yield* Effect.all(
-      Array.map(clan.members, (member) =>
+      clan.members.map((member) =>
         Effect.gen(function* () {
           const field = `**${member.name}** ${member.tag}\n`;
           const account = accountMap.get(member.tag);

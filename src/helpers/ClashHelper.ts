@@ -25,17 +25,19 @@ export const getPlayerNickname = (member: GuildMember, player: { readonly name: 
 export const parseClan = (player: Player) =>
   Effect.gen(function* () {
     const emoji = yield* EmojiTag;
-    if (player.clan) {
-      const role = (player.role && CLAN_ROLE_MAP[player.role]) ?? MemberRoles.Member;
-      const text = `${role} of ${player.clan.name}\n(${player.clan.tag})`;
-      const iconURL = player.clan.badge.url;
-      return { text, iconURL };
+
+    if (!player.clan) {
+      return {
+        text: 'Player is clanless',
+        iconURL: getThumbnailUrl(emoji, 'badges/noclan.png'),
+      };
     }
 
-    return {
-      text: 'Player is clanless',
-      iconURL: getThumbnailUrl(emoji, 'badges/noclan.png'),
-    };
+    const role = (player.role && CLAN_ROLE_MAP[player.role]) ?? MemberRoles.Member;
+    const text = `${role} of ${player.clan.name}\n(${player.clan.tag})`;
+    const iconURL = player.clan.badge.url;
+
+    return { text, iconURL };
   });
 
 export const formatPlayerStats = (player: Player) =>
@@ -92,14 +94,17 @@ export const categorizeUnits = (player: Player) =>
     const rawUnits = [...player.troops, ...player.spells, ...player.heroes];
 
     for (const unit of rawUnits) {
-      if (unit.village !== 'home') continue;
+      if (unit.village !== 'home') {
+        continue;
+      }
 
       const mapping = lookup.get(unit.name);
-      if (mapping) {
-        categories[mapping.category].push(`${mapping.emoji}**${unit.level}**/${unit.maxLevel}`);
-      } else {
+      if (!mapping) {
         unknowns.push(unit);
+        continue;
       }
+
+      categories[mapping.category].push(`${mapping.emoji}**${unit.level}**/${unit.maxLevel}`);
     }
 
     return { categories, unknowns };

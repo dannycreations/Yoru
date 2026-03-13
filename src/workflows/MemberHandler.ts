@@ -59,7 +59,10 @@ export const MemberHandlerLayer = Layer.effect(
         const config = yield* configStore.get;
         const userAccounts = yield* accountDatabase.find({ userId });
         const otherAccounts = userAccounts.filter((acc) => !acc.bannedAt && acc.tag !== currentTag);
-        if (otherAccounts.length === 0) return Option.none();
+
+        if (otherAccounts.length === 0) {
+          return Option.none();
+        }
 
         const clanTagsSet = new Set(config.clanTags);
         const findInClans = (account: AccountTable) =>
@@ -75,36 +78,47 @@ export const MemberHandlerLayer = Layer.effect(
 
     const updatePresence = (member: GuildMember, playerOpt: Option.Option<Player>) =>
       Effect.gen(function* () {
-        if (member.roles.cache.some(isModeratorRole)) return;
+        if (member.roles.cache.some(isModeratorRole)) {
+          return;
+        }
 
         const guild = member.guild;
         const config = yield* configStore.get;
         const session = yield* sessionStore.get;
 
-        if (Option.isSome(playerOpt)) {
-          const player = playerOpt.value;
-          if (player.clan && config.clanTags.includes(player.clan.tag)) {
-            const nickname = getPlayerNickname(member, player);
-            yield* Effect.tryPromise(() => member.setNickname(nickname));
-
-            yield* removeMemberRoles(member, isRegisterRole);
-
-            const clanName = player.clan.name;
-            const rolesToAdd = guild.roles.cache.filter((r) => r.name === clanName || r.name === MemberRoles.Elder);
-            if (rolesToAdd.size > 0) yield* Effect.tryPromise(() => member.roles.add(rolesToAdd));
-          } else {
-            yield* Effect.tryPromise(() => member.setNickname(`TH ${player.townHallLevel} - ${player.name}`));
-
-            yield* removeMemberRoles(member, isRegisterRole);
-
-            const approvedRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Approved);
-            if (approvedRole) yield* Effect.tryPromise(() => member.roles.add(approvedRole));
-          }
-        } else {
+        if (Option.isNone(playerOpt)) {
           yield* removeMemberRoles(member, (r) => isMemberRole(r) || isClanRole(r, session.clans ?? []));
 
           const reapplyRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Reapply);
-          if (reapplyRole) yield* Effect.tryPromise(() => member.roles.add(reapplyRole));
+          if (reapplyRole) {
+            yield* Effect.tryPromise(() => member.roles.add(reapplyRole));
+          }
+
+          return;
+        }
+
+        const player = playerOpt.value;
+
+        if (!player.clan || !config.clanTags.includes(player.clan.tag)) {
+          yield* Effect.tryPromise(() => member.setNickname(`TH ${player.townHallLevel} - ${player.name}`));
+          yield* removeMemberRoles(member, isRegisterRole);
+
+          const approvedRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Approved);
+          if (approvedRole) {
+            yield* Effect.tryPromise(() => member.roles.add(approvedRole));
+          }
+
+          return;
+        }
+
+        const nickname = getPlayerNickname(member, player);
+        yield* Effect.tryPromise(() => member.setNickname(nickname));
+        yield* removeMemberRoles(member, isRegisterRole);
+
+        const clanName = player.clan.name;
+        const rolesToAdd = guild.roles.cache.filter((r) => r.name === clanName || r.name === MemberRoles.Elder);
+        if (rolesToAdd.size > 0) {
+          yield* Effect.tryPromise(() => member.roles.add(rolesToAdd));
         }
       }).pipe(Effect.catchAll((error) => Effect.logError(`Failed to update Discord presence for ${member.id}`, error)));
 

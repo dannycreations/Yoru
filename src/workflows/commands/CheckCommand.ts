@@ -86,10 +86,18 @@ const checkPlayer = (message: Message<true>, tag: string) =>
 
     const accountOpt = yield* accountDatabase.findOne({ tag });
     const isOwned = yield* Effect.gen(function* () {
-      if (Option.isNone(accountOpt)) return '';
+      if (Option.isNone(accountOpt)) {
+        return '';
+      }
+
       const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
-      if (Option.isNone(userOpt)) return '';
+
+      if (Option.isNone(userOpt)) {
+        return '';
+      }
+
       const member = message.guild.members.cache.get(userOpt.value.ownerId);
+
       return `👤 ${member ? member.user.tag : userOpt.value.ownerId}\n`;
     });
 
@@ -102,9 +110,11 @@ const checkPlayer = (message: Message<true>, tag: string) =>
     const { categories, unknowns } = yield* categorizeUnits(player);
 
     Array.forEach(Record.toEntries(categories), ([name, list]) => {
-      if (list.length > 0) {
-        embed.addFields([...getSplitFields(name, list)]);
+      if (list.length === 0) {
+        return;
       }
+
+      embed.addFields([...getSplitFields(name, list)]);
     });
 
     const achievements = Array.join(
@@ -136,9 +146,10 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
 
     if (page > 0 && page <= accounts.length) {
       yield* checkPlayer(message, accounts[page - 1].tag);
-    } else {
-      yield* checkProfile(message, ownerId, accounts);
+      return;
     }
+
+    yield* checkProfile(message, ownerId, accounts);
   });
 
 const checkMembers = (message: Message<true>, page = 1) =>
@@ -262,23 +273,25 @@ export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>
     }
 
     if (/member/i.test(tag)) {
-      yield* checkMembers(message, page);
-    } else if (Util.isValidTag(tag)) {
-      yield* checkPlayer(message, tag);
-    } else {
-      const mentionId = parseMentionOrSnowflake(tag);
-      if (mentionId) {
-        const configStore = yield* ConfigStoreTag;
-        const config = yield* configStore.get;
-        const isOwner = Array.contains(config.ownerIds, message.author.id);
-
-        if (isOwner || Array.contains(tag, '<@')) {
-          yield* checkUser(message, mentionId, page);
-        } else {
-          yield* Effect.tryPromise(() => message.reply('Invalid player tag!'));
-        }
-      } else {
-        yield* Effect.tryPromise(() => message.reply('Invalid player tag!'));
-      }
+      return yield* checkMembers(message, page);
     }
+
+    if (Util.isValidTag(tag)) {
+      return yield* checkPlayer(message, tag);
+    }
+
+    const mentionId = parseMentionOrSnowflake(tag);
+    if (!mentionId) {
+      return yield* Effect.tryPromise(() => message.reply('Invalid player tag!'));
+    }
+
+    const configStore = yield* ConfigStoreTag;
+    const config = yield* configStore.get;
+    const isOwner = Array.contains(config.ownerIds, message.author.id);
+
+    if (isOwner || Array.contains(tag, '<@')) {
+      return yield* checkUser(message, mentionId, page);
+    }
+
+    yield* Effect.tryPromise(() => message.reply('Invalid player tag!'));
   }).pipe(Effect.asVoid);

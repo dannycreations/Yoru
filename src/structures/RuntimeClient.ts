@@ -36,15 +36,17 @@ export interface RuntimeCycleOptions {
   readonly restartDelayMs?: number;
 }
 
-export const cycleUntilMidnight: Effect.Effect<never, RuntimeRestart> = Effect.sync(() => {
-  const now = new Date();
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
-  return tomorrow.getTime() - now.getTime();
-}).pipe(
-  Effect.flatMap((ms) => Effect.sleep(`${ms} millis`)),
-  Effect.zipRight(Effect.logInfo(chalk`{bold.yellow It's midnight time. Restarting app...}`)),
-  Effect.zipRight(Effect.fail(new RuntimeRestart())),
-);
+export const cycleUntilMidnight: Effect.Effect<never, RuntimeRestart> = Effect.gen(function* () {
+  const msUntilMidnight = yield* Effect.sync(() => {
+    const now = new Date();
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+    return tomorrow.getTime() - now.getTime();
+  });
+
+  yield* Effect.sleep(`${msUntilMidnight} millis`);
+  yield* Effect.logInfo(chalk`{bold.yellow It's midnight time. Restarting app...}`);
+  return yield* Effect.fail(new RuntimeRestart());
+});
 
 export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: RuntimeCycleOptions = {}): void => {
   const { maxRestarts = 3, intervalMs = 60_000, restartDelayMs = 5_000 } = options;
@@ -59,25 +61,29 @@ export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: 
       Effect.catchAllCause((cause) =>
         Effect.gen(function* () {
           const failures = Cause.failures(cause);
-
-          const isRestart = (error: unknown): error is RuntimeRestart =>
-            isErrorLike<{ readonly _tag: string }>(error) && error._tag === 'RuntimeRestart';
-
-          if (Chunk.some(failures, isRestart)) return;
-
-          const now = Date.now();
-          const nextRestarts = yield* Ref.updateAndGet(restartTimesRef, (times) => {
-            const filtered = [];
-            for (let i = 0; i < times.length; i++) {
-              if (now - times[i] < intervalMs) filtered.push(times[i]);
+          const hasRestart = Chunk.some(failures, (error: unknown): error is RuntimeRestart => {
+            const isError = isErrorLike<{ readonly _tag: string }>(error);
+            if (!isError) {
+              return false;
             }
-            filtered.push(now);
-            return filtered;
+
+            return error._tag === 'RuntimeRestart';
           });
+
+          if (hasRestart) {
+            return;
+          }
+
+          const now = yield* Effect.sync(() => Date.now());
+          const restartTimes = yield* Ref.get(restartTimesRef);
+          const nextRestarts = [...restartTimes.filter((t) => now - t < intervalMs), now];
+
+          yield* Ref.set(restartTimesRef, nextRestarts);
 
           if (nextRestarts.length >= maxRestarts) {
             yield* Effect.logFatal(chalk`{bold.red System crashed too many times. Shutting down...}`, cause);
             yield* Effect.sync(() => process.exit(1));
+            return;
           }
 
           yield* Effect.logError(chalk`{bold.red System encountered an error}`, cause);

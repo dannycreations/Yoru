@@ -16,12 +16,17 @@ export const getSplitFields = (
 
   for (const item of list) {
     if (currentValue && currentValue.length + item.length + separator.length > 1024) {
-      fields.push({ name: count === 0 ? name : `${name} (cont.)`, value: currentValue });
+      fields.push({
+        name: count === 0 ? name : `${name} (cont.)`,
+        value: currentValue,
+      });
+
       currentValue = item;
       count++;
-    } else {
-      currentValue = currentValue ? `${currentValue}${separator}${item}` : item;
+      continue;
     }
+
+    currentValue = currentValue ? `${currentValue}${separator}${item}` : item;
   }
 
   if (currentValue) {
@@ -46,7 +51,11 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
   Effect.gen(function* () {
     if (guild) {
       const cached = guild.members.cache.get(userId);
-      if (cached) return Option.some(cached);
+
+      if (cached) {
+        return Option.some(cached);
+      }
+
       return yield* Effect.tryPromise(() => guild.members.fetch(userId)).pipe(Effect.option);
     }
 
@@ -54,10 +63,14 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
 
     for (const g of client.guilds.cache.values()) {
       const cached = g.members.cache.get(userId);
-      if (cached) return Option.some(cached);
+
+      if (cached) {
+        return Option.some(cached);
+      }
     }
 
     const guilds = [...client.guilds.cache.values()];
+
     const fetchMember = (g: Guild) =>
       Effect.tryPromise(() => g.members.fetch(userId)).pipe(
         Effect.option,

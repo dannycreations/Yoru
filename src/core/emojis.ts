@@ -149,8 +149,7 @@ export const EmojiLayer = Layer.effect(
 
       const add = (record: Record<string, string>, category: string) => {
         const entries = Object.entries(record);
-        for (let i = 0; i < entries.length; i++) {
-          const [name, emoji] = entries[i];
+        for (const [name, emoji] of entries) {
           unitLookup.set(name, { category, emoji });
         }
       };

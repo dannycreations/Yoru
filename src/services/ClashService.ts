@@ -68,8 +68,11 @@ const makeClashClient = Effect.gen(function* () {
         );
       }
 
-      if (isErrorLike<{ readonly code: string }>(cause) && ERROR_CODES.has(cause.code)) {
+      const isNetwork = isErrorLike<{ readonly code: string }>(cause) && ERROR_CODES.has(cause.code);
+
+      if (isNetwork) {
         yield* waitForConnection();
+
         return yield* Effect.fail(
           new ClashError({
             message: 'Retrying after connection recovery',
@@ -78,62 +81,64 @@ const makeClashClient = Effect.gen(function* () {
         );
       }
 
-      if (cause instanceof HTTPError) {
-        if (cause.status === 503) {
-          return yield* Effect.fail(
-            new ClashError({
-              message: 'Service is temporarily unavailable!',
-              status: 503,
-            }),
-          );
-        }
-        if (cause.status === 403) {
-          if (cause.reason === 'accessDenied.invalidIp') {
-            client.rest.requestHandler['keys'].shift();
-            const ipMatch = cause.message.match(/(\d{1,3}\.){3}\d+/);
-            yield* Ref.set(ipRef, Option.fromNullable(ipMatch?.[0]));
-          }
-
-          yield* Effect.tryPromise({
-            try: () =>
-              client.rest.login({
-                email: config.email,
-                password: config.password,
-                keyName: config.keyName ?? 'Yoru',
-                keyCount: config.keyCount ?? 1,
-              }),
-            catch: (cause) =>
-              new ClashError({
-                message: 'Failed to login to Clash API',
-                cause,
-              }),
-          }).pipe(loginSemaphore.withPermits(1));
-
-          yield* Ref.update(requestStateRef, (s) => s + 1);
-          return yield* Effect.fail(
-            new ClashError({
-              message: 'Retrying due to IP change',
-              status: 403,
-              cause,
-            }),
-          );
-        }
-        if (ERROR_STATUS_CODES.has(cause.status)) {
-          return yield* Effect.fail(
-            new ClashError({
-              message: 'Transient API error',
-              status: cause.status,
-              cause,
-            }),
-          );
-        }
-      }
-
-      if (cause instanceof SyntaxError && cause.message.includes('not valid JSON')) {
+      if (!(cause instanceof HTTPError)) {
         return yield* Effect.fail(
           new ClashError({
-            message: 'Invalid JSON response',
-            status: 500,
+            message: 'Request failed',
+            cause,
+          }),
+        );
+      }
+
+      if (cause.status === 503) {
+        return yield* Effect.fail(
+          new ClashError({
+            message: 'Service is temporarily unavailable!',
+            status: 503,
+          }),
+        );
+      }
+
+      if (cause.status === 403) {
+        const isIpDenied = cause.reason === 'accessDenied.invalidIp';
+
+        if (isIpDenied) {
+          client.rest.requestHandler['keys'].shift();
+          const ipMatch = cause.message.match(/(\d{1,3}\.){3}\d+/);
+          yield* Ref.set(ipRef, Option.fromNullable(ipMatch?.[0]));
+        }
+
+        yield* Effect.tryPromise({
+          try: () =>
+            client.rest.login({
+              email: config.email,
+              password: config.password,
+              keyName: config.keyName ?? 'Yoru',
+              keyCount: config.keyCount ?? 1,
+            }),
+          catch: (cause) =>
+            new ClashError({
+              message: 'Failed to login to Clash API',
+              cause,
+            }),
+        }).pipe(loginSemaphore.withPermits(1));
+
+        yield* Ref.update(requestStateRef, (s) => s + 1);
+
+        return yield* Effect.fail(
+          new ClashError({
+            message: 'Retrying due to IP change',
+            status: 403,
+            cause,
+          }),
+        );
+      }
+
+      if (ERROR_STATUS_CODES.has(cause.status)) {
+        return yield* Effect.fail(
+          new ClashError({
+            message: 'Transient API error',
+            status: cause.status,
             cause,
           }),
         );
@@ -206,10 +211,12 @@ const makeClashClient = Effect.gen(function* () {
       const next = new Set(set);
       let changed = false;
       for (const tag of tags) {
-        if (!next.has(tag)) {
-          next.add(tag);
-          changed = true;
+        if (next.has(tag)) {
+          continue;
         }
+
+        next.add(tag);
+        changed = true;
       }
       return changed ? next : set;
     });
@@ -236,7 +243,9 @@ const makeClashClient = Effect.gen(function* () {
 
   yield* Effect.gen(function* () {
     const tags = yield* Ref.get(clanTags);
-    if (tags.size === 0) return;
+    if (tags.size === 0) {
+      return;
+    }
 
     const cache = yield* Ref.get(clanCache);
 
@@ -246,48 +255,66 @@ const makeClashClient = Effect.gen(function* () {
         getClan(tag).pipe(
           Effect.map((newClan) => {
             const oldClan = cache.get(tag);
-            if (oldClan && oldClan.memberCount === newClan.memberCount) {
-              const oldMembers = oldClan.members;
-              const newMembers = newClan.members;
-
-              const isIdentical =
-                oldMembers.length === newMembers.length &&
-                oldMembers.every((m, i) => {
-                  const nm = newMembers[i];
-                  return nm && m.tag === nm.tag && m.role === nm.role;
-                });
-
-              if (isIdentical) return { tag, newClan, changed: false };
+            if (!oldClan) {
+              return { tag, newClan, oldClan, changed: true };
             }
-            return { tag, newClan, oldClan, changed: true };
+
+            if (oldClan.memberCount !== newClan.memberCount) {
+              return { tag, newClan, oldClan, changed: true };
+            }
+
+            const oldMembers = oldClan.members;
+            const newMembers = newClan.members;
+
+            const isIdentical =
+              oldMembers.length === newMembers.length &&
+              oldMembers.every((m, i) => {
+                const nm = newMembers[i];
+                return nm && m.tag === nm.tag && m.role === nm.role;
+              });
+
+            if (!isIdentical) {
+              return { tag, newClan, oldClan, changed: true };
+            }
+
+            return { tag, newClan, changed: false };
           }),
           Effect.option,
         ),
       { concurrency: 'inherit' },
     ).pipe(Effect.map((arr) => Array.fromIterable(Chunk.compact(Chunk.fromIterable(arr)))));
 
-    if (updates.length > 0) {
-      yield* Ref.update(clanCache, (prev) => {
-        const next = new Map(prev);
-        for (const update of updates) {
-          next.set(update.tag, update.newClan);
-        }
-        return next;
-      });
-
-      yield* Effect.forEach(
-        updates,
-        (u) =>
-          u.changed && u.oldClan
-            ? PubSub.publish(events, {
-                _tag: ClientEvents.ClanMember,
-                oldClan: u.oldClan,
-                newClan: u.newClan,
-              })
-            : Effect.void,
-        { concurrency: 'inherit' },
-      );
+    if (updates.length === 0) {
+      return;
     }
+
+    yield* Ref.update(clanCache, (prev) => {
+      const next = new Map(prev);
+      for (const update of updates) {
+        next.set(update.tag, update.newClan);
+      }
+      return next;
+    });
+
+    yield* Effect.forEach(
+      updates,
+      (u) => {
+        if (!u.changed) {
+          return Effect.void;
+        }
+
+        if (!u.oldClan) {
+          return Effect.void;
+        }
+
+        return PubSub.publish(events, {
+          _tag: ClientEvents.ClanMember,
+          oldClan: u.oldClan,
+          newClan: u.newClan,
+        });
+      },
+      { concurrency: 'inherit' },
+    );
   }).pipe(
     Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
     Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),

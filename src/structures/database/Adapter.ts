@@ -123,13 +123,16 @@ const withTrace = <A, E, R>(
           return Effect.failCause(cause);
         }
 
-        let query: unknown;
-        if (trace.value) {
-          try {
-            // @ts-expect-error Internal drizzle access.
-            query = db.dialect.sqlToQuery(trace.value());
-          } catch {}
-        }
+        const query = Option.fromNullable(trace.value).pipe(
+          Option.flatMap((v) =>
+            Effect.try({
+              // @ts-expect-error Internal drizzle access.
+              try: () => db.dialect.sqlToQuery(v()),
+              catch: () => undefined,
+            }).pipe(Effect.runSync, Option.fromNullable),
+          ),
+          Option.getOrUndefined,
+        );
 
         const defect = Cause.dieOption(cause);
         const error = Option.orElse(failure, () => defect).pipe(
@@ -163,8 +166,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     }
 
     const cache: Record<string, unknown> = {};
-    for (let i = joins.length - 1; i >= 0; i--) {
-      Object.assign(cache, joins[i].table);
+    for (const join of [...joins].reverse()) {
+      Object.assign(cache, join.table);
     }
     Object.assign(cache, table);
     return cache;
@@ -172,19 +175,31 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
 
   const buildWhereComparison = (key: unknown, val: unknown): ReadonlyArray<SQL> => {
     const column = table[key as keyof A] as unknown as SQL;
-    if (!column) return [sql`0`];
-    if (val === undefined) return [];
+
+    if (!column) {
+      return [sql`0`];
+    }
+
+    if (val === undefined) {
+      return [];
+    }
 
     if (val === null || typeof val !== 'object' || Array.isArray(val)) {
       return [val === null ? isNull(column) : eq(column, val as SQL)];
     }
 
     const acc: SQL[] = [];
+
     for (const operator in val) {
       const operand = (val as Record<string, unknown>)[operator];
+
       if (operator === '$not') {
         const negated = buildWhereComparison(key, operand);
-        if (negated.length > 0) acc.push(not(and(...negated)!));
+
+        if (negated.length > 0) {
+          acc.push(not(and(...negated)!));
+        }
+
         continue;
       }
 
@@ -204,8 +219,10 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       }
 
       const handler = OPERATOR_MAP[operator];
+
       acc.push(handler ? handler(column, operand as SQL) : sql`0`);
     }
+
     return acc;
   };
 
@@ -216,10 +233,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       const value = (filter as Record<string, unknown>)[key];
       if (['$and', '$nand', '$or', '$nor'].includes(key)) {
         const nested: SQL[] = [];
+
         if (Array.isArray(value)) {
           for (let j = 0; j < value.length; j++) {
             const result = buildWhereLogical(value[j] as QueryFilter<A>);
-            for (let k = 0; k < result.length; k++) nested.push(result[k]);
+
+            for (let k = 0; k < result.length; k++) {
+              nested.push(result[k]);
+            }
           }
         }
 
@@ -241,7 +262,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       }
 
       const result = buildWhereComparison(key, value);
-      for (let j = 0; j < result.length; j++) acc.push(result[j]);
+      acc.push(...result);
     }
     return acc;
   };
@@ -262,9 +283,11 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     const orderObj = order as Record<string, string>;
     for (const key in orderObj) {
       const column = columnCache[key] as SQL;
-      if (column) {
-        clauses.push(orderObj[key]?.toLowerCase() === 'desc' ? desc(column) : asc(column));
+      if (!column) {
+        continue;
       }
+
+      clauses.push(orderObj[key]?.toLowerCase() === 'desc' ? desc(column) : asc(column));
     }
 
     return clauses.length === 0 ? undefined : (sql.join(clauses, sql.raw(', ')) as unknown as SQL);
@@ -281,7 +304,18 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     }
 
     for (const key in selectObj) {
-      if (key === 'id' || selectObj[key] === 0 || !columnCache[key]) continue;
+      if (key === 'id') {
+        continue;
+      }
+
+      if (selectObj[key] === 0) {
+        continue;
+      }
+
+      if (!columnCache[key]) {
+        continue;
+      }
+
       columns[key] = columnCache[key];
     }
 
@@ -318,28 +352,36 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         if (hasKeys(options.joins)) {
           yield* Effect.forEach(options.joins, (join) =>
             Effect.gen(function* () {
-              if (!hasKeys(join)) return;
+              if (!hasKeys(join)) {
+                return;
+              }
 
               const isCrossJoin = join.type === 'cross';
-              if (!(isCrossJoin || (join.on && hasKeys(join.on)))) {
+
+              if (!isCrossJoin && !(join.on && hasKeys(join.on))) {
                 return yield* Effect.die(new Error(`Join conditions (on) must be specified for join type "${join.type}"`));
               }
 
               if (isCrossJoin) {
                 query.crossJoin(join.table);
-              } else {
-                const conds = yield* Effect.forEach(Object.entries(join.on as Record<string, string>), ([leftKey, rightKey]) => {
-                  const leftCol = table[leftKey as keyof A];
-                  const rightCol = (join.table as unknown as Record<string, unknown>)[rightKey!];
-                  if (!(leftCol && rightCol)) {
-                    return Effect.die(new Error(`Invalid join keys: ${leftKey}, ${rightKey}`));
-                  }
-                  return Effect.succeed(sql`${leftCol} = ${rightCol as SQL}`);
-                });
 
-                const joinMethod = JOIN_MAP[join.type as keyof typeof JOIN_MAP] ?? 'innerJoin';
-                query[joinMethod](join.table, sql`(${sql.join(conds, sql.raw(' AND '))})`);
+                return;
               }
+
+              const conds = yield* Effect.forEach(Object.entries(join.on as Record<string, string>), ([leftKey, rightKey]) => {
+                const leftCol = table[leftKey as keyof A];
+                const rightCol = (join.table as unknown as Record<string, unknown>)[rightKey!];
+
+                if (!leftCol || !rightCol) {
+                  return Effect.die(new Error(`Invalid join keys: ${leftKey}, ${rightKey}`));
+                }
+
+                return Effect.succeed(sql`${leftCol} = ${rightCol as SQL}`);
+              });
+
+              const joinMethod = JOIN_MAP[join.type as keyof typeof JOIN_MAP] ?? 'innerJoin';
+
+              query[joinMethod](join.table, sql`(${sql.join(conds, sql.raw(' AND '))})`);
             }),
           );
         }
@@ -399,16 +441,18 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       const rOpt = yield* findOne(filter as QueryFilter<A>, { ...options, select: undefined });
       if (options.upsert && Option.isNone(rOpt)) {
         const s = yield* insert({ ...filter, ...data } as Omit<Insert, 'id'>, options as any);
+
         return Array.head(s);
       }
 
-      if (Option.isSome(rOpt)) {
-        const r = rOpt.value;
-        const s = yield* update({ ...r, ...data } as unknown as Select, options as any);
-        return Array.head(s);
+      if (Option.isNone(rOpt)) {
+        return Option.none();
       }
 
-      return Option.none();
+      const r = rOpt.value;
+      const s = yield* update({ ...r, ...data } as unknown as Select, options as any);
+
+      return Array.head(s);
     })) as Adapter<A, Select, Insert>['findOneAndUpdate'];
 
   const findOneAndDelete = <B extends Array<Table>, S extends SelectClause<A, B, S>>(
@@ -417,8 +461,13 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   ) =>
     Effect.gen(function* () {
       const rOpt = yield* findOne(filter, { ...options, select: undefined });
-      if (Option.isNone(rOpt)) return Option.none();
+
+      if (Option.isNone(rOpt)) {
+        return Option.none();
+      }
+
       const s = yield* deleteFn(rOpt.value as unknown as Select, options);
+
       return Array.head(s) as Option.Option<ReturnAlias<A, B, S>>;
     });
 
@@ -437,12 +486,14 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         try: () => {
           const input = Array.isArray(record) ? record : [record];
           const values: Insert[] = [];
-          for (let i = 0; i < input.length; i++) {
-            const rec = input[i] as Record<string, unknown>;
-            if (hasKeys(rec)) {
-              const { id, ...newRec } = rec;
-              values.push(newRec as Insert);
+          for (const record of input) {
+            const rec = record as Record<string, unknown>;
+            if (!hasKeys(rec)) {
+              continue;
             }
+
+            const { id, ...newRec } = rec;
+            values.push(newRec as Insert);
           }
 
           if (values.length === 0) {
@@ -454,24 +505,37 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
           const conflictOpt = options.conflict;
           if (hasKeys(conflictOpt)) {
             const target: SQL[] = [];
-            for (let i = 0; i < conflictOpt.target.length; i++) {
-              const col = table[conflictOpt.target[i] as keyof A];
-              if (col) target.push(col as unknown as SQL);
+            for (const key of conflictOpt.target) {
+              const col = table[key as keyof A];
+              if (col) {
+                target.push(col as unknown as SQL);
+              }
             }
 
             const rec = (hasKeys(conflictOpt.set) ? conflictOpt.set : values[0]) as Record<string, unknown>;
 
             if (conflictOpt.resolution === 'ignore') {
               query.onConflictDoNothing({ target });
-            } else if (conflictOpt.resolution === 'update') {
+            }
+
+            if (conflictOpt.resolution === 'update') {
               const { id, ...newRec } = rec;
               query.onConflictDoUpdate({ target, set: newRec as Insert });
-            } else {
+            }
+
+            if (conflictOpt.resolution === 'merge') {
               const mergeSet: Record<string, unknown> = {};
               for (const key in rec) {
-                if (key === 'id') continue;
+                if (key === 'id') {
+                  continue;
+                }
+
                 const col = table[key as keyof A];
-                if (col) mergeSet[key] = sql`COALESCE(${col}, ${sql`${rec[key]}`})`;
+                if (!col) {
+                  continue;
+                }
+
+                mergeSet[key] = sql`COALESCE(${col}, ${sql`${rec[key]}`})`;
               }
               query.onConflictDoUpdate({ target, set: mergeSet as Insert });
             }

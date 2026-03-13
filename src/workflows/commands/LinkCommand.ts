@@ -16,7 +16,9 @@ const linkedTag = (guild: Guild, ownerId: string, player: Player) =>
   Effect.gen(function* () {
     const memberHandler = yield* MemberHandlerTag;
     const memberOpt = yield* getGuildMember(ownerId, guild);
-    if (Option.isNone(memberOpt)) return;
+    if (Option.isNone(memberOpt)) {
+      return;
+    }
 
     yield* memberHandler.updatePresence(memberOpt.value, Option.some(player));
   });
@@ -54,7 +56,9 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       const configStore = yield* ConfigStoreTag;
       const config = yield* configStore.get;
       const isAuthorized = Array.contains(config.ownerIds, message.author.id) || (message.member?.roles.cache.some(isModeratorRole) ?? false);
-      if (!isAuthorized) return;
+      if (!isAuthorized) {
+        return;
+      }
 
       const player = yield* clash.getPlayer(tag);
       const embed = yield* createPlayerEmbed(player);
@@ -69,16 +73,15 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
         if (user && user.ownerId === mentionId) {
           yield* linkedTag(message.guild, mentionId, player);
           embed.setDescription(`${titleField}Re-linked to **${member?.user.tag ?? mentionId}**.`);
+        } else if (user && member) {
+          embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`);
         } else if (user) {
-          if (member) {
-            embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`);
-          } else {
-            yield* userDatabase.update({ ...user, ownerId: mentionId });
-            yield* linkedTag(message.guild, mentionId, player);
-            const newMember = message.guild.members.cache.get(mentionId);
-            embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag ?? mentionId}**.`);
-          }
+          yield* userDatabase.update({ ...user, ownerId: mentionId });
+          yield* linkedTag(message.guild, mentionId, player);
+          const newMember = message.guild.members.cache.get(mentionId);
+          embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag ?? mentionId}**.`);
         }
+
         yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
         return;
       }

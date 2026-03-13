@@ -56,10 +56,21 @@ export const createDiscordListener = (
       message: Message,
     ): Effect.Effect<void, unknown, DiscordHandler | ConfigStoreTag | SqliteClientTag | ClashClientTag | MemberHandlerTag> =>
       Effect.gen(function* () {
-        if (message.webhookId !== null || message.system || message.author.bot) return;
+        if (message.webhookId !== null) {
+          return;
+        }
+
+        if (message.system) {
+          return;
+        }
+
+        if (message.author.bot) {
+          return;
+        }
 
         const config = yield* configStore.get;
-        if (discordHandler.isMaintenance && !Array.contains(config.ownerIds, message.author.id)) {
+        const isOwner = Array.contains(config.ownerIds, message.author.id);
+        if (discordHandler.isMaintenance && !isOwner) {
           yield* Effect.tryPromise(() => message.reply('⚠️ Under Maintenance!')).pipe(Effect.ignore);
           return;
         }

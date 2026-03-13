@@ -29,7 +29,9 @@ export const createClanMemberListener = () =>
       Effect.gen(function* () {
         const session = yield* sessionStore.get;
         const leavers = session.leavers ?? [];
-        if (!leavers.includes(player.tag)) return;
+        if (!leavers.includes(player.tag)) {
+          return;
+        }
 
         const cleanupLeaver = (tags: ReadonlyArray<string>) => {
           const tagSet = new Set(tags);
@@ -58,10 +60,12 @@ export const createClanMemberListener = () =>
         const otherAccountInClan = yield* memberHandler.findActiveAccount(user.id, player.tag);
         const memberOpt = yield* getGuildMember(user.ownerId);
 
-        if (Option.isSome(memberOpt)) {
-          yield* memberHandler.updatePresence(memberOpt.value, otherAccountInClan);
-          yield* cleanupLeaver(Array.map(userAccounts, (acc) => acc.tag));
+        if (Option.isNone(memberOpt)) {
+          return;
         }
+
+        yield* memberHandler.updatePresence(memberOpt.value, otherAccountInClan);
+        yield* cleanupLeaver(Array.map(userAccounts, (acc) => acc.tag));
       });
 
     yield* Effect.forever(
@@ -98,22 +102,29 @@ export const createClanMemberListener = () =>
           const newMemberTags = new Set(newClan.members.map((m) => m.tag));
           const leftMembers = storedClan.members.filter((m: ClanMemberTag) => !newMemberTags.has(m.tag));
 
-          if (leftMembers.length > 0) {
-            const session = yield* sessionStore.get;
-            const currentPending = new Set(session.leavers ?? []);
-            const toAdd = leftMembers.filter((m) => !currentPending.has(m.tag));
-
-            if (toAdd.length > 0) {
-              yield* Effect.all(
-                toAdd.map((m) => Queue.offer(leavingQueue, m)),
-                { concurrency: 'inherit' },
-              );
-              yield* sessionStore.update((s) => ({
-                ...s,
-                leavers: [...(s.leavers ?? []), ...toAdd.map((m) => m.tag)],
-              }));
-            }
+          if (leftMembers.length === 0) {
+            yield* currentStore.set(newClan);
+            return;
           }
+
+          const currentSession = yield* sessionStore.get;
+          const currentPending = new Set(currentSession.leavers ?? []);
+          const toAdd = leftMembers.filter((m) => !currentPending.has(m.tag));
+
+          if (toAdd.length === 0) {
+            yield* currentStore.set(newClan);
+            return;
+          }
+
+          yield* Effect.all(
+            toAdd.map((m) => Queue.offer(leavingQueue, m)),
+            { concurrency: 'inherit' },
+          );
+
+          yield* sessionStore.update((s) => ({
+            ...s,
+            leavers: [...(s.leavers ?? []), ...toAdd.map((m) => m.tag)],
+          }));
 
           yield* currentStore.set(newClan);
         }),
@@ -128,11 +139,13 @@ export const createClanMemberListener = () =>
               events,
               (event) =>
                 Effect.gen(function* () {
-                  if (event._tag === ClientEvents.ClanMember) {
-                    yield* onClanMemberUpdate(event.oldClan, event.newClan).pipe(
-                      Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
-                    );
+                  if (event._tag !== ClientEvents.ClanMember) {
+                    return;
                   }
+
+                  yield* onClanMemberUpdate(event.oldClan, event.newClan).pipe(
+                    Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
+                  );
                 }),
               { concurrency: 'inherit' },
             );

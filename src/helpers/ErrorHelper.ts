@@ -10,7 +10,11 @@ const getErrorMessage = (error: unknown): Option.Option<string> => {
   const cause = error instanceof ClashError ? error.cause : error;
 
   if (cause instanceof HTTPError) {
-    return Option.some(cause.reason === 'notFound' && cause.path.includes('/players/') ? 'Error, Player tag not found!' : cause.message);
+    if (cause.reason === 'notFound' && cause.path.includes('/players/')) {
+      return Option.some('Error, Player tag not found!');
+    }
+
+    return Option.some(cause.message);
   }
 
   if (error instanceof ClashError) {

@@ -31,7 +31,7 @@ const program = Effect.gen(function* () {
       while: (error) => error._tag === 'DiscordError',
     }),
   );
-  yield* cycleUntilMidnight;
+  return yield* cycleUntilMidnight;
 });
 
 const logger = makeLoggerClient();
@@ -58,4 +58,4 @@ const MainLayer = EventHandlerLayer.pipe(
   Layer.provideMerge(ClashConfigLayer),
 );
 
-runMainCycle(program.pipe(Effect.provide(MainLayer), Effect.provide(BaseLayer)));
+runMainCycle(program.pipe(Effect.provide(MainLayer.pipe(Layer.provideMerge(BaseLayer)))));

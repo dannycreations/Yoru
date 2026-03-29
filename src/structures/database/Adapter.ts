@@ -431,11 +431,9 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         Object.values(filter).some((v) => isObjectLike(v) && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith('$')));
 
       if (options.upsert && isComplex) {
-        return yield* Effect.fail(
-          new SqliteClientError({
-            message: 'Cannot use complex filter when upserting',
-          }),
-        );
+        return yield* new SqliteClientError({
+          message: 'Cannot use complex filter when upserting',
+        });
       }
 
       const rOpt = yield* findOne(filter as QueryFilter<A>, { ...options, select: undefined });

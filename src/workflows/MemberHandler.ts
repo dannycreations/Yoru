@@ -40,19 +40,17 @@ export const MemberHandlerLayer = Layer.effect(
     const accountDatabase = yield* AccountDatabaseTag;
 
     const getPlayer = (account: AccountTable) =>
-      Effect.gen(function* () {
-        return yield* clash.getPlayer(account.tag).pipe(
-          Effect.map((player) => ({ player: Option.some(player), banned: false as const, tag: account.tag })),
-          Effect.catchIf(
-            (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
-            () =>
-              accountDatabase
-                .update({ ...account, bannedAt: Date.now() })
-                .pipe(Effect.as({ player: Option.none(), banned: true as const, tag: account.tag })),
-          ),
-          Effect.catchAll(() => Effect.succeed({ player: Option.none(), banned: false as const, tag: account.tag })),
-        );
-      });
+      clash.getPlayer(account.tag).pipe(
+        Effect.map((player) => ({ player: Option.some(player), banned: false as const, tag: account.tag })),
+        Effect.catchIf(
+          (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
+          () =>
+            accountDatabase
+              .update({ ...account, bannedAt: Date.now() })
+              .pipe(Effect.as({ player: Option.none(), banned: true as const, tag: account.tag })),
+        ),
+        Effect.catchAll(() => Effect.succeed({ player: Option.none(), banned: false as const, tag: account.tag })),
+      );
 
     const findActiveAccount = (userId: number, currentTag: string) =>
       Effect.gen(function* () {
@@ -73,7 +71,7 @@ export const MemberHandlerLayer = Layer.effect(
             }),
           );
 
-        return yield* Effect.firstSuccessOf(otherAccounts.map(findInClans)).pipe(Effect.catchAll(() => Effect.succeed(Option.none())));
+        return yield* Effect.firstSuccessOf(otherAccounts.map(findInClans));
       }).pipe(Effect.catchAllCause(() => Effect.succeed(Option.none())));
 
     const updatePresence = (member: GuildMember, playerOpt: Option.Option<Player>) =>

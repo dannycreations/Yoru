@@ -60,12 +60,10 @@ const makeClashClient = Effect.gen(function* () {
       const requestState = yield* Ref.get(requestStateRef);
 
       if (requestState > 2) {
-        return yield* Effect.fail(
-          new ClashError({
-            message: 'API problem, please check back later!',
-            cause,
-          }),
-        );
+        return yield* new ClashError({
+          message: 'API problem, please check back later!',
+          cause,
+        });
       }
 
       const isNetwork = isErrorLike<{ readonly code: string }>(cause) && ERROR_CODES.has(cause.code);
@@ -73,30 +71,24 @@ const makeClashClient = Effect.gen(function* () {
       if (isNetwork) {
         yield* waitForConnection();
 
-        return yield* Effect.fail(
-          new ClashError({
-            message: 'Retrying after connection recovery',
-            cause,
-          }),
-        );
+        return yield* new ClashError({
+          message: 'Retrying after connection recovery',
+          cause,
+        });
       }
 
       if (!(cause instanceof HTTPError)) {
-        return yield* Effect.fail(
-          new ClashError({
-            message: 'Request failed',
-            cause,
-          }),
-        );
+        return yield* new ClashError({
+          message: 'Request failed',
+          cause,
+        });
       }
 
       if (cause.status === 503) {
-        return yield* Effect.fail(
-          new ClashError({
-            message: 'Service is temporarily unavailable!',
-            status: 503,
-          }),
-        );
+        return yield* new ClashError({
+          message: 'Service is temporarily unavailable!',
+          status: 503,
+        });
       }
 
       if (cause.status === 403) {
@@ -125,31 +117,25 @@ const makeClashClient = Effect.gen(function* () {
 
         yield* Ref.update(requestStateRef, (s) => s + 1);
 
-        return yield* Effect.fail(
-          new ClashError({
-            message: 'Retrying due to IP change',
-            status: 403,
-            cause,
-          }),
-        );
+        return yield* new ClashError({
+          message: 'Retrying due to IP change',
+          status: 403,
+          cause,
+        });
       }
 
       if (ERROR_STATUS_CODES.has(cause.status)) {
-        return yield* Effect.fail(
-          new ClashError({
-            message: 'Transient API error',
-            status: cause.status,
-            cause,
-          }),
-        );
+        return yield* new ClashError({
+          message: 'Transient API error',
+          status: cause.status,
+          cause,
+        });
       }
 
-      return yield* Effect.fail(
-        new ClashError({
-          message: 'Request failed',
-          cause,
-        }),
-      );
+      return yield* new ClashError({
+        message: 'Request failed',
+        cause,
+      });
     });
 
   client.rest.requestHandler['reValidateKeys'] = () => Promise.resolve();
@@ -176,7 +162,11 @@ const makeClashClient = Effect.gen(function* () {
         const requestStateRef = yield* Ref.make(0);
         return yield* Effect.tryPromise({
           try: () => requestOrig<T>(path, options),
-          catch: (cause) => cause,
+          catch: (cause) =>
+            new ClashError({
+              message: 'Request failed',
+              cause,
+            }),
         }).pipe(
           Effect.catchAll((cause) => handleRequestError(cause, requestStateRef)),
           Effect.catchAllCause((cause) =>

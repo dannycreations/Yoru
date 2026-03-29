@@ -26,7 +26,11 @@ export interface StoreClient<in out T> {
 const loadStore = (filePath: string): Effect.Effect<unknown, StoreClientError> =>
   Effect.tryPromise({
     try: () => readFile(filePath, 'utf-8'),
-    catch: (error) => error,
+    catch: (cause) =>
+      new StoreClientError({
+        message: `Failed to read store file: ${filePath}`,
+        cause,
+      }),
   }).pipe(
     Effect.flatMap((content) =>
       Effect.try({

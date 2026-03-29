@@ -71,11 +71,7 @@ export const getGuildMember = (userId: string, guild?: Guild) =>
 
     const guilds = [...client.guilds.cache.values()];
 
-    const fetchMember = (g: Guild) =>
-      Effect.tryPromise(() => g.members.fetch(userId)).pipe(
-        Effect.option,
-        Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())),
-      );
+    const fetchMember = (g: Guild) => Effect.tryPromise(() => g.members.fetch(userId)).pipe(Effect.option);
 
-    return yield* Effect.firstSuccessOf(guilds.map(fetchMember)).pipe(Effect.catchAll(() => Effect.succeed(Option.none<GuildMember>())));
+    return yield* Effect.firstSuccessOf(guilds.map(fetchMember));
   });

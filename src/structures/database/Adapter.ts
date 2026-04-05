@@ -59,36 +59,36 @@ const OPERATOR_MAP: Readonly<Record<string, (col: SQL, val: SQL) => SQL>> = {
 } as const;
 
 export interface Adapter<A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>> {
-  readonly count: (filter?: QueryFilter<A>) => Effect.Effect<number, SqliteClientError, SqliteClientTag>;
+  readonly count: (filter?: QueryFilter<A>) => Effect.Effect<number, SqliteClientError>;
   readonly find: <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter?: QueryFilter<A>,
     options?: QueryOptions<A, ExtractTables<J>, S, J>,
-  ) => Effect.Effect<Array<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError, SqliteClientTag>;
+  ) => Effect.Effect<Array<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError>;
   readonly findOne: <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter?: QueryFilter<A>,
     options?: Omit<QueryOptions<A, ExtractTables<J>, S, J>, 'limit'>,
-  ) => Effect.Effect<Option.Option<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError, SqliteClientTag>;
+  ) => Effect.Effect<Option.Option<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError>;
   readonly findOneAndUpdate: {
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: Partial<InferSelect<A>>,
       data: Partial<Omit<Insert, 'id'>>,
       options: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { readonly upsert: true },
-    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
+    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError>;
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: QueryFilter<A>,
       data: Partial<Omit<Insert, 'id'>>,
       options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { readonly upsert?: false },
-    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
+    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError>;
     <B extends Array<Table>, S extends SelectClause<A, B, S>>(
       filter: Partial<InferSelect<A>> | QueryFilter<A>,
       data: Partial<Omit<Insert, 'id'>>,
       options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'> & { readonly upsert?: boolean },
-    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
+    ): Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError>;
   };
   readonly findOneAndDelete: <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     filter?: QueryFilter<A>,
     options?: Omit<QueryOptions<A, B, S, unknown>, 'limit' | 'joins'>,
-  ) => Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
+  ) => Effect.Effect<Option.Option<ReturnAlias<A, B, S>>, SqliteClientError>;
   readonly insert: <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     record: Omit<Insert, 'id'> | Array<Omit<Insert, 'id'>>,
     options?: Pick<QueryOptions<A, B, S, unknown>, 'select'> & {
@@ -98,61 +98,61 @@ export interface Adapter<A extends Table, Select extends InferSelect<A> = InferS
         set?: { [K in keyof Omit<Insert, 'id'>]?: Insert[K] | SQL<A> };
       };
     },
-  ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
+  ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError>;
   readonly update: <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     record: Select,
     options?: Pick<QueryOptions<A, B, S, unknown>, 'select'>,
-  ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
+  ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError>;
   readonly delete: <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     record: Select,
     options?: Pick<QueryOptions<A, B, S, unknown>, 'select'>,
-  ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag>;
+  ) => Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError>;
 }
 
 const hasKeys = (obj?: object | null): obj is object => (obj == null ? false : Object.keys(obj).length > 0);
 
 const withTrace = <A, E, R>(
+  db: BetterSQLite3Database,
   fn: (db: BetterSQLite3Database, trace: { value?: () => SQL }) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, SqliteClientError | E, SqliteClientTag | R> => {
+): Effect.Effect<A, SqliteClientError | E, R> => {
   const trace: { value?: () => SQL } = {};
-  return Effect.flatMap(SqliteClientTag, (db) =>
-    fn(db, trace).pipe(
-      Effect.catchAllCause((cause): Effect.Effect<never, SqliteClientError | E> => {
-        const failure = Cause.failureOption(cause);
-        if (Option.isSome(failure) && failure.value instanceof SqliteClientError) {
-          return Effect.failCause(cause);
-        }
+  return fn(db, trace).pipe(
+    Effect.catchAllCause((cause): Effect.Effect<never, SqliteClientError | E> => {
+      const failure = Cause.failureOption(cause);
+      if (Option.isSome(failure) && failure.value instanceof SqliteClientError) {
+        return Effect.failCause(cause);
+      }
 
-        const query = Option.fromNullable(trace.value).pipe(
-          Option.flatMap((v) =>
-            Effect.try({
-              // @ts-expect-error Internal drizzle access.
-              try: () => db.dialect.sqlToQuery(v()),
-              catch: () => undefined,
-            }).pipe(Effect.runSync, Option.fromNullable),
-          ),
-          Option.getOrUndefined,
-        );
+      const query = Option.fromNullable(trace.value).pipe(
+        Option.flatMap((v) =>
+          Effect.try({
+            // @ts-expect-error Internal drizzle access.
+            try: () => db.dialect.sqlToQuery(v()),
+            catch: () => undefined,
+          }).pipe(Effect.runSync, Option.fromNullable),
+        ),
+        Option.getOrUndefined,
+      );
 
-        const defect = Cause.dieOption(cause);
-        const error = Option.orElse(failure, () => defect).pipe(
-          Option.map((f) => (f instanceof Error ? f.message : String(f))),
-          Option.getOrElse(() => 'Unknown database error'),
-        );
+      const defect = Cause.dieOption(cause);
+      const error = Option.orElse(failure, () => defect).pipe(
+        Option.map((f) => (f instanceof Error ? f.message : String(f))),
+        Option.getOrElse(() => 'Unknown database error'),
+      );
 
-        return Effect.fail(
-          new SqliteClientError({
-            message: error,
-            cause,
-            query,
-          }),
-        );
-      }),
-    ),
+      return Effect.fail(
+        new SqliteClientError({
+          message: error,
+          cause,
+          query,
+        }),
+      );
+    }),
   );
 };
 
 export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSelect<A>, Insert extends InferInsert<A> = InferInsert<A>>(
+  db: BetterSQLite3Database,
   table: A,
 ): Adapter<A, Select, Insert> => {
   const tableWithId = table as A & { id: { primary: boolean } };
@@ -322,8 +322,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     return Object.keys(columns).length > 0 ? (columns as InferColumn<A>) : undefined;
   };
 
-  const count = (filter: QueryFilter<A> = {}): Effect.Effect<number, SqliteClientError, SqliteClientTag> =>
-    withTrace((db, trace) =>
+  const count = (filter: QueryFilter<A> = {}): Effect.Effect<number, SqliteClientError> =>
+    withTrace(db, (db, trace) =>
       Effect.try({
         try: () => {
           const query = db.select({ count: countSql() }).from(table);
@@ -343,8 +343,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const find = <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter: QueryFilter<A> = {},
     options: QueryOptions<A, ExtractTables<J>, S, J> = {},
-  ): Effect.Effect<Array<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError, SqliteClientTag> =>
-    withTrace((db, trace) =>
+  ): Effect.Effect<Array<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError> =>
+    withTrace(db, (db, trace) =>
       Effect.gen(function* () {
         const columnCache = buildColumnCache(options.joins);
         const select = buildSelectClause(columnCache, options.select);
@@ -415,7 +415,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const findOne = <const J extends JoinClause<A, Array<Table>> = [], S extends SelectClause<A, ExtractTables<J>, S> = {}>(
     filter: QueryFilter<A> = {},
     options: Omit<QueryOptions<A, ExtractTables<J>, S, J>, 'limit'> = {},
-  ): Effect.Effect<Option.Option<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError, SqliteClientTag> =>
+  ): Effect.Effect<Option.Option<ReturnAlias<A, ExtractTables<J>, S, J>>, SqliteClientError> =>
     Effect.map(find(filter, { ...options, limit: 1 }), (arr) => Array.head(arr));
 
   const findOneAndUpdate = ((
@@ -478,8 +478,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         set?: { [K in keyof Omit<Insert, 'id'>]?: Insert[K] | SQL<A> };
       };
     } = {},
-  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag> =>
-    withTrace((db, trace) =>
+  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError> =>
+    withTrace(db, (db, trace) =>
       Effect.try({
         try: () => {
           const input = Array.isArray(record) ? record : [record];
@@ -556,8 +556,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const update = <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     record: Select,
     options: Pick<QueryOptions<A, B, S, unknown>, 'select'> = {},
-  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag> =>
-    withTrace((db, trace) =>
+  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError> =>
+    withTrace(db, (db, trace) =>
       Effect.gen(function* () {
         if (record?.id == null) {
           return yield* Effect.die(new Error('Missing required "id" for update operation'));
@@ -584,8 +584,8 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
   const deleteFn = <B extends Array<Table>, S extends SelectClause<A, B, S>>(
     record: Select,
     options: Pick<QueryOptions<A, B, S, unknown>, 'select'> = {},
-  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError, SqliteClientTag> =>
-    withTrace((db, trace) =>
+  ): Effect.Effect<Array<ReturnAlias<A, B, S>>, SqliteClientError> =>
+    withTrace(db, (db, trace) =>
       Effect.gen(function* () {
         if (record?.id == null) {
           return yield* Effect.die(new Error('Missing required "id" for delete operation'));

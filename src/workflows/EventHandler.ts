@@ -1,4 +1,3 @@
-import { PollingEvents } from 'clashofclans.js';
 import { Effect, Layer, Scope } from 'effect';
 
 import { ClashClientTag } from '../services/ClashService';
@@ -40,7 +39,7 @@ export const EventHandler = Effect.gen(function* () {
   yield* createDiscordListener(register);
   yield* createClanMemberListener();
 
-  register(client, PollingEvents.Error, (error: unknown) => Effect.logError('Clash API Error', error));
+  register(client, 'error', (error: unknown) => Effect.logError('Clash API Error', error));
 });
 
 export const EventHandlerLayer = Layer.effectDiscard(EventHandler);

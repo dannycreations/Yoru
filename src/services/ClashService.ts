@@ -1,5 +1,5 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Client, HTTPError } from 'clashofclans.js';
+import { Client, HttpError } from 'clashofclans.js';
 import { Array, Cause, Chunk, Context, Data, Effect, Layer, Option, PubSub, Ref, Schedule } from 'effect';
 
 import { ClientEvents } from '../core/constants';
@@ -77,7 +77,7 @@ const makeClashClient = Effect.gen(function* () {
         });
       }
 
-      if (!(cause instanceof HTTPError)) {
+      if (!(cause instanceof HttpError)) {
         return yield* new ClashError({
           message: 'Request failed',
           cause,

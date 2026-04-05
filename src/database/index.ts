@@ -27,8 +27,8 @@ export class UserDatabaseTag extends Context.Tag('@database/User')<UserDatabaseT
 export const UserDatabaseLayer = Layer.effect(
   UserDatabaseTag,
   Effect.gen(function* () {
-    yield* SqliteClientTag;
-    return Adapter(userTable);
+    const db = yield* SqliteClientTag;
+    return Adapter(db, userTable);
   }),
 );
 
@@ -37,7 +37,7 @@ export class AccountDatabaseTag extends Context.Tag('@database/Account')<Account
 export const AccountDatabaseLayer = Layer.effect(
   AccountDatabaseTag,
   Effect.gen(function* () {
-    yield* SqliteClientTag;
-    return Adapter(accountTable);
+    const db = yield* SqliteClientTag;
+    return Adapter(db, accountTable);
   }),
 );

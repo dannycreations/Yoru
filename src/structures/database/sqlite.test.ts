@@ -144,10 +144,10 @@ beforeEach(() => {
     );
   `);
 
-  officeAdapter = Adapter(officesTable);
-  userAdapter = Adapter(usersTable);
-  postAdapter = Adapter(postsTable);
-  uniquePairAdapter = Adapter(uniquePairTable);
+  officeAdapter = Adapter(db, officesTable);
+  userAdapter = Adapter(db, usersTable);
+  postAdapter = Adapter(db, postsTable);
+  uniquePairAdapter = Adapter(db, uniquePairTable);
 
   Effect.runSync(Effect.provideService(officeAdapter.insert(sampleOffices), SqliteClientTag, db));
   Effect.runSync(Effect.provideService(userAdapter.insert(sampleUsers), SqliteClientTag, db));
@@ -160,11 +160,11 @@ afterAll(() => {
 
 describe('Adapter construction', () => {
   it('should instantiate correctly with a valid Drizzle table schema having an "id" column', () => {
-    expect(() => Adapter(usersTable)).not.toThrow();
+    expect(() => Adapter(db, usersTable)).not.toThrow();
   });
 
   it('should throw an error if the table schema does not have an "id" column', () => {
-    const action = () => Adapter(noIdTable);
+    const action = () => Adapter(db, noIdTable);
     expect(action).toThrow(/^Table "no_id_table" must have a primary key "id"\.?$/);
   });
 });

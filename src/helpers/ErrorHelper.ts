@@ -1,5 +1,5 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { HTTPError } from 'clashofclans.js';
+import { HttpError } from 'clashofclans.js';
 import { Effect, Option } from 'effect';
 
 import { ClashError } from '../services/ClashService';
@@ -9,7 +9,7 @@ import type { Message } from 'discord.js';
 const getErrorMessage = (error: unknown): Option.Option<string> => {
   const cause = error instanceof ClashError ? error.cause : error;
 
-  if (cause instanceof HTTPError) {
+  if (cause instanceof HttpError) {
     if (cause.reason === 'notFound' && cause.path.includes('/players/')) {
       return Option.some('Error, Player tag not found!');
     }

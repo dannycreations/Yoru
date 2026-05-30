@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { Effect, Layer, Logger, Schedule } from 'effect';
+import { Effect, Layer, Schedule } from 'effect';
 
 import { EmojiLayer } from './core/emojis';
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, SessionStoreLayer } from './core/schemas';
@@ -8,7 +8,7 @@ import { AccountDatabaseLayer, SqliteConfigLayer, UserDatabaseLayer } from './da
 import { ClashClientLayer, ClashClientTag, ClashConfigLayer } from './services/ClashService';
 import { SqliteClientLayer } from './structures/database';
 import { HttpClientLayer } from './structures/HttpClient';
-import { LoggerClientLayer, makeLoggerClient } from './structures/LoggerClient';
+import { LoggerClientLayer } from './structures/LoggerClient';
 import { cycleUntilMidnight, runMainCycle } from './structures/RuntimeClient';
 import { CommandHandlerLayer } from './workflows/CommandHandler';
 import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandler';
@@ -34,16 +34,7 @@ const program = Effect.gen(function* () {
   return yield* cycleUntilMidnight;
 });
 
-const logger = makeLoggerClient();
-
-const BaseLayer = Layer.mergeAll(
-  EnvLayer,
-  EmojiLayer,
-  HttpClientLayer,
-  ConfigStoreLayer,
-  SessionStoreLayer,
-  LoggerClientLayer(Logger.defaultLogger, logger),
-).pipe(
+const BaseLayer = Layer.mergeAll(EnvLayer, EmojiLayer, HttpClientLayer, ConfigStoreLayer, SessionStoreLayer, LoggerClientLayer()).pipe(
   Layer.provideMerge(UserDatabaseLayer),
   Layer.provideMerge(AccountDatabaseLayer),
   Layer.provideMerge(SqliteClientLayer),

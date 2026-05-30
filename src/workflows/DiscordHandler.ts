@@ -60,7 +60,7 @@ const makeDiscordClient = Effect.gen(function* () {
       Effect.tapErrorCause((cause) =>
         Effect.gen(function* () {
           yield* Effect.logInfo(chalk`{yellow Discord client login failed or timed out...}`, cause);
-          yield* Effect.sync(() => client.destroy());
+          yield* Effect.promise(() => client.destroy());
         }),
       ),
     );

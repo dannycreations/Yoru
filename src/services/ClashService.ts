@@ -1,11 +1,12 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Client, HttpError } from 'clashofclans.js';
-import { Array, Cause, Chunk, Context, Data, Effect, Layer, Option, PubSub, Ref, Schedule } from 'effect';
+import { Array, Cause, Chunk, Context, Data, Effect, Layer, Option, PubSub, Ref, Schedule, Schema, Scope } from 'effect';
 
 import { ClientEvents } from '../core/constants';
-import { EnvTag } from '../core/schemas';
+import { ClanData, ClanSchema, EnvTag } from '../core/schemas';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient';
 import { makeRuntimeBridge } from '../structures/RuntimeClient';
+import { makeStoreClient } from '../structures/StoreClient';
 
 import type { Clan, Player, RequestOptions } from 'clashofclans.js';
 
@@ -36,6 +37,7 @@ export interface ClashClient {
   readonly client: Client;
   readonly events: PubSub.PubSub<ClashEvent>;
   readonly addClans: (tags: ReadonlyArray<string>) => Effect.Effect<void>;
+  readonly getClans: () => Effect.Effect<Map<string, Clan>>;
   readonly getClan: (tag: string) => Effect.Effect<Clan, ClashError>;
   readonly getPlayer: (tag: string) => Effect.Effect<Player, ClashError>;
 }
@@ -46,11 +48,18 @@ const makeClashClient = Effect.gen(function* () {
   const http = yield* HttpClientTag;
   const config = yield* ClashConfigTag;
   const bridge = yield* makeRuntimeBridge;
+  const scope = yield* Effect.scope;
 
   const client = new Client({ keys: [] });
 
   const clanTags = yield* Ref.make(new Set<string>());
   const clanCache = yield* Ref.make(new Map<string, Clan>());
+
+  const ClanCacheSchema = Schema.Record({ key: Schema.String, value: ClanSchema });
+  const clanStore = yield* makeStoreClient('sessions/clans.json', ClanCacheSchema, {}, 60_000).pipe(Effect.provideService(Scope.Scope, scope));
+
+  const storedClans = yield* clanStore.get;
+  yield* Ref.set(clanCache, new Map(Object.entries(storedClans)) as Map<string, Clan>);
   const events = yield* PubSub.unbounded<ClashEvent>();
   const ipRef = yield* Ref.make(Option.none<string>());
   const loginSemaphore = yield* Effect.makeSemaphore(1);
@@ -278,13 +287,15 @@ const makeClashClient = Effect.gen(function* () {
       return;
     }
 
-    yield* Ref.update(clanCache, (prev) => {
+    const nextCache = yield* Ref.updateAndGet(clanCache, (prev) => {
       const next = new Map(prev);
       for (const update of updates) {
         next.set(update.tag, update.newClan);
       }
       return next;
     });
+
+    yield* clanStore.set(Object.fromEntries(nextCache) as Record<string, ClanData>);
 
     yield* Effect.forEach(
       updates,
@@ -311,10 +322,13 @@ const makeClashClient = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
+  const getClans = () => Ref.get(clanCache);
+
   return {
     client,
     events,
     addClans,
+    getClans,
     getClan,
     getPlayer,
   };

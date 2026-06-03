@@ -54,7 +54,6 @@ export const MemberHandlerLayer = Layer.effect(
 
     const findActiveAccount = (userId: number, currentTag: string) =>
       Effect.gen(function* () {
-        const config = yield* configStore.get;
         const userAccounts = yield* accountDatabase.find({ userId });
         const otherAccounts = userAccounts.filter((acc) => !acc.bannedAt && acc.tag !== currentTag);
 
@@ -62,16 +61,18 @@ export const MemberHandlerLayer = Layer.effect(
           return Option.none();
         }
 
-        const clanTagsSet = new Set(config.clanTags);
-        const findInClans = (account: AccountTable) =>
-          getPlayer(account).pipe(
-            Effect.flatMap(({ player: pOpt }) => {
-              const p = Option.getOrUndefined(pOpt);
-              return p?.clan && clanTagsSet.has(p.clan.tag) ? Effect.succeed(Option.some(p)) : Effect.succeed(Option.none<Player>());
-            }),
-          );
+        const clanCache = yield* clash.getClans();
+        for (const account of otherAccounts) {
+          for (const clan of clanCache.values()) {
+            const member = clan.members.find((m) => m.tag === account.tag);
+            if (member) {
+              const player = yield* clash.getPlayer(account.tag);
+              return Option.some(player);
+            }
+          }
+        }
 
-        return yield* Effect.firstSuccessOf(otherAccounts.map(findInClans));
+        return Option.none();
       }).pipe(Effect.catchAllCause(() => Effect.succeed(Option.none())));
 
     const updatePresence = (member: GuildMember, playerOpt: Option.Option<Player>) =>

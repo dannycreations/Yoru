@@ -1,11 +1,10 @@
-import { Array, Effect, Option, PubSub, Queue, Ref, Scope } from 'effect';
+import { Array, Effect, Option, PubSub, Queue } from 'effect';
 
 import { ClientEvents } from '../../core/constants';
-import { ClanData, ClanSchema, SessionStoreTag } from '../../core/schemas';
+import { ClanData, SessionStoreTag } from '../../core/schemas';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
 import { getGuildMember } from '../../helpers/DiscordHelper';
 import { ClashClientTag } from '../../services/ClashService';
-import { makeStoreClient, StoreClient } from '../../structures/StoreClient';
 import { MemberHandlerTag } from '../MemberHandler';
 
 import type { ClanMember } from 'clashofclans.js';
@@ -19,9 +18,7 @@ export const createClanMemberListener = () =>
     const memberHandler = yield* MemberHandlerTag;
     const accountDatabase = yield* AccountDatabaseTag;
     const userDatabase = yield* UserDatabaseTag;
-    const scope = yield* Effect.scope;
 
-    const clanStoresRef = yield* Ref.make(new Map<string, StoreClient<ClanData>>());
     const leavingQueue = yield* Queue.unbounded<ClanMemberTag>();
     const updateSemaphore = yield* Effect.makeSemaphore(1);
 
@@ -89,21 +86,10 @@ export const createClanMemberListener = () =>
             }));
           }
 
-          const clanStores = yield* Ref.get(clanStoresRef);
-          const clanStore = clanStores.get(oldClan.tag);
-          const currentStore =
-            clanStore ??
-            (yield* makeStoreClient(`sessions/clan/${oldClan.tag}.json`, ClanSchema, oldClan, 60_000).pipe(
-              Effect.provideService(Scope.Scope, scope),
-              Effect.tap((s) => Ref.set(clanStoresRef, new Map(clanStores).set(oldClan.tag, s))),
-            ));
-
-          const storedClan = yield* currentStore.get;
           const newMemberTags = new Set(newClan.members.map((m) => m.tag));
-          const leftMembers = storedClan.members.filter((m: ClanMemberTag) => !newMemberTags.has(m.tag));
+          const leftMembers = oldClan.members.filter((m: ClanMemberTag) => !newMemberTags.has(m.tag));
 
           if (leftMembers.length === 0) {
-            yield* currentStore.set(newClan);
             return;
           }
 
@@ -112,7 +98,6 @@ export const createClanMemberListener = () =>
           const toAdd = leftMembers.filter((m) => !currentPending.has(m.tag));
 
           if (toAdd.length === 0) {
-            yield* currentStore.set(newClan);
             return;
           }
 
@@ -125,8 +110,6 @@ export const createClanMemberListener = () =>
             ...s,
             leavers: [...(s.leavers ?? []), ...toAdd.map((m) => m.tag)],
           }));
-
-          yield* currentStore.set(newClan);
         }),
       );
 

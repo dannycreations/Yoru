@@ -72,8 +72,10 @@ export const ClanSchema = Schema.Struct({
     Schema.Struct({
       tag: Schema.String,
       name: Schema.String,
+      role: Schema.optional(Schema.String),
     }),
   ),
+  memberCount: Schema.optional(Schema.Number),
 });
 
 export interface ClanData extends Schema.Schema.Type<typeof ClanSchema> {}

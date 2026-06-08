@@ -31,7 +31,7 @@ const program = Effect.gen(function* () {
       while: (error) => error._tag === 'DiscordError',
     }),
   );
-  return yield* cycleUntilMidnight;
+  return yield* cycleUntilMidnight();
 });
 
 const BaseLayer = Layer.mergeAll(EnvLayer, EmojiLayer, HttpClientLayer, ConfigStoreLayer, SessionStoreLayer, LoggerClientLayer()).pipe(

@@ -33,8 +33,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@types/better-sqlite3@7.6.13)(better-sqlite3@12.10.0)
       effect:
-        specifier: ^3.21.2
-        version: 3.21.2
+        specifier: ^3.21.3
+        version: 3.21.3
       got:
         specifier: 11.x
         version: 11.8.6
@@ -45,8 +45,8 @@ importers:
         specifier: ^13.1.3
         version: 13.1.3
       user-agents:
-        specifier: ^2.1.79
-        version: 2.1.79
+        specifier: ^2.1.82
+        version: 2.1.82
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.22.4))
@@ -56,7 +56,7 @@ importers:
         version: 0.86.2
       '@effect/vitest':
         specifier: ^0.29.0
-        version: 0.29.0(effect@3.21.2)(vitest@4.1.8(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.22.4)))
+        version: 0.29.0(effect@3.21.3)(vitest@4.1.8(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.22.4)))
       '@ianvs/prettier-plugin-sort-imports':
         specifier: ^4.7.1
         version: 4.7.1(prettier@3.8.3)
@@ -79,8 +79,8 @@ importers:
         specifier: ^9.1.7
         version: 9.1.7
       npm-check-updates:
-        specifier: ^22.2.1
-        version: 22.2.1
+        specifier: ^22.2.3
+        version: 22.2.3
       prettier:
         specifier: ^3.8.3
         version: 3.8.3
@@ -1328,8 +1328,8 @@ packages:
       sqlite3:
         optional: true
 
-  effect@3.21.2:
-    resolution: {integrity: sha512-rXd2FGDM8KdjSIrc+mqEELo7ScW7xTVxEf1iInmPSpIde9/nyGuFM710cjTo7/EreGXiUX2MOonPpprbz2XHCg==}
+  effect@3.21.3:
+    resolution: {integrity: sha512-RqwU7WnJ6CqYhyjpOVJA5vh1Sgkn6eVECO6mnD0EjlbWcC2M3LJaPglXXr13Rdo/Y+B+wTEPzGRYFNL2xKxNeQ==}
 
   end-of-stream@1.4.5:
     resolution: {integrity: sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==}
@@ -1535,8 +1535,8 @@ packages:
     resolution: {integrity: sha512-DlL+XwOy3NxAQ8xuC0okPgK46iuVNAK01YN7RueYBqqFeGsBjV9XmCAzAdgt+667bCl5kPh9EqKKDwnaPG1I7A==}
     engines: {node: '>=10'}
 
-  npm-check-updates@22.2.1:
-    resolution: {integrity: sha512-mGdIJfhtg+q0BzhbOpbOL73zhMZlgBQMG4wnBwPMMD5k96028UCuV0753YeSYk9odoh7HWK6/cY69bWxT7o+yg==}
+  npm-check-updates@22.2.3:
+    resolution: {integrity: sha512-n8HZ0ywZugYRgEqIm67hbZC5L/9S/gLX+MkGchJB43pP2xib1+u76OpVEJRZ4QP2BksPRi5M1CCStJVfc16+/A==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0, npm: '>=10.0.0'}
     hasBin: true
 
@@ -1776,8 +1776,8 @@ packages:
     resolution: {integrity: sha512-3O9Tf67pGhgOv9jM35AbhkXAKi13f3oy3aE4CSgr+TckGeY+/iu97ZXN+J7DpHPzLbVApFd1IFhcnBjREYXYcg==}
     engines: {node: '>=20.18.1'}
 
-  user-agents@2.1.79:
-    resolution: {integrity: sha512-2Rq3f0OlepGrINWBf7pVEAfiv58ZMyBpOlJ59F5sdYTsqpQNFU2SQuoMBE/crm8jMQYpTucxPY0K3bCIjkgXPA==}
+  user-agents@2.1.82:
+    resolution: {integrity: sha512-qr/y+7VNOT9BYY1/7Jisw9MVQtLQ9bgrYcH3o7Wn3f0EwO4Ke6z4i+JcttEl+WyQ7SIpBUOUk5PjdhrerS4F5A==}
     engines: {node: '>=18'}
 
   util-deprecate@1.0.2:
@@ -2028,9 +2028,9 @@ snapshots:
 
   '@effect/language-service@0.86.2': {}
 
-  '@effect/vitest@0.29.0(effect@3.21.2)(vitest@4.1.8(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.22.4)))':
+  '@effect/vitest@0.29.0(effect@3.21.3)(vitest@4.1.8(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.22.4)))':
     dependencies:
-      effect: 3.21.2
+      effect: 3.21.3
       vitest: 4.1.8(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.22.4))
 
   '@esbuild-kit/core-utils@3.3.2':
@@ -2749,7 +2749,7 @@ snapshots:
       '@types/better-sqlite3': 7.6.13
       better-sqlite3: 12.10.0
 
-  effect@3.21.2:
+  effect@3.21.3:
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-check: 3.23.2
@@ -3008,7 +3008,7 @@ snapshots:
 
   normalize-url@6.1.0: {}
 
-  npm-check-updates@22.2.1: {}
+  npm-check-updates@22.2.3: {}
 
   obug@2.1.1: {}
 
@@ -3273,7 +3273,7 @@ snapshots:
 
   undici@7.26.0: {}
 
-  user-agents@2.1.79: {}
+  user-agents@2.1.82: {}
 
   util-deprecate@1.0.2: {}
 

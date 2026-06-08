@@ -76,9 +76,5 @@ const makeDiscordClient = Effect.gen(function* () {
 
 export const DiscordHandlerLayer = Layer.scoped(
   DiscordHandlerTag,
-  Effect.acquireRelease(makeDiscordClient, ({ client }) =>
-    Effect.sync(() => {
-      client.destroy();
-    }),
-  ),
+  Effect.acquireRelease(makeDiscordClient, ({ client }) => Effect.promise(() => client.destroy())),
 );

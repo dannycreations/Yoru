@@ -6,8 +6,11 @@ import { ClashError } from '../services/ClashService';
 
 import type { Message } from 'discord.js';
 
+export const isClashError = (error: unknown): error is ClashError =>
+  error instanceof ClashError || (isErrorLike<{ readonly _tag: string }>(error) && error._tag === 'ClashError');
+
 const getErrorMessage = (error: unknown): Option.Option<string> => {
-  const cause = error instanceof ClashError ? error.cause : error;
+  const cause = isClashError(error) ? error.cause : error;
 
   if (cause instanceof HttpError) {
     if (cause.reason === 'notFound' && cause.path.includes('/players/')) {
@@ -17,7 +20,7 @@ const getErrorMessage = (error: unknown): Option.Option<string> => {
     return Option.some(cause.message);
   }
 
-  if (error instanceof ClashError) {
+  if (isClashError(error)) {
     return Option.some(error.message);
   }
 

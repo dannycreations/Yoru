@@ -25,7 +25,6 @@ export const EventHandler = Effect.gen(function* () {
           Effect.provideService(Scope.Scope, scope),
           Effect.catchAllCause((cause) => Effect.logError(`Unhandled error in event ${event}`, cause)),
         ),
-        { name: event },
       );
     };
 

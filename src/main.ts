@@ -34,7 +34,9 @@ const program = Effect.gen(function* () {
   return yield* cycleUntilMidnight;
 });
 
-const BaseLayer = Layer.mergeAll(EnvLayer, EmojiLayer, HttpClientLayer, ConfigStoreLayer, SessionStoreLayer, LoggerClientLayer()).pipe(
+const logger = LoggerClientLayer();
+
+const BaseLayer = Layer.mergeAll(EnvLayer, EmojiLayer, HttpClientLayer, ConfigStoreLayer, SessionStoreLayer, logger).pipe(
   Layer.provideMerge(UserDatabaseLayer),
   Layer.provideMerge(AccountDatabaseLayer),
   Layer.provideMerge(SqliteClientLayer),
@@ -49,4 +51,4 @@ const MainLayer = EventHandlerLayer.pipe(
   Layer.provideMerge(ClashConfigLayer),
 );
 
-runMainCycle(program.pipe(Effect.provide(MainLayer.pipe(Layer.provideMerge(BaseLayer)))));
+runMainCycle(program.pipe(Effect.provide(MainLayer.pipe(Layer.provideMerge(BaseLayer)))), { logger });

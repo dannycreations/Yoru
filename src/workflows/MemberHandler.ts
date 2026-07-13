@@ -49,7 +49,7 @@ export const MemberHandlerLayer = Layer.effect(
               .update({ ...account, bannedAt: Date.now() })
               .pipe(Effect.as({ player: Option.none(), banned: true as const, tag: account.tag })),
         ),
-        Effect.catchAll(() => Effect.succeed({ player: Option.none(), banned: false as const, tag: account.tag })),
+        Effect.orElseSucceed(() => ({ player: Option.none(), banned: false as const, tag: account.tag })),
       );
 
     const findActiveAccount = (userId: number, currentTag: string) =>

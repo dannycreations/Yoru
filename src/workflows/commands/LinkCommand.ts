@@ -92,9 +92,7 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       yield* Effect.tryPromise(() => msg.react('❎'));
 
       const filter = (r: MessageReaction, u: DiscordUser) => ['✅', '❎'].includes(r.emoji.name ?? '') && u.id === message.author.id;
-      const collected = yield* Effect.tryPromise(() => msg.awaitReactions({ filter, max: 1, time: 60_000 })).pipe(
-        Effect.catchAll(() => Effect.succeed(null)),
-      );
+      const collected = yield* Effect.tryPromise(() => msg.awaitReactions({ filter, max: 1, time: 60_000 })).pipe(Effect.orElseSucceed(() => null));
 
       yield* Effect.tryPromise(() => msg.reactions.removeAll());
 

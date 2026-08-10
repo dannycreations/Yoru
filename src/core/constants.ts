@@ -1,7 +1,6 @@
 import { Data } from 'effect';
 
 export const ClientEvents = Data.struct({
-  ApiError: 'ApiError',
   ClanMember: 'ClanMember',
 } as const);
 

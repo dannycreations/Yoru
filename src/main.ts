@@ -2,18 +2,18 @@ import 'dotenv/config';
 
 import { Effect, Layer, Schedule } from 'effect';
 
-import { EmojiLayer } from './core/emojis';
-import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, SessionStoreLayer } from './core/schemas';
-import { AccountDatabaseLayer, SqliteConfigLayer, UserDatabaseLayer } from './database';
-import { ClashClientLayer, ClashClientTag, ClashConfigLayer } from './services/ClashService';
-import { SqliteClientLayer } from './structures/database';
-import { HttpClientLayer } from './structures/HttpClient';
-import { LoggerClientLayer } from './structures/LoggerClient';
-import { cycleUntilMidnight, runMainCycle } from './structures/RuntimeClient';
-import { CommandHandlerLayer } from './workflows/CommandHandler';
-import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandler';
-import { EventHandlerLayer } from './workflows/EventHandler';
-import { MemberHandlerLayer } from './workflows/MemberHandler';
+import { EmojiLayer } from './core/emojis.js';
+import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, SessionStoreLayer } from './core/schemas.js';
+import { AccountDatabaseLayer, SqliteConfigLayer, UserDatabaseLayer } from './database/index.js';
+import { ClashClientLayer, ClashClientTag, ClashConfigLayer } from './services/ClashService.js';
+import { SqliteClientLayer } from './structures/database/index.js';
+import { HttpClientLayer } from './structures/HttpClient.js';
+import { LoggerClientLayer } from './structures/LoggerClient.js';
+import { cycleUntilMidnight, runMainCycle } from './structures/RuntimeClient.js';
+import { CommandHandlerLayer } from './workflows/CommandHandler.js';
+import { DiscordHandlerLayer, DiscordHandlerTag } from './workflows/DiscordHandler.js';
+import { EventHandlerLayer } from './workflows/EventHandler.js';
+import { MemberHandlerLayer } from './workflows/MemberHandler.js';
 
 const program = Effect.gen(function* () {
   const clash = yield* ClashClientTag;

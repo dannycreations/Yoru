@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 
-import { DiscordHandlerTag } from '../DiscordHandler';
+import { DiscordHandlerTag } from '../DiscordHandler.js';
 
 import type { Message } from 'discord.js';
 

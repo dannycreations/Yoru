@@ -2,7 +2,7 @@ import { isErrorLike } from '@vegapunk/utilities/result';
 import { HttpError } from 'clashofclans.js';
 import { Effect, Option } from 'effect';
 
-import { ClashError } from '../services/ClashService';
+import { ClashError } from '../services/ClashService.js';
 
 import type { Message } from 'discord.js';
 

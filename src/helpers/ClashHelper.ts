@@ -1,13 +1,12 @@
 import { EmbedBuilder } from 'discord.js';
 import { Effect } from 'effect';
 
-import { MemberRoles } from '../core/constants';
-import { EmojiTag } from '../core/emojis';
+import { MemberRoles } from '../core/constants.js';
+import { EmojiTag } from '../core/emojis.js';
 
 import type { ValueOf } from '@vegapunk/utilities';
 import type { Player } from 'clashofclans.js';
 import type { GuildMember } from 'discord.js';
-import type { Emoji } from '../core/schemas';
 
 const CLAN_ROLE_MAP: Readonly<Record<string, ValueOf<typeof MemberRoles>>> = {
   leader: MemberRoles.Leader,
@@ -77,7 +76,7 @@ export const createPlayerEmbed = (player: Player) =>
 export const categorizeUnits = (player: Player) =>
   Effect.gen(function* () {
     const emoji = yield* EmojiTag;
-    const lookup = (emoji as Emoji).unitLookup;
+    const lookup = emoji.unitLookup;
 
     const categories: Record<string, string[]> = {
       Troops: [],

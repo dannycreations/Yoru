@@ -3,8 +3,8 @@ import { chalk } from '@vegapunk/utilities';
 import { GatewayIntentBits, Partials } from 'discord.js';
 import { Context, Data, Effect, Layer } from 'effect';
 
-import { EnvTag } from '../core/schemas';
-import { makeRuntimeBridge } from '../structures/RuntimeClient';
+import { EnvTag } from '../core/schemas.js';
+import { makeRuntimeBridge } from '../structures/RuntimeClient.js';
 
 export class DiscordError extends Data.TaggedError('DiscordError')<{
   readonly message: string;

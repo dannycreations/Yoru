@@ -2,14 +2,15 @@ import { isErrorLike } from '@vegapunk/utilities/result';
 import { Client, HttpError } from 'clashofclans.js';
 import { Array, Cause, Chunk, Context, Data, Effect, Either, Layer, Option, PubSub, Ref, Schedule, Schema, Scope } from 'effect';
 
-import { ClientEvents } from '../core/constants';
-import { ClanData, ClanSchema, EnvTag } from '../core/schemas';
-import { isClashError } from '../helpers/ErrorHelper';
-import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient';
-import { makeRuntimeBridge } from '../structures/RuntimeClient';
-import { makeStoreClient } from '../structures/StoreClient';
+import { ClientEvents } from '../core/constants.js';
+import { ClanSchema, EnvTag } from '../core/schemas.js';
+import { isClashError } from '../helpers/ErrorHelper.js';
+import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient.js';
+import { makeRuntimeBridge } from '../structures/RuntimeClient.js';
+import { makeStoreClient } from '../structures/StoreClient.js';
 
 import type { Clan, Player, RequestOptions } from 'clashofclans.js';
+import type { ClanData } from '../core/schemas.js';
 
 export type ClashEvent = {
   readonly _tag: typeof ClientEvents.ClanMember;

@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import { Config, Context, Effect, Layer } from 'effect';
 
-import { Adapter, makeSqliteConfig, SqliteClientTag, SqliteConfigTag } from '../structures/database';
-import { accountTable, userTable } from './schema';
+import { Adapter, makeSqliteConfig, SqliteClientTag, SqliteConfigTag } from '../structures/database/index.js';
+import { accountTable, userTable } from './schema.js';
 
 const isDrizzleKit = process.argv.toString().includes('drizzle-kit');
 const projectDir = resolve(__dirname, '..', '..');

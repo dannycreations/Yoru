@@ -1,9 +1,9 @@
 import { Effect, Layer, Scope } from 'effect';
 
-import { ClashClientTag } from '../services/ClashService';
-import { makeRuntimeBridge } from '../structures/RuntimeClient';
-import { createClanMemberListener } from './listeners/ClanMemberListener';
-import { createDiscordListener } from './listeners/DiscordListener';
+import { ClashClientTag } from '../services/ClashService.js';
+import { makeRuntimeBridge } from '../structures/RuntimeClient.js';
+import { createClanMemberListener } from './listeners/ClanMemberListener.js';
+import { createDiscordListener } from './listeners/DiscordListener.js';
 
 export const EventHandler = Effect.gen(function* () {
   const { client } = yield* ClashClientTag;

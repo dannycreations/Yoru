@@ -1,13 +1,14 @@
 import { Util } from 'clashofclans.js';
 import { Array, Effect, Option, Ref } from 'effect';
 
-import { ConfigStoreTag } from '../../core/schemas';
-import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
-import { createPlayerEmbed, formatPlayerStats } from '../../helpers/ClashHelper';
-import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/DiscordHelper';
-import { isModeratorRole } from '../../helpers/RoleHelper';
-import { ClashClientTag } from '../../services/ClashService';
-import { MemberHandlerTag } from '../MemberHandler';
+import { ConfigStoreTag } from '../../core/schemas.js';
+import { AccountDatabaseTag, UserDatabaseTag } from '../../database/index.js';
+import { userTable } from '../../database/schema.js';
+import { createPlayerEmbed, formatPlayerStats } from '../../helpers/ClashHelper.js';
+import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/DiscordHelper.js';
+import { isModeratorRole } from '../../helpers/RoleHelper.js';
+import { ClashClientTag } from '../../services/ClashService.js';
+import { MemberHandlerTag } from '../MemberHandler.js';
 
 import type { Player } from 'clashofclans.js';
 import type { User as DiscordUser, Guild, Message, MessageReaction } from 'discord.js';
@@ -64,19 +65,21 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       const embed = yield* createPlayerEmbed(player);
       const titleField = `${yield* formatPlayerStats(player)}\n`;
 
-      const accountOpt = yield* accountDatabase.findOne({ tag });
-      if (Option.isSome(accountOpt)) {
-        const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
-        const user = Option.getOrUndefined(userOpt);
-        const member = message.guild.members.cache.get(user?.ownerId ?? '');
+      const rowOpt = yield* accountDatabase.findOne(
+        { tag },
+        { joins: [{ table: userTable, on: { userId: 'id' }, type: 'inner' }], select: { userId: 1, ownerId: 1 } },
+      );
+      if (Option.isSome(rowOpt)) {
+        const { userId, ownerId } = rowOpt.value;
+        const member = message.guild.members.cache.get(ownerId);
 
-        if (user && user.ownerId === mentionId) {
+        if (ownerId === mentionId) {
           yield* linkedTag(message.guild, mentionId, player);
           embed.setDescription(`${titleField}Re-linked to **${member?.user.tag ?? mentionId}**.`);
-        } else if (user && member) {
+        } else if (member) {
           embed.setDescription(`${titleField}Already linked to **${member.user.tag}**.`);
-        } else if (user) {
-          yield* userDatabase.update({ ...user, ownerId: mentionId });
+        } else {
+          yield* userDatabase.update({ id: userId, ownerId: mentionId });
           yield* linkedTag(message.guild, mentionId, player);
           const newMember = message.guild.members.cache.get(mentionId);
           embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag ?? mentionId}**.`);

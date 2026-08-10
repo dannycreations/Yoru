@@ -1,25 +1,25 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Context, Effect, Layer, Option } from 'effect';
 
-import { MemberRoles, RegisterRoles } from '../core/constants';
-import { ConfigStoreTag, SessionStoreTag } from '../core/schemas';
-import { AccountDatabaseTag } from '../database';
-import { getPlayerNickname } from '../helpers/ClashHelper';
-import { removeMemberRoles } from '../helpers/DiscordHelper';
-import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/RoleHelper';
-import { ClashClientTag } from '../services/ClashService';
-import { SqliteClientTag } from '../structures/database';
+import { MemberRoles, RegisterRoles } from '../core/constants.js';
+import { ConfigStoreTag, SessionStoreTag } from '../core/schemas.js';
+import { AccountDatabaseTag } from '../database/index.js';
+import { getPlayerNickname } from '../helpers/ClashHelper.js';
+import { removeMemberRoles } from '../helpers/DiscordHelper.js';
+import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/RoleHelper.js';
+import { ClashClientTag } from '../services/ClashService.js';
+import { SqliteClientTag } from '../structures/database/index.js';
 
 import type { Player } from 'clashofclans.js';
 import type { GuildMember } from 'discord.js';
-import type { AccountTable } from '../database/schema';
+import type { AccountTable } from '../database/schema.js';
 
 export interface MemberHandler {
   readonly updatePresence: (member: GuildMember, player: Option.Option<Player>) => Effect.Effect<void, never, SessionStoreTag | ConfigStoreTag>;
   readonly findActiveAccount: (
-    userId: number,
+    accounts: ReadonlyArray<AccountTable>,
     currentTag: string,
-  ) => Effect.Effect<Option.Option<Player>, never, SqliteClientTag | ClashClientTag | ConfigStoreTag | AccountDatabaseTag>;
+  ) => Effect.Effect<Option.Option<Player>, never, ClashClientTag>;
   readonly getPlayer: (
     account: AccountTable,
   ) => Effect.Effect<
@@ -52,10 +52,9 @@ export const MemberHandlerLayer = Layer.effect(
         Effect.orElseSucceed(() => ({ player: Option.none(), banned: false as const, tag: account.tag })),
       );
 
-    const findActiveAccount = (userId: number, currentTag: string) =>
+    const findActiveAccount = (accounts: ReadonlyArray<AccountTable>, currentTag: string) =>
       Effect.gen(function* () {
-        const userAccounts = yield* accountDatabase.find({ userId });
-        const otherAccounts = userAccounts.filter((acc) => !acc.bannedAt && acc.tag !== currentTag);
+        const otherAccounts = accounts.filter((acc) => !acc.bannedAt && acc.tag !== currentTag);
 
         if (otherAccounts.length === 0) {
           return Option.none();
@@ -64,10 +63,11 @@ export const MemberHandlerLayer = Layer.effect(
         const clanCache = yield* clash.getClans();
         for (const account of otherAccounts) {
           for (const clan of clanCache.values()) {
-            const member = clan.members.find((m) => m.tag === account.tag);
-            if (member) {
-              const player = yield* clash.getPlayer(account.tag);
-              return Option.some(player);
+            if (clan.members.find((m) => m.tag === account.tag)) {
+              return yield* clash.getPlayer(account.tag).pipe(
+                Effect.map(Option.some),
+                Effect.orElseSucceed(() => Option.none<Player>()),
+              );
             }
           }
         }

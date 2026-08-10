@@ -1,16 +1,16 @@
 import { Context, Effect, Layer, Record as ReadonlyRecord } from 'effect';
 
-import { ConfigStoreTag } from '../core/schemas';
-import { replyWithError } from '../helpers/ErrorHelper';
-import { ClashClientTag } from '../services/ClashService';
-import { SqliteClientTag } from '../structures/database';
-import { checkCommand } from './commands/CheckCommand';
-import { linkCommand } from './commands/LinkCommand';
-import { pingCommand } from './commands/PingCommand';
-import { MemberHandlerTag } from './MemberHandler';
+import { ConfigStoreTag } from '../core/schemas.js';
+import { replyWithError } from '../helpers/ErrorHelper.js';
+import { ClashClientTag } from '../services/ClashService.js';
+import { SqliteClientTag } from '../structures/database/index.js';
+import { checkCommand } from './commands/CheckCommand.js';
+import { linkCommand } from './commands/LinkCommand.js';
+import { pingCommand } from './commands/PingCommand.js';
+import { MemberHandlerTag } from './MemberHandler.js';
 
 import type { Message } from 'discord.js';
-import type { DiscordHandler } from './DiscordHandler';
+import type { DiscordHandler } from './DiscordHandler.js';
 
 export interface CommandHandler {
   readonly handleCommand: (

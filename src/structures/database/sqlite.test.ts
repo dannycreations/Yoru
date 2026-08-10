@@ -4,7 +4,7 @@ import { integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 import { Effect, Exit, Option } from 'effect';
 import { afterAll, assert, beforeAll, beforeEach, describe, expect, expectTypeOf } from 'vitest';
 
-import { Adapter, BetterSQLite3Database, Database, drizzle, patchDialect, SqliteClientTag } from '.';
+import { Adapter, BetterSQLite3Database, Database, drizzle, patchDialect, SqliteClientTag } from './index.js';
 
 const it = Object.assign((...args: Parameters<typeof itBase>) => itBase(...args), itBase) as any;
 

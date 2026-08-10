@@ -1,7 +1,7 @@
 import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
 import { Effect, Option } from 'effect';
 
-import { DiscordHandlerTag } from '../workflows/DiscordHandler';
+import { DiscordHandlerTag } from '../workflows/DiscordHandler.js';
 
 import type { Guild, GuildMember, Role } from 'discord.js';
 

@@ -1,13 +1,15 @@
 import { Array, Effect, Option, PubSub, Queue } from 'effect';
 
-import { ClientEvents } from '../../core/constants';
-import { ClanData, SessionStoreTag } from '../../core/schemas';
-import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
-import { getGuildMember } from '../../helpers/DiscordHelper';
-import { ClashClientTag } from '../../services/ClashService';
-import { MemberHandlerTag } from '../MemberHandler';
+import { ClientEvents } from '../../core/constants.js';
+import { SessionStoreTag } from '../../core/schemas.js';
+import { AccountDatabaseTag } from '../../database/index.js';
+import { userTable } from '../../database/schema.js';
+import { getGuildMember } from '../../helpers/DiscordHelper.js';
+import { ClashClientTag } from '../../services/ClashService.js';
+import { MemberHandlerTag } from '../MemberHandler.js';
 
 import type { ClanMember } from 'clashofclans.js';
+import type { ClanData } from '../../core/schemas.js';
 
 type ClanMemberTag = Pick<ClanMember, 'name' | 'tag'>;
 
@@ -17,7 +19,6 @@ export const createClanMemberListener = () =>
     const sessionStore = yield* SessionStoreTag;
     const memberHandler = yield* MemberHandlerTag;
     const accountDatabase = yield* AccountDatabaseTag;
-    const userDatabase = yield* UserDatabaseTag;
 
     const leavingQueue = yield* Queue.unbounded<ClanMemberTag>();
     const updateSemaphore = yield* Effect.makeSemaphore(1);
@@ -38,24 +39,20 @@ export const createClanMemberListener = () =>
           }));
         };
 
-        const accountOpt = yield* accountDatabase.findOne({ tag: player.tag });
-        const userId = Option.flatMap(accountOpt, (acc) => Option.fromNullable(acc.userId));
+        const rowOpt = yield* accountDatabase.findOne(
+          { tag: player.tag },
+          { joins: [{ table: userTable, on: { userId: 'id' }, type: 'inner' }], select: { userId: 1, ownerId: 1 } },
+        );
 
-        if (Option.isNone(userId)) {
+        if (Option.isNone(rowOpt)) {
           yield* cleanupLeaver([player.tag]);
           return;
         }
 
-        const userOpt = yield* userDatabase.findOne({ id: userId.value });
-        if (Option.isNone(userOpt)) {
-          yield* cleanupLeaver([player.tag]);
-          return;
-        }
-
-        const user = userOpt.value;
-        const userAccounts = yield* accountDatabase.find({ userId: user.id });
-        const otherAccountInClan = yield* memberHandler.findActiveAccount(user.id, player.tag);
-        const memberOpt = yield* getGuildMember(user.ownerId);
+        const { userId, ownerId } = rowOpt.value;
+        const userAccounts = yield* accountDatabase.find({ userId });
+        const otherAccountInClan = yield* memberHandler.findActiveAccount(userAccounts, player.tag);
+        const memberOpt = yield* getGuildMember(ownerId);
 
         if (Option.isNone(memberOpt)) {
           return;

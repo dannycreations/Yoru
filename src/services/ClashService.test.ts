@@ -3,9 +3,9 @@ import { HttpError, RequestHandler } from 'clashofclans.js';
 import { Cause, Effect, Exit, Fiber, Layer, Option, TestClock } from 'effect';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 
-import { EnvTag } from '../core/schemas';
-import { HttpClientTag } from '../structures/HttpClient';
-import { ClashClientLayer, ClashClientTag, ClashConfigTag } from './ClashService';
+import { EnvTag } from '../core/schemas.js';
+import { HttpClientTag } from '../structures/HttpClient.js';
+import { ClashClientLayer, ClashClientTag, ClashConfigTag } from './ClashService.js';
 
 // Adapt itBase.effect to it.effect in a type-safe manner
 const it = Object.assign((...args: Parameters<typeof itBase>) => itBase(...args), itBase) as any;

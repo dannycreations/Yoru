@@ -25,7 +25,17 @@ import { Array, Cause, Context, Data, Effect, Option } from 'effect';
 
 import type { SQL, Table } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import type { ExtractTables, InferColumn, InferInsert, InferSelect, JoinClause, QueryFilter, QueryOptions, ReturnAlias, SelectClause } from './types';
+import type {
+  ExtractTables,
+  InferColumn,
+  InferInsert,
+  InferSelect,
+  JoinClause,
+  QueryFilter,
+  QueryOptions,
+  ReturnAlias,
+  SelectClause,
+} from './types.js';
 
 export class SqliteClientError extends Data.TaggedError('SqliteClientError')<{
   readonly message: string;

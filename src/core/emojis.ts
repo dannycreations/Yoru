@@ -1,6 +1,8 @@
 import { Context, Data, Effect, Layer, Schema } from 'effect';
 
-import { EmojiSchema } from './schemas';
+import { EmojiSchema } from './schemas.js';
+
+import type { Emoji } from './schemas.js';
 
 export class EmojiTag extends Context.Tag('@core/Emoji')<EmojiTag, Emoji>() {}
 
@@ -138,8 +140,6 @@ const emojiData = Data.struct({
     'Minion Prince': '<:minionprince:1333152496620667031>',
   },
 } as const);
-
-export type Emoji = Schema.Schema.Type<typeof EmojiSchema>;
 
 export const EmojiLayer = Layer.effect(
   EmojiTag,

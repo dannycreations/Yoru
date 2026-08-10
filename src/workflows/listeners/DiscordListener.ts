@@ -2,16 +2,16 @@ import { Events } from '@sapphire/framework';
 import { ActivityType } from 'discord.js';
 import { Array, Effect } from 'effect';
 
-import { ConfigStoreTag } from '../../core/schemas';
-import { CommandHandlerTag } from '../CommandHandler';
-import { DiscordHandlerTag } from '../DiscordHandler';
+import { ConfigStoreTag } from '../../core/schemas.js';
+import { CommandHandlerTag } from '../CommandHandler.js';
+import { DiscordHandlerTag } from '../DiscordHandler.js';
 
 import type { SapphireClient } from '@sapphire/framework';
 import type { Message } from 'discord.js';
-import type { ClashClientTag } from '../../services/ClashService';
-import type { SqliteClientTag } from '../../structures/database';
-import type { DiscordHandler } from '../DiscordHandler';
-import type { MemberHandlerTag } from '../MemberHandler';
+import type { ClashClientTag } from '../../services/ClashService.js';
+import type { SqliteClientTag } from '../../structures/database/index.js';
+import type { DiscordHandler } from '../DiscordHandler.js';
+import type { MemberHandlerTag } from '../MemberHandler.js';
 
 export const createDiscordListener = (
   register: <Args extends readonly unknown[], R>(

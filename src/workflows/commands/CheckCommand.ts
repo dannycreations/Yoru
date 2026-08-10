@@ -2,16 +2,17 @@ import { Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
 import { Array, Effect, Either, Option, Record } from 'effect';
 
-import { EmojiTag } from '../../core/emojis';
-import { ConfigStoreTag } from '../../core/schemas';
-import { AccountDatabaseTag, UserDatabaseTag } from '../../database';
-import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/ClashHelper';
-import { getGuildMember, getSplitFields, parseMentionOrSnowflake } from '../../helpers/DiscordHelper';
-import { ClashClientTag } from '../../services/ClashService';
-import { MemberHandlerTag } from '../MemberHandler';
+import { EmojiTag } from '../../core/emojis.js';
+import { ConfigStoreTag } from '../../core/schemas.js';
+import { AccountDatabaseTag, UserDatabaseTag } from '../../database/index.js';
+import { userTable } from '../../database/schema.js';
+import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/ClashHelper.js';
+import { getGuildMember, getSplitFields, parseMentionOrSnowflake } from '../../helpers/DiscordHelper.js';
+import { ClashClientTag } from '../../services/ClashService.js';
+import { MemberHandlerTag } from '../MemberHandler.js';
 
 import type { Message } from 'discord.js';
-import type { AccountTable } from '../../database/schema';
+import type { AccountTable } from '../../database/schema.js';
 
 const checkProfile = (message: Message<true>, ownerId: string, accounts: ReadonlyArray<AccountTable>) =>
   Effect.gen(function* () {
@@ -82,23 +83,17 @@ const checkPlayer = (message: Message<true>, tag: string) =>
     const embed = yield* createPlayerEmbed(player);
 
     const accountDatabase = yield* AccountDatabaseTag;
-    const userDatabase = yield* UserDatabaseTag;
 
-    const accountOpt = yield* accountDatabase.findOne({ tag });
-    const isOwned = yield* Effect.gen(function* () {
-      if (Option.isNone(accountOpt)) {
-        return '';
-      }
-
-      const userOpt = yield* userDatabase.findOne({ id: accountOpt.value.userId });
-
-      if (Option.isNone(userOpt)) {
-        return '';
-      }
-
-      const member = message.guild.members.cache.get(userOpt.value.ownerId);
-
-      return `👤 ${member ? member.user.tag : userOpt.value.ownerId}\n`;
+    const rowOpt = yield* accountDatabase.findOne(
+      { tag },
+      { joins: [{ table: userTable, on: { userId: 'id' }, type: 'inner' }], select: { ownerId: 1 } },
+    );
+    const isOwned = Option.match(rowOpt, {
+      onNone: () => '',
+      onSome: (row) => {
+        const member = message.guild.members.cache.get(row.ownerId);
+        return `👤 ${member ? member.user.tag : row.ownerId}\n`;
+      },
     });
 
     const statsValue = `${isOwned}${yield* formatPlayerStats(player)}`;
@@ -167,30 +162,27 @@ const checkMembers = (message: Message<true>, page = 1) =>
 
     const clan = yield* clash.getClan(clanTags[index]);
     const accountDatabase = yield* AccountDatabaseTag;
-    const userDatabase = yield* UserDatabaseTag;
 
     const members = clan.members;
     const tags = members.map((m) => m.tag);
 
-    const accounts = yield* accountDatabase.find({ tag: { $in: tags } });
-    const accountMap = new Map(accounts.map((acc) => [acc.tag, acc]));
-    const userIds = Array.fromIterable(new Set(Array.filterMap(accounts, (acc) => Option.fromNullable(acc.userId))));
-
-    const users = userIds.length > 0 ? yield* userDatabase.find({ id: { $in: userIds } }) : [];
-    const userMap = new Map(users.map((u) => [u.id, u]));
+    const rows = yield* accountDatabase.find(
+      { tag: { $in: tags } },
+      { joins: [{ table: userTable, on: { userId: 'id' }, type: 'inner' }], select: { tag: 1, userId: 1, ownerId: 1 } },
+    );
+    const accountMap = new Map(rows.map((r) => [r.tag, r]));
 
     const memberResults = yield* Effect.all(
       members.map((member) =>
         Effect.gen(function* () {
           const field = `**${member.name}** ${member.tag}\n`;
           const account = accountMap.get(member.tag);
-          const user = account?.userId ? userMap.get(account.userId) : null;
-          if (!user) return { type: 'unknown' as const, field };
+          if (!account) return { type: 'unknown' as const, field };
 
-          const cachedMember = message.guild.members.cache.get(user.ownerId);
-          if (cachedMember) return { type: 'guild' as const, ownerId: user.ownerId, field };
+          const cachedMember = message.guild.members.cache.get(account.ownerId);
+          if (cachedMember) return { type: 'guild' as const, ownerId: account.ownerId, field };
 
-          return { type: 'fetch' as const, ownerId: user.ownerId, field };
+          return { type: 'fetch' as const, ownerId: account.ownerId, field };
         }),
       ),
       { concurrency: 'inherit' },

@@ -1,4 +1,4 @@
-import { MemberRoles, ModeratorRoles, RegisterRoles } from '../core/constants';
+import { MemberRoles, ModeratorRoles, RegisterRoles } from '../core/constants.js';
 
 import type { Role } from 'discord.js';
 

@@ -5,9 +5,9 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { Context, Effect, Layer } from 'effect';
 
-import { Adapter, SqliteClientError, SqliteClientTag } from './Adapter';
+import { Adapter, SqliteClientError, SqliteClientTag } from './Adapter.js';
 
-import type { PatchedDialect } from './types';
+import type { PatchedDialect } from './types.js';
 
 export * from 'drizzle-orm/better-sqlite3';
 export * from 'drizzle-orm/sqlite-core';

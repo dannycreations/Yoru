@@ -5,7 +5,7 @@ import { Adapter, makeSqliteConfig, SqliteClientTag, SqliteConfigTag } from '../
 import { accountTable, userTable } from './schema.js';
 
 const isDrizzleKit = process.argv.toString().includes('drizzle-kit');
-const projectDir = resolve(__dirname, '..', '..');
+const projectDir = resolve(import.meta.dirname, '..', '..');
 
 const out = './migrations';
 const schema = './src/database/schema.ts';

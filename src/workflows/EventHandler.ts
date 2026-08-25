@@ -5,16 +5,25 @@ import { makeRuntimeBridge } from '../structures/RuntimeClient.js';
 import { createClanMemberListener } from './listeners/ClanMemberListener.js';
 import { createDiscordListener } from './listeners/DiscordListener.js';
 
+type EventEmitter<Args extends readonly unknown[]> = {
+  readonly on: (event: string, cb: (...args: Args) => void) => void;
+  readonly once?: (event: string, cb: (...args: Args) => void) => void;
+};
+
+export type EventRegister = <Args extends readonly unknown[], R>(
+  emitter: EventEmitter<Args>,
+  event: string,
+  handler: (...args: Args) => Effect.Effect<void, unknown, R>,
+  once?: boolean,
+) => void;
+
 export const EventHandler = Effect.gen(function* () {
   const { client } = yield* ClashClientTag;
   const bridge = yield* makeRuntimeBridge;
   const scope = yield* Effect.scope;
 
-  const register = <Args extends readonly unknown[], R>(
-    emitter: {
-      readonly on: (event: string, cb: (...args: Args) => void) => void;
-      readonly once?: (event: string, cb: (...args: Args) => void) => void;
-    },
+  const register: EventRegister = <Args extends readonly unknown[], R>(
+    emitter: EventEmitter<Args>,
     event: string,
     handler: (...args: Args) => Effect.Effect<void, unknown, R>,
     once = false,

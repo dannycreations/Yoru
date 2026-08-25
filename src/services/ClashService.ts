@@ -1,16 +1,14 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Client, HttpError } from 'clashofclans.js';
-import { Array, Cause, Chunk, Context, Data, Effect, Either, Layer, Option, PubSub, Ref, Schedule, Schema, Scope } from 'effect';
+import { Array, Cause, Context, Data, Effect, Either, Layer, Option, PubSub, Ref, Schedule, Schema, Scope } from 'effect';
 
 import { ClientEvents } from '../core/constants.js';
-import { ClanSchema, EnvTag } from '../core/schemas.js';
-import { isClashError } from '../helpers/ErrorHelper.js';
+import { EnvTag } from '../core/schemas.js';
 import { ERROR_CODES, ERROR_STATUS_CODES, HttpClientTag, waitForConnection } from '../structures/HttpClient.js';
 import { makeRuntimeBridge } from '../structures/RuntimeClient.js';
 import { makeStoreClient } from '../structures/StoreClient.js';
 
 import type { Clan, Player, RequestOptions } from 'clashofclans.js';
-import type { ClanData } from '../core/schemas.js';
 
 export type ClashEvent = {
   readonly _tag: typeof ClientEvents.ClanMember;
@@ -24,6 +22,24 @@ export class ClashError extends Data.TaggedError('ClashError')<{
   readonly reason?: string;
   readonly cause?: unknown;
 }> {}
+
+export const isClashError = (error: unknown): error is ClashError =>
+  error instanceof ClashError || (isErrorLike<{ readonly _tag: string }>(error) && error._tag === 'ClashError');
+
+export const ClanSchema = Schema.Struct({
+  tag: Schema.String,
+  name: Schema.String,
+  members: Schema.Array(
+    Schema.Struct({
+      tag: Schema.String,
+      name: Schema.String,
+      role: Schema.optional(Schema.String),
+    }),
+  ),
+  memberCount: Schema.optional(Schema.Number),
+});
+
+export interface ClanData extends Schema.Schema.Type<typeof ClanSchema> {}
 
 export interface ClashConfig {
   readonly email: string;
@@ -222,41 +238,21 @@ const makeClashClient = Effect.gen(function* () {
   const addClans = (tags: readonly string[]) =>
     Ref.update(clanTags, (set) => {
       const next = new Set(set);
-      let changed = false;
       for (const tag of tags) {
-        if (next.has(tag)) {
-          continue;
-        }
-
         next.add(tag);
-        changed = true;
       }
-      return changed ? next : set;
+      return next;
     });
 
-  const getClan = (tag: string) =>
+  const unwrapApi = <A>(call: () => Promise<A>, message: string) =>
     Effect.tryPromise({
-      try: () => client.getClan(tag),
-      catch: (cause) =>
-        isClashError(cause)
-          ? cause
-          : new ClashError({
-              message: `Failed to fetch clan ${tag}`,
-              cause,
-            }),
+      try: call,
+      catch: (cause) => (isClashError(cause) ? cause : new ClashError({ message, cause })),
     });
 
-  const getPlayer = (tag: string) =>
-    Effect.tryPromise({
-      try: () => client.getPlayer(tag),
-      catch: (cause) =>
-        isClashError(cause)
-          ? cause
-          : new ClashError({
-              message: `Failed to fetch player ${tag}`,
-              cause,
-            }),
-    });
+  const getClan = (tag: string) => unwrapApi(() => client.getClan(tag), `Failed to fetch clan ${tag}`);
+
+  const getPlayer = (tag: string) => unwrapApi(() => client.getPlayer(tag), `Failed to fetch player ${tag}`);
 
   yield* Effect.gen(function* () {
     const tags = yield* Ref.get(clanTags);
@@ -299,7 +295,7 @@ const makeClashClient = Effect.gen(function* () {
           Effect.option,
         ),
       { concurrency: 'inherit' },
-    ).pipe(Effect.map((arr) => Array.fromIterable(Chunk.compact(Chunk.fromIterable(arr)))));
+    ).pipe(Effect.map((arr) => Array.filterMap(arr, (update) => update)));
 
     if (updates.length === 0) {
       return;

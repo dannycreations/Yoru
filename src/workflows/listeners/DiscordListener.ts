@@ -1,29 +1,17 @@
 import { Events } from '@sapphire/framework';
 import { ActivityType } from 'discord.js';
-import { Array, Effect } from 'effect';
+import { Effect } from 'effect';
 
-import { ConfigStoreTag } from '../../core/schemas.js';
 import { CommandHandlerTag } from '../CommandHandler.js';
 import { DiscordHandlerTag } from '../DiscordHandler.js';
 
 import type { SapphireClient } from '@sapphire/framework';
 import type { Message } from 'discord.js';
-import type { ClashClientTag } from '../../services/ClashService.js';
-import type { SqliteClientTag } from '../../structures/database/index.js';
-import type { DiscordHandler } from '../DiscordHandler.js';
-import type { MemberHandlerTag } from '../MemberHandler.js';
+import type { EventRegister } from '../EventHandler.js';
 
-export const createDiscordListener = (
-  register: <Args extends readonly unknown[], R>(
-    client: SapphireClient,
-    event: string,
-    handler: (...args: Args) => Effect.Effect<void, unknown, R>,
-    once?: boolean,
-  ) => void,
-) =>
+export const createDiscordListener = (register: EventRegister) =>
   Effect.gen(function* () {
     const discordHandler = yield* DiscordHandlerTag;
-    const configStore = yield* ConfigStoreTag;
     const commandService = yield* CommandHandlerTag;
 
     const setPresence = (client: SapphireClient<true>) =>
@@ -52,26 +40,9 @@ export const createDiscordListener = (
         }
       });
 
-    const onMessageCreate = (
-      message: Message,
-    ): Effect.Effect<void, unknown, DiscordHandler | ConfigStoreTag | SqliteClientTag | ClashClientTag | MemberHandlerTag> =>
+    const onMessageCreate = (message: Message) =>
       Effect.gen(function* () {
-        if (message.webhookId !== null) {
-          return;
-        }
-
-        if (message.system) {
-          return;
-        }
-
-        if (message.author.bot) {
-          return;
-        }
-
-        const config = yield* configStore.get;
-        const isOwner = Array.contains(config.ownerIds, message.author.id);
-        if (discordHandler.isMaintenance && !isOwner) {
-          yield* Effect.tryPromise(() => message.reply('⚠️ Under Maintenance!')).pipe(Effect.ignore);
+        if (message.webhookId !== null || message.system || message.author.bot) {
           return;
         }
 

@@ -3,7 +3,10 @@ import { Effect, Option } from 'effect';
 
 import { DiscordHandlerTag } from '../workflows/DiscordHandler.js';
 
-import type { Guild, GuildMember, Role } from 'discord.js';
+import type { Guild, GuildMember, Message, MessagePayload, MessageReplyOptions, Role } from 'discord.js';
+
+export const replyMessage = (message: Message<true>, content: string | MessagePayload | MessageReplyOptions) =>
+  Effect.tryPromise(() => message.reply(content)).pipe(Effect.asVoid);
 
 export const getSplitFields = (
   name: string,
@@ -49,29 +52,14 @@ export const parseMentionOrSnowflake = (input?: string | null): string | null =>
 
 export const getGuildMember = (userId: string, guild?: Guild) =>
   Effect.gen(function* () {
-    if (guild) {
-      const cached = guild.members.cache.get(userId);
+    const guilds = guild ? [guild] : [...(yield* DiscordHandlerTag).client.guilds.cache.values()];
 
-      if (cached) {
-        return Option.some(cached);
-      }
-
-      return yield* Effect.tryPromise(() => guild.members.fetch(userId)).pipe(Effect.option);
-    }
-
-    const { client } = yield* DiscordHandlerTag;
-
-    for (const g of client.guilds.cache.values()) {
+    for (const g of guilds) {
       const cached = g.members.cache.get(userId);
-
       if (cached) {
         return Option.some(cached);
       }
     }
 
-    const guilds = [...client.guilds.cache.values()];
-
-    const fetchMember = (g: Guild) => Effect.tryPromise(() => g.members.fetch(userId)).pipe(Effect.option);
-
-    return yield* Effect.firstSuccessOf(guilds.map(fetchMember));
+    return yield* Effect.firstSuccessOf(guilds.map((g) => Effect.tryPromise(() => g.members.fetch(userId)).pipe(Effect.option)));
   });

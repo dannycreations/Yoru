@@ -32,54 +32,6 @@ export const EnvLayer = Layer.effect(
   ),
 );
 
-const EmojiFields = {
-  thumbnail: Schema.String,
-  level: Schema.String,
-  hashtag: Schema.String,
-  trophies: Schema.String,
-  attackwin: Schema.String,
-  noleague: Schema.String,
-  isclan: Schema.Struct({
-    true: Schema.String,
-    false: Schema.String,
-  }),
-  stars: Schema.Array(Schema.String),
-  townhalls: Schema.Array(Schema.String),
-  troops: Schema.Struct({
-    normal: Schema.Record({ key: Schema.String, value: Schema.String }),
-    dark: Schema.Record({ key: Schema.String, value: Schema.String }),
-    super: Schema.Record({ key: Schema.String, value: Schema.String }),
-    siege: Schema.Record({ key: Schema.String, value: Schema.String }),
-    pets: Schema.Record({ key: Schema.String, value: Schema.String }),
-  }),
-  spells: Schema.Struct({
-    normal: Schema.Record({ key: Schema.String, value: Schema.String }),
-    dark: Schema.Record({ key: Schema.String, value: Schema.String }),
-  }),
-  heroes: Schema.Record({ key: Schema.String, value: Schema.String }),
-} as const;
-
-export const EmojiSchema = Schema.Struct(EmojiFields);
-
-export interface Emoji extends Schema.Struct.Type<typeof EmojiFields> {
-  readonly unitLookup: Map<string, { readonly category: string; readonly emoji: string }>;
-}
-
-export const ClanSchema = Schema.Struct({
-  tag: Schema.String,
-  name: Schema.String,
-  members: Schema.Array(
-    Schema.Struct({
-      tag: Schema.String,
-      name: Schema.String,
-      role: Schema.optional(Schema.String),
-    }),
-  ),
-  memberCount: Schema.optional(Schema.Number),
-});
-
-export interface ClanData extends Schema.Schema.Type<typeof ClanSchema> {}
-
 export const ConfigSchema = Schema.Struct({
   prefix: Schema.String,
   ownerIds: Schema.Array(Schema.String),

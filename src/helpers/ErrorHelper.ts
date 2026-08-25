@@ -2,12 +2,9 @@ import { isErrorLike } from '@vegapunk/utilities/result';
 import { HttpError } from 'clashofclans.js';
 import { Effect, Option } from 'effect';
 
-import { ClashError } from '../services/ClashService.js';
+import { isClashError } from '../services/ClashService.js';
 
 import type { Message } from 'discord.js';
-
-export const isClashError = (error: unknown): error is ClashError =>
-  error instanceof ClashError || (isErrorLike<{ readonly _tag: string }>(error) && error._tag === 'ClashError');
 
 const getErrorMessage = (error: unknown): Option.Option<string> => {
   const cause = isClashError(error) ? error.cause : error;

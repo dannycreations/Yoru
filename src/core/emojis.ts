@@ -1,8 +1,37 @@
 import { Context, Data, Effect, Layer, Schema } from 'effect';
 
-import { EmojiSchema } from './schemas.js';
+const EmojiFields = {
+  thumbnail: Schema.String,
+  level: Schema.String,
+  hashtag: Schema.String,
+  trophies: Schema.String,
+  attackwin: Schema.String,
+  noleague: Schema.String,
+  isclan: Schema.Struct({
+    true: Schema.String,
+    false: Schema.String,
+  }),
+  stars: Schema.Array(Schema.String),
+  townhalls: Schema.Array(Schema.String),
+  troops: Schema.Struct({
+    normal: Schema.Record({ key: Schema.String, value: Schema.String }),
+    dark: Schema.Record({ key: Schema.String, value: Schema.String }),
+    super: Schema.Record({ key: Schema.String, value: Schema.String }),
+    siege: Schema.Record({ key: Schema.String, value: Schema.String }),
+    pets: Schema.Record({ key: Schema.String, value: Schema.String }),
+  }),
+  spells: Schema.Struct({
+    normal: Schema.Record({ key: Schema.String, value: Schema.String }),
+    dark: Schema.Record({ key: Schema.String, value: Schema.String }),
+  }),
+  heroes: Schema.Record({ key: Schema.String, value: Schema.String }),
+} as const;
 
-import type { Emoji } from './schemas.js';
+const EmojiSchema = Schema.Struct(EmojiFields);
+
+export interface Emoji extends Schema.Struct.Type<typeof EmojiFields> {
+  readonly unitLookup: Map<string, { readonly category: string; readonly emoji: string }>;
+}
 
 export class EmojiTag extends Context.Tag('@core/Emoji')<EmojiTag, Emoji>() {}
 

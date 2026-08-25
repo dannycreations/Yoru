@@ -9,7 +9,7 @@ import { ClashClientTag } from '../../services/ClashService.js';
 import { MemberHandlerTag } from '../MemberHandler.js';
 
 import type { ClanMember } from 'clashofclans.js';
-import type { ClanData } from '../../core/schemas.js';
+import type { ClanData } from '../../services/ClashService.js';
 
 type ClanMemberTag = Pick<ClanMember, 'name' | 'tag'>;
 

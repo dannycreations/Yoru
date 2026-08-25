@@ -7,7 +7,7 @@ import { ConfigStoreTag } from '../../core/schemas.js';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database/index.js';
 import { userTable } from '../../database/schema.js';
 import { categorizeUnits, createPlayerEmbed, formatPlayerField, formatPlayerStats } from '../../helpers/ClashHelper.js';
-import { getGuildMember, getSplitFields, parseMentionOrSnowflake } from '../../helpers/DiscordHelper.js';
+import { getGuildMember, getSplitFields, parseMentionOrSnowflake, replyMessage } from '../../helpers/DiscordHelper.js';
 import { ClashClientTag } from '../../services/ClashService.js';
 import { MemberHandlerTag } from '../MemberHandler.js';
 
@@ -21,7 +21,7 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
     const memberOpt = yield* getGuildMember(ownerId, message.guild);
 
     if (Option.isNone(memberOpt)) {
-      return yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nUser leaving discord server!`)).pipe(Effect.asVoid);
+      return yield* replyMessage(message, `> ${message.content}\nUser leaving discord server!`);
     }
 
     const member = memberOpt.value;
@@ -72,7 +72,7 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
     }
 
     embed.setFooter({ text: message.author.username, iconURL: message.author.displayAvatarURL() }).setTimestamp();
-    yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
+    yield* replyMessage(message, { embeds: [embed] });
   });
 
 const checkPlayer = (message: Message<true>, tag: string) =>
@@ -124,7 +124,7 @@ const checkPlayer = (message: Message<true>, tag: string) =>
 
     if (unknowns.length > 0) yield* Effect.logWarning('Unknown assets detected', unknowns);
 
-    yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
+    yield* replyMessage(message, { embeds: [embed] });
   });
 
 const checkUser = (message: Message<true>, ownerId: string, page: number) =>
@@ -136,7 +136,7 @@ const checkUser = (message: Message<true>, ownerId: string, page: number) =>
     const accounts = Option.isSome(userOpt) ? yield* accountDatabase.find({ userId: userOpt.value.id }) : [];
 
     if (Option.isNone(userOpt) || accounts.length === 0) {
-      return yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nThere is no tag linked to this user!`)).pipe(Effect.asVoid);
+      return yield* replyMessage(message, `> ${message.content}\nThere is no tag linked to this user!`);
     }
 
     if (page > 0 && page <= accounts.length) {
@@ -155,7 +155,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
     const { clanTags } = config;
 
     if (clanTags.length === 0) {
-      return yield* Effect.tryPromise(() => message.reply('No clans are currently configured.')).pipe(Effect.asVoid);
+      return yield* replyMessage(message, 'No clans are currently configured.');
     }
 
     const index = Math.max(0, Math.min(page - 1, clanTags.length - 1));
@@ -252,7 +252,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
       embed.addFields({ name: `👎 Members not on Discord (${unknown.length})`, value: unknown.join(' ').slice(0, 1024) });
     }
 
-    yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
+    yield* replyMessage(message, { embeds: [embed] });
   });
 
 export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>) =>
@@ -261,7 +261,7 @@ export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>
     const page = parseInt(args[1], 10) || 0;
 
     if (tag === undefined || tag === '') {
-      return yield* Effect.tryPromise(() => message.reply('Please provide a player tag or mention a user.')).pipe(Effect.asVoid);
+      return yield* replyMessage(message, 'Please provide a player tag or mention a user.');
     }
 
     if (/member/i.test(tag)) {
@@ -274,7 +274,7 @@ export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>
 
     const mentionId = parseMentionOrSnowflake(tag);
     if (!mentionId) {
-      return yield* Effect.tryPromise(() => message.reply('Invalid player tag!'));
+      return yield* replyMessage(message, 'Invalid player tag!');
     }
 
     const configStore = yield* ConfigStoreTag;
@@ -285,5 +285,5 @@ export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>
       return yield* checkUser(message, mentionId, page);
     }
 
-    yield* Effect.tryPromise(() => message.reply('Invalid player tag!'));
+    yield* replyMessage(message, 'Invalid player tag!');
   }).pipe(Effect.asVoid);

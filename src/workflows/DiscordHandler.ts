@@ -14,7 +14,6 @@ export class DiscordError extends Data.TaggedError('DiscordError')<{
 export interface DiscordHandler {
   readonly client: SapphireClient;
   readonly login: () => Effect.Effect<void, DiscordError>;
-  readonly isMaintenance: boolean;
 }
 
 export class DiscordHandlerTag extends Context.Tag('@workflows/DiscordHandler')<DiscordHandlerTag, DiscordHandler>() {}
@@ -65,12 +64,9 @@ const makeDiscordClient = Effect.gen(function* () {
       ),
     );
 
-  const isMaintenance = false;
-
   return {
     client,
     login,
-    isMaintenance,
   } as const;
 });
 

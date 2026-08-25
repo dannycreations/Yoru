@@ -5,7 +5,7 @@ import { ConfigStoreTag } from '../../core/schemas.js';
 import { AccountDatabaseTag, UserDatabaseTag } from '../../database/index.js';
 import { userTable } from '../../database/schema.js';
 import { createPlayerEmbed, formatPlayerStats } from '../../helpers/ClashHelper.js';
-import { getGuildMember, parseMentionOrSnowflake } from '../../helpers/DiscordHelper.js';
+import { getGuildMember, parseMentionOrSnowflake, replyMessage } from '../../helpers/DiscordHelper.js';
 import { isModeratorRole } from '../../helpers/RoleHelper.js';
 import { ClashClientTag } from '../../services/ClashService.js';
 import { MemberHandlerTag } from '../MemberHandler.js';
@@ -36,13 +36,11 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
     const mention = args[1];
 
     if (tag === undefined || !Util.isValidTag(tag)) {
-      return yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nError, Player tag not valid!`)).pipe(Effect.asVoid);
+      return yield* replyMessage(message, `> ${message.content}\nError, Player tag not valid!`);
     }
 
     if (linkQueue.has(message.author.id)) {
-      return yield* Effect.tryPromise(() => message.reply(`> ${message.content}\nYou must complete previous operation before create new one.`)).pipe(
-        Effect.asVoid,
-      );
+      return yield* replyMessage(message, `> ${message.content}\nYou must complete previous operation before create new one.`);
     }
 
     yield* Ref.update(linkQueueRef, (set) => new Set(set).add(message.author.id));
@@ -50,7 +48,7 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
     yield* Effect.gen(function* () {
       const mentionId = parseMentionOrSnowflake(mention);
       if (!mentionId) {
-        yield* Effect.tryPromise(() => message.reply('Please mention a user to link.'));
+        yield* replyMessage(message, 'Please mention a user to link.');
         return;
       }
 
@@ -85,7 +83,7 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
           embed.setDescription(`${titleField}Owner changed to **${newMember?.user.tag ?? mentionId}**.`);
         }
 
-        yield* Effect.tryPromise(() => message.reply({ embeds: [embed] }));
+        yield* replyMessage(message, { embeds: [embed] });
         return;
       }
 

@@ -1,4 +1,3 @@
-import { isErrorLike } from '@vegapunk/utilities/result';
 import { Context, Effect, Layer, Option } from 'effect';
 
 import { MemberRoles, RegisterRoles } from '../core/constants.js';
@@ -7,7 +6,7 @@ import { AccountDatabaseTag } from '../database/index.js';
 import { getPlayerNickname } from '../helpers/ClashHelper.js';
 import { removeMemberRoles } from '../helpers/DiscordHelper.js';
 import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/RoleHelper.js';
-import { ClashClientTag } from '../services/ClashService.js';
+import { ClashClientTag, isClashError } from '../services/ClashService.js';
 import { SqliteClientTag } from '../structures/database/index.js';
 
 import type { Player } from 'clashofclans.js';
@@ -43,7 +42,7 @@ export const MemberHandlerLayer = Layer.effect(
       clash.getPlayer(account.tag).pipe(
         Effect.map((player) => ({ player: Option.some(player), banned: false as const, tag: account.tag })),
         Effect.catchIf(
-          (error) => isErrorLike<{ reason: string }>(error) && error.reason === 'notFound',
+          (error) => isClashError(error) && error.reason === 'notFound',
           () =>
             accountDatabase
               .update({ ...account, bannedAt: Date.now() })

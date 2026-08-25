@@ -1,10 +1,23 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { it as itBase } from '@effect/vitest';
 import { sql } from 'drizzle-orm';
-import { integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
-import { Effect, Exit, Option } from 'effect';
-import { afterAll, assert, beforeAll, beforeEach, describe, expect, expectTypeOf } from 'vitest';
+import { blob, integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
+import { Cause, Data, Effect, Exit, Layer, Option } from 'effect';
+import { afterAll, afterEach, assert, beforeAll, beforeEach, describe, expect, expectTypeOf } from 'vitest';
 
-import { Adapter, BetterSQLite3Database, Database, drizzle, patchDialect, SqliteClientTag } from './index.js';
+import {
+  Adapter,
+  BetterSQLite3Database,
+  Database,
+  drizzle,
+  makeSqliteConfig,
+  SqliteClientError,
+  SqliteClientLayer,
+  SqliteClientTag,
+  SqliteConfigTag,
+} from './index.js';
 
 const it = Object.assign((...args: Parameters<typeof itBase>) => itBase(...args), itBase) as any;
 
@@ -61,6 +74,34 @@ const uniquePairTable = sqliteTable(
 type UniquePair = typeof uniquePairTable.$inferSelect;
 type InsertUniquePair = typeof uniquePairTable.$inferInsert;
 
+const typedTable = sqliteTable('typed_table', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  label: text('label').notNull().unique(),
+  occurredAt: integer('occurred_at', { mode: 'timestamp' }),
+  active: integer('active', { mode: 'boolean' }),
+  payload: blob('payload', { mode: 'buffer' }),
+  meta: text('meta', { mode: 'json' }).$type<{ tag: string }>(),
+});
+type Typed = typeof typedTable.$inferSelect;
+type InsertTyped = typeof typedTable.$inferInsert;
+
+const defaultsTable = sqliteTable('defaults_table', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  a: text('a'),
+  b: integer('b').default(42),
+});
+type DefaultsRow = typeof defaultsTable.$inferSelect;
+type InsertDefaults = typeof defaultsTable.$inferInsert;
+
+const DATE_A = new Date('2020-01-01T00:00:00.000Z');
+const DATE_B = new Date('2021-06-15T12:30:00.000Z');
+
+const casingTable = sqliteTable('casing_table', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  userKey: text().notNull().unique(),
+  displayName: text(),
+});
+
 const sampleOffices: Array<Omit<InsertOffice, 'id'>> = [
   { name: 'HQ', location: 'New York' },
   { name: 'Branch West', location: 'San Francisco' },
@@ -95,12 +136,12 @@ let officeAdapter: Adapter<typeof officesTable, Office, InsertOffice>;
 let userAdapter: Adapter<typeof usersTable, User, InsertUser>;
 let postAdapter: Adapter<typeof postsTable, Post, InsertPost>;
 let uniquePairAdapter: Adapter<typeof uniquePairTable, UniquePair, InsertUniquePair>;
+let typedAdapter: Adapter<typeof typedTable, Typed, InsertTyped>;
+let defaultsAdapter: Adapter<typeof defaultsTable, DefaultsRow, InsertDefaults>;
 
 beforeAll(() => {
   client = new Database(':memory:');
   db = drizzle(client);
-  // @ts-expect-error Internal drizzle access.
-  patchDialect(db.dialect);
 });
 
 beforeEach(() => {
@@ -110,6 +151,9 @@ beforeEach(() => {
     DROP TABLE IF EXISTS offices;
     DROP TABLE IF EXISTS no_id_table;
     DROP TABLE IF EXISTS unique_pair_table;
+    DROP TABLE IF EXISTS typed_table;
+    DROP TABLE IF EXISTS defaults_table;
+    DROP TABLE IF EXISTS casing_table;
 
     CREATE TABLE offices (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,12 +186,32 @@ beforeEach(() => {
       val_c TEXT,
       UNIQUE(val_a, val_b)
     );
+    CREATE TABLE typed_table (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      label TEXT NOT NULL UNIQUE,
+      occurred_at INTEGER,
+      active INTEGER,
+      payload BLOB,
+      meta TEXT
+    );
+    CREATE TABLE casing_table (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_key TEXT NOT NULL UNIQUE,
+      display_name TEXT
+    );
+    CREATE TABLE defaults_table (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      a TEXT,
+      b INTEGER DEFAULT 42
+    );
   `);
 
   officeAdapter = Adapter(db, officesTable);
   userAdapter = Adapter(db, usersTable);
   postAdapter = Adapter(db, postsTable);
   uniquePairAdapter = Adapter(db, uniquePairTable);
+  typedAdapter = Adapter(db, typedTable);
+  defaultsAdapter = Adapter(db, defaultsTable);
 
   Effect.runSync(Effect.provideService(officeAdapter.insert(sampleOffices), SqliteClientTag, db));
   Effect.runSync(Effect.provideService(userAdapter.insert(sampleUsers), SqliteClientTag, db));
@@ -158,41 +222,114 @@ afterAll(() => {
   client.close();
 });
 
-describe('Adapter construction', () => {
-  it('should instantiate correctly with a valid Drizzle table schema having an "id" column', () => {
+const watchUpdatedColumns = (columns: ReadonlyArray<keyof User>): (() => string[]) => {
+  client.exec('CREATE TABLE IF NOT EXISTS touch_log (col TEXT); DELETE FROM touch_log;');
+  for (const column of columns) {
+    const name = column === 'officeId' ? 'office_id' : column;
+    client.exec(`CREATE TRIGGER touch_${name} AFTER UPDATE OF ${name} ON users BEGIN INSERT INTO touch_log VALUES ('${name}'); END;`);
+  }
+
+  return () => (client.prepare('SELECT col FROM touch_log ORDER BY col').all() as Array<{ col: string }>).map((row) => row.col);
+};
+
+describe('Adapter Initialization & Table Schema Validation', () => {
+  it('instantiates successfully when provided a schema containing an "id" primary key column', () => {
     expect(() => Adapter(db, usersTable)).not.toThrow();
   });
 
-  it('should throw an error if the table schema does not have an "id" column', () => {
+  it('throws an explicit initialization error when the schema lacks an "id" primary key column', () => {
     const action = () => Adapter(db, noIdTable);
     expect(action).toThrow(/^Table "no_id_table" must have a primary key "id"\.?$/);
   });
 });
 
-describe('Adapter find()', () => {
-  it.effect('should return all records with all columns if no filter or options are provided', () =>
-    Effect.gen(function* () {
-      const users = yield* userAdapter.find();
-      expectTypeOf(users).toEqualTypeOf<User[]>();
-      expect(users).toHaveLength(sampleUsers.length);
-      const sampleUserKeys = Object.keys(usersTable);
-      users.forEach((user) => {
-        sampleUserKeys.forEach((key) => expect(user).toHaveProperty(key));
-      });
-    }),
-  );
+describe('Filtering & Predicates', () => {
+  describe('Basic Retrieval & Unconstrained Queries', () => {
+    it.effect('returns all table rows with complete column payloads when no query arguments are provided', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find();
+        expectTypeOf(users).toEqualTypeOf<User[]>();
+        expect(users).toHaveLength(sampleUsers.length);
+        const sampleUserKeys = Object.keys(usersTable);
+        users.forEach((user) => {
+          sampleUserKeys.forEach((key) => expect(user).toHaveProperty(key));
+        });
+      }),
+    );
 
-  it.effect('should return empty array when finding on an empty table', () =>
-    Effect.gen(function* () {
-      client.exec('DELETE FROM offices;');
-      const offices = yield* officeAdapter.find();
-      expectTypeOf(offices).toEqualTypeOf<Office[]>();
-      expect(offices).toEqual([]);
-    }),
-  );
+    it.effect('returns an empty array when executed against an unpopulated table', () =>
+      Effect.gen(function* () {
+        client.exec('DELETE FROM offices;');
+        const offices = yield* officeAdapter.find();
+        expectTypeOf(offices).toEqualTypeOf<Office[]>();
+        expect(offices).toEqual([]);
+      }),
+    );
 
-  describe('filter options', () => {
-    it.effect('equality: should find users by name', () =>
+    it.effect('retrieves a single row wrapped in Option.some when matched', () =>
+      Effect.gen(function* () {
+        const aliceSample = sampleUsers.find((u) => u.email === 'alice@example.com')!;
+        const foundUser = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(foundUser)).toBe(true);
+        expect(foundUser).toEqual(Option.some(expect.objectContaining({ name: aliceSample.name, email: aliceSample.email })));
+      }),
+    );
+
+    it.effect('returns Option.none when no row satisfies the query filter', () =>
+      Effect.gen(function* () {
+        const foundUser = yield* userAdapter.findOne({ email: 'nonexistent@example.com' });
+        expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isNone(foundUser)).toBe(true);
+      }),
+    );
+
+    it.effect('returns Option.none when executing findOne against an empty table', () =>
+      Effect.gen(function* () {
+        client.exec('DELETE FROM users;');
+        const foundUser = yield* userAdapter.findOne({ name: 'Alice' });
+        expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isNone(foundUser)).toBe(true);
+      }),
+    );
+
+    it.effect('computes total row count across the entire table when unconstrained', () =>
+      Effect.gen(function* () {
+        const count = yield* userAdapter.count();
+        expectTypeOf(count).toEqualTypeOf<number>();
+        expect(count).toBe(sampleUsers.length);
+      }),
+    );
+
+    it.effect('computes row count matching specific filter criteria', () =>
+      Effect.gen(function* () {
+        const usersAge30Count = sampleUsers.filter((u) => u.age === 30).length;
+        const count = yield* userAdapter.count({ age: 30 });
+        expectTypeOf(count).toEqualTypeOf<number>();
+        expect(count).toBe(usersAge30Count);
+      }),
+    );
+
+    it.effect('returns zero count when no table rows satisfy the filter predicate', () =>
+      Effect.gen(function* () {
+        const count = yield* userAdapter.count({ name: 'NonExistentName' });
+        expectTypeOf(count).toEqualTypeOf<number>();
+        expect(count).toBe(0);
+      }),
+    );
+
+    it.effect('returns zero count when executing against an unpopulated table', () =>
+      Effect.gen(function* () {
+        client.exec('DELETE FROM users;');
+        const count = yield* userAdapter.count();
+        expectTypeOf(count).toEqualTypeOf<number>();
+        expect(count).toBe(0);
+      }),
+    );
+  });
+
+  describe('Equality & Null Comparison Predicates', () => {
+    it.effect('filters rows matching an exact string equality condition', () =>
       Effect.gen(function* () {
         const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
         assert(Option.isSome(aliceOpt));
@@ -203,7 +340,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('equality: should find users by age', () =>
+    it.effect('filters rows matching an exact integer equality condition', () =>
       Effect.gen(function* () {
         const usersAge30 = sampleUsers.filter((u) => u.age === 30);
         const foundUsers = yield* userAdapter.find({ age: 30 });
@@ -213,7 +350,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('equality: should find users with null bio (field IS NULL)', () =>
+    it.effect('filters rows where a column value is explicitly null', () =>
       Effect.gen(function* () {
         const usersNullBio = sampleUsers.filter((u) => u.bio === null);
         const foundUsers = yield* userAdapter.find({ bio: null });
@@ -223,7 +360,41 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('comparison ($ne): should find users not named Alice (field <> value)', () =>
+    it.effect('filters rows where a column is null using explicit null check ($null: true)', () =>
+      Effect.gen(function* () {
+        const usersNullAgeCount = sampleUsers.filter((u) => u.age === null).length;
+        const foundUsers = yield* userAdapter.find({ age: { $null: true } });
+        expectTypeOf(foundUsers).toEqualTypeOf<User[]>();
+        expect(foundUsers).toHaveLength(usersNullAgeCount);
+        foundUsers.forEach((u) => expect(u.age).toBeNull());
+      }),
+    );
+
+    it.effect('filters rows where a column is not null using explicit null check ($null: false)', () =>
+      Effect.gen(function* () {
+        const usersNonNullAgeCount = sampleUsers.filter((u) => u.age !== null).length;
+        const foundUsers = yield* userAdapter.find({ age: { $null: false } });
+        expectTypeOf(foundUsers).toEqualTypeOf<User[]>();
+        expect(foundUsers).toHaveLength(usersNonNullAgeCount);
+        foundUsers.forEach((u) => expect(u.age).not.toBeNull());
+      }),
+    );
+
+    it.effect('enforces case-sensitive string comparison for exact equality', () =>
+      Effect.gen(function* () {
+        const usersLower = yield* userAdapter.find({ name: 'alice' });
+        expectTypeOf(usersLower).toEqualTypeOf<User[]>();
+        expect(usersLower.filter((u) => u.name === 'alice')).toHaveLength(0);
+
+        const usersUpper = yield* userAdapter.find({ name: 'Alice' });
+        expectTypeOf(usersUpper).toEqualTypeOf<User[]>();
+        expect(usersUpper.filter((u) => u.name === 'Alice').length).toBeGreaterThan(0);
+      }),
+    );
+  });
+
+  describe('Scalar Comparison & Range Predicates ($gt, $gte, $lt, $lte, $ne)', () => {
+    it.effect('filters rows where a column value does not match the scalar target ($ne)', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ name: { $ne: 'Alice' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -232,7 +403,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('comparison ($ne): should find users with non-null bio (field IS NOT NULL)', () =>
+    it.effect('filters rows where a nullable column is not null using $ne', () =>
       Effect.gen(function* () {
         const usersNonNullBioCount = sampleUsers.filter((u) => u.bio !== null).length;
         const foundUsers = yield* userAdapter.find({ bio: { $ne: null } });
@@ -242,7 +413,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('comparison ($gt): should find users older than 30 (field > value)', () =>
+    it.effect('filters rows where a numeric column is strictly greater than the threshold ($gt)', () =>
       Effect.gen(function* () {
         const usersOlderThan30Count = sampleUsers.filter((u) => u.age !== null && u.age! > 30).length;
         const foundUsers = yield* userAdapter.find({ age: { $gt: 30 } });
@@ -252,15 +423,19 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('comparison ($gt): age: {$gt: null} should yield empty (SQLite: field > NULL is UNKNOWN/FALSE)', () =>
+    it.effect('evaluates comparison against null ($gt: null) to an empty result set per SQLite three-valued logic', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ age: { $gt: null } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
         expect(users).toHaveLength(0);
+
+        const negated = yield* userAdapter.find({ $not: { age: { $gt: null } } });
+        expectTypeOf(negated).toEqualTypeOf<User[]>();
+        expect(negated).toHaveLength(0);
       }),
     );
 
-    it.effect('comparison ($gte): should find users age 30 or older (field >= value)', () =>
+    it.effect('filters rows where a numeric column is greater than or equal to the threshold ($gte)', () =>
       Effect.gen(function* () {
         const usersGte30Count = sampleUsers.filter((u) => u.age !== null && u.age! >= 30).length;
         const foundUsers = yield* userAdapter.find({ age: { $gte: 30 } });
@@ -270,7 +445,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('comparison ($lt): should find users younger than 30 (field < value)', () =>
+    it.effect('filters rows where a numeric column is strictly less than the threshold ($lt)', () =>
       Effect.gen(function* () {
         const usersYoungerThan30Count = sampleUsers.filter((u) => u.age !== null && u.age! < 30).length;
         const foundUsers = yield* userAdapter.find({ age: { $lt: 30 } });
@@ -280,7 +455,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('comparison ($lte): should find users age 30 or younger (field <= value)', () =>
+    it.effect('filters rows where a numeric column is less than or equal to the threshold ($lte)', () =>
       Effect.gen(function* () {
         const usersLte30Count = sampleUsers.filter((u) => u.age !== null && u.age! <= 30).length;
         const foundUsers = yield* userAdapter.find({ age: { $lte: 30 } });
@@ -290,7 +465,25 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('string ($like): should find users with name starting with A (LIKE pattern)', () =>
+    it.effect('evaluates $lt and $lte comparisons against null to empty results', () =>
+      Effect.gen(function* () {
+        const usersLt = yield* userAdapter.find({ age: { $lt: null } });
+        expectTypeOf(usersLt).toEqualTypeOf<User[]>();
+        expect(usersLt).toHaveLength(0);
+
+        const usersLte = yield* userAdapter.find({ age: { $lte: null } });
+        expectTypeOf(usersLte).toEqualTypeOf<User[]>();
+        expect(usersLte).toHaveLength(0);
+
+        const nested = yield* userAdapter.find({ age: { $not: { $lte: null } } });
+        expectTypeOf(nested).toEqualTypeOf<User[]>();
+        expect(nested).toHaveLength(0);
+      }),
+    );
+  });
+
+  describe('String Pattern Predicates ($like, $nlike, $glob, $nglob)', () => {
+    it.effect('filters rows matching a SQL LIKE wildcard pattern ($like)', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ name: { $like: 'A%' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -299,7 +492,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('string ($nlike): should find users with name not starting with A (NOT LIKE pattern)', () =>
+    it.effect('filters rows excluding a SQL LIKE wildcard pattern ($nlike)', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ name: { $nlike: 'A%' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -308,7 +501,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('string ($glob): should find users with name ending with e (GLOB pattern)', () =>
+    it.effect('filters rows matching a Unix glob pattern ($glob)', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ name: { $glob: '*e' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -319,7 +512,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('string ($nglob): should find users with name not ending with e (NOT GLOB pattern)', () =>
+    it.effect('filters rows excluding a Unix glob pattern ($nglob)', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ name: { $nglob: '*e' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -328,7 +521,29 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('array ($in): should find users with specific roles (field IN (values))', () =>
+    it.effect('applies ASCII case-insensitivity during LIKE string pattern evaluation', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ name: { $like: 'aliCE%' } });
+        expectTypeOf(users).toEqualTypeOf<User[]>();
+        expect(users.some((u) => u.name === 'Alice')).toBe(true);
+      }),
+    );
+
+    it.effect('enforces strict case-sensitivity during Unix GLOB wildcard evaluation', () =>
+      Effect.gen(function* () {
+        const usersSensitive = yield* userAdapter.find({ name: { $glob: 'A*' } });
+        expectTypeOf(usersSensitive).toEqualTypeOf<User[]>();
+        expect(usersSensitive.some((u) => u.name === 'Alice')).toBe(true);
+
+        const usersSensitiveFail = yield* userAdapter.find({ name: { $glob: 'a*' } });
+        expectTypeOf(usersSensitiveFail).toEqualTypeOf<User[]>();
+        expect(usersSensitiveFail.some((u) => u.name === 'Alice')).toBe(false);
+      }),
+    );
+  });
+
+  describe('Set Inclusion Predicates ($in, $nin)', () => {
+    it.effect('filters rows where a column matches any element in an array ($in)', () =>
       Effect.gen(function* () {
         const targetRoles = ['admin', 'manager'];
         const expectedUsersCount = sampleUsers.filter((u) => u.role !== null && targetRoles.includes(u.role!)).length;
@@ -339,7 +554,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('array ($in): $in with empty array should return no results (SQLite: field IN () is FALSE)', () =>
+    it.effect('evaluates an empty array set inclusion ($in: []) to false and returns no rows', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ role: { $in: [] } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -347,7 +562,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('array ($nin): should find users not in specific roles (field NOT IN (values))', () =>
+    it.effect('filters rows where a column does not match any element in an array ($nin)', () =>
       Effect.gen(function* () {
         const excludedRoles = ['admin', 'manager'];
         const expectedUsersCount = sampleUsers.filter((u) => u.role !== null && !excludedRoles.includes(u.role!)).length;
@@ -358,35 +573,17 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('array ($nin): $nin with empty array should return all results (SQLite: field NOT IN () is TRUE)', () =>
+    it.effect('evaluates an empty array set exclusion ($nin: []) to true and returns all rows', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ role: { $nin: [] } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
         expect(users).toHaveLength(sampleUsers.length);
       }),
     );
+  });
 
-    it.effect('null check ($null: true): should find users with null age (field IS NULL)', () =>
-      Effect.gen(function* () {
-        const usersNullAgeCount = sampleUsers.filter((u) => u.age === null).length;
-        const foundUsers = yield* userAdapter.find({ age: { $null: true } });
-        expectTypeOf(foundUsers).toEqualTypeOf<User[]>();
-        expect(foundUsers).toHaveLength(usersNullAgeCount);
-        foundUsers.forEach((u) => expect(u.age).toBeNull());
-      }),
-    );
-
-    it.effect('null check ($null: false): should find users with non-null age (field IS NOT NULL)', () =>
-      Effect.gen(function* () {
-        const usersNonNullAgeCount = sampleUsers.filter((u) => u.age !== null).length;
-        const foundUsers = yield* userAdapter.find({ age: { $null: false } });
-        expectTypeOf(foundUsers).toEqualTypeOf<User[]>();
-        expect(foundUsers).toHaveLength(usersNonNullAgeCount);
-        foundUsers.forEach((u) => expect(u.age).not.toBeNull());
-      }),
-    );
-
-    it.effect('logical ($and): find users with role "user" AND age 24', () =>
+  describe('Logical Predicates ($and, $or, $not, $nand, $nor)', () => {
+    it.effect('combines multiple filter predicates with logical conjunction ($and)', () =>
       Effect.gen(function* () {
         const bob = sampleUsers.find((u) => u.email === 'bob@example.com')!;
         const foundUsers = yield* userAdapter.find({ $and: [{ role: 'user' }, { age: 24 }] });
@@ -396,7 +593,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($and): with empty array should return all users (evaluates to TRUE)', () =>
+    it.effect('evaluates an empty conjunction ($and: []) to true', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ $and: [] });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -404,7 +601,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($or): find users with role "admin" OR age < 25', () =>
+    it.effect('combines multiple filter predicates with logical disjunction ($or)', () =>
       Effect.gen(function* () {
         const expectedUsersCount = sampleUsers.filter((u) => u.role === 'admin' || (u.age !== null && u.age! < 25)).length;
         const users = yield* userAdapter.find({ $or: [{ role: 'admin' }, { age: { $lt: 25 } }] });
@@ -413,7 +610,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($or): with empty array should return no users (evaluates to FALSE)', () =>
+    it.effect('evaluates an empty disjunction ($or: []) to false', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ $or: [] });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -421,7 +618,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($not): find users NOT (role "admin")', () =>
+    it.effect('negates a single filter predicate condition ($not)', () =>
       Effect.gen(function* () {
         const expectedUsersCount = sampleUsers.filter((u) => u.role !== 'admin').length;
         const users = yield* userAdapter.find({ $not: { role: 'admin' } });
@@ -430,7 +627,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($not { $eq: value }): with nullable column, excludes rows where column is NULL', () =>
+    it.effect('excludes null values when negating an equality condition on a nullable column', () =>
       Effect.gen(function* () {
         const expectedUsers = sampleUsers.filter((u) => u.age !== null && u.age !== 30);
         const foundUsers = yield* userAdapter.find({ age: { $not: { $eq: 30 } } });
@@ -443,7 +640,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($not { $eq: null }): is equivalent to { $ne: null } or { $null: false }', () =>
+    it.effect('treats negated null equality ($not: { $eq: null }) as non-null check', () =>
       Effect.gen(function* () {
         const expectedUsers = sampleUsers.filter((u) => u.age !== null);
         const foundUsers = yield* userAdapter.find({ age: { $not: { $eq: null } } });
@@ -456,7 +653,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($nand): users NOT (role "user" AND age 30)', () =>
+    it.effect('evaluates negated conjunction ($nand) over predicate conditions', () =>
       Effect.gen(function* () {
         const expectedUsersCount = sampleUsers.filter((u) => {
           return u.age != null && !(u.role === 'user' && u.age === 30);
@@ -470,7 +667,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($nand): with empty array should return no users (evaluates to NOT(TRUE) -> FALSE)', () =>
+    it.effect('evaluates an empty negated conjunction ($nand: []) to false', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ $nand: [] });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -478,7 +675,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($nor): users NOT (role "admin" OR age < 25)', () =>
+    it.effect('evaluates negated disjunction ($nor) over predicate conditions', () =>
       Effect.gen(function* () {
         const expectedUsersCount = sampleUsers.filter((u) => {
           return u.age != null && !(u.role === 'admin' || u.age < 25);
@@ -490,7 +687,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('logical ($nor): with empty array should return all users (evaluates to NOT(FALSE) -> TRUE)', () =>
+    it.effect('evaluates an empty negated disjunction ($nor: []) to true', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({ $nor: [] });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -498,68 +695,258 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('filter with unknown column should result in SQL condition "false" by Adapter logic, yielding 0 results', () =>
+    it.effect('resolves complex nested logical expression structures ($and inside $or)', () =>
       Effect.gen(function* () {
-        const users = yield* userAdapter.find({ unknownColumn: 'test' } as unknown as Partial<User>);
-        expectTypeOf(users).toEqualTypeOf<User[]>();
-        expect(users).toHaveLength(0);
+        const expectedUsers = sampleUsers.filter((u) => (u.role === 'admin' || (u.age != null && u.age < 25)) && u.officeId === 1);
+
+        const foundUsers = yield* userAdapter.find({
+          $and: [{ $or: [{ role: 'admin' }, { age: { $lt: 25 } }] }, { officeId: 1 }],
+        });
+        expectTypeOf(foundUsers).toEqualTypeOf<User[]>();
+        expect(foundUsers).toHaveLength(expectedUsers.length);
+        if (expectedUsers.length > 0) {
+          expect(foundUsers.map((u) => u.email).sort()).toEqual(expectedUsers.map((u) => u.email).sort());
+        }
+      }),
+    );
+
+    it.effect('computes row count for complex logical expression filters', () =>
+      Effect.gen(function* () {
+        const expectedCount = sampleUsers.filter((u) => u.role === 'user' && u.age != null && u.age < 30).length;
+        const count = yield* userAdapter.count({ $and: [{ role: 'user' }, { age: { $lt: 30 } }] });
+        expectTypeOf(count).toEqualTypeOf<number>();
+        expect(count).toBe(expectedCount);
       }),
     );
   });
 
-  describe('query options', () => {
-    it.effect('select: should return only specified columns (name, email), plus id implicitly', () =>
+  describe('Three-Valued Logic & Degraded Predicates', () => {
+    it.effect('retains valid truthy disjunction branches when sibling branch evaluates to UNKNOWN', () =>
       Effect.gen(function* () {
-        const users = yield* userAdapter.find({}, { select: { name: 1, email: 1 } });
-        expectTypeOf(users).toEqualTypeOf<Array<{ id: number; name: string; email: string | null }>>();
-        expect(users.length).toBeGreaterThan(0);
-        users.forEach((user) => {
-          expect(Object.keys(user).sort()).toEqual(['id', 'name', 'email'].sort());
-          expect(user).toHaveProperty('id');
-          expect(user).toHaveProperty('name');
-          expect(user).toHaveProperty('email');
-        });
+        const users = yield* userAdapter.find({ $or: [{ role: 'admin' }, { age: { $like: null } }] });
+        expect(users.map((u) => u.role)).toEqual(['admin']);
       }),
     );
 
-    it.effect('select: should exclude specified columns (bio: 0), id still included', () =>
+    it.effect('evaluates $nor containing UNKNOWN conditions to false', () =>
       Effect.gen(function* () {
-        const users = yield* userAdapter.find({}, { select: { name: 1, email: 1, bio: 0 } });
-        expectTypeOf(users).toEqualTypeOf<Array<{ id: number; name: string; email: string | null }>>();
-        expect(users.length).toBeGreaterThan(0);
-        users.forEach((user) => {
-          expect(Object.keys(user).sort()).toEqual(['id', 'name', 'email'].sort());
-          expect(user).not.toHaveProperty('bio');
-        });
+        const users = yield* userAdapter.find({ $nor: [{ age: { $gte: null } }] });
+        expect(users).toHaveLength(0);
       }),
     );
 
-    it.effect('select: should exclude id if explicitly set to 0', () =>
+    it.effect('evaluates empty $in/$nin arrays to deterministic boolean values', () =>
       Effect.gen(function* () {
-        const users = yield* userAdapter.find({}, { select: { id: 0, name: 1 } });
-        expectTypeOf(users).toEqualTypeOf<Array<{ name: string }>>();
-        expect(users.length).toBeGreaterThan(0);
-        users.forEach((user) => {
-          expect(Object.keys(user).sort()).toEqual(['name'].sort());
-          expect(user).not.toHaveProperty('id');
-        });
+        expect(yield* userAdapter.find({ $not: { role: { $in: [] } } })).toHaveLength(sampleUsers.length);
+        expect(yield* userAdapter.find({ $not: { role: { $nin: [] } } })).toHaveLength(0);
       }),
     );
 
-    it.effect('select: empty select object should return default columns (all from primary table)', () =>
+    it.effect('filters non-null values when null is included inside $in array targets', () =>
       Effect.gen(function* () {
-        const users = yield* userAdapter.find({}, { select: {} });
-        expectTypeOf(users).toEqualTypeOf<User[]>();
-        expect(users.length).toBeGreaterThan(0);
-        const sampleUserKeys = Object.keys(usersTable);
-        users.forEach((user) => {
-          sampleUserKeys.forEach((key) => expect(user).toHaveProperty(key));
-          expect(Object.keys(user).length).toBe(sampleUserKeys.length);
-        });
+        const expected = sampleUsers.filter((u) => u.age === 30).length;
+        const users = yield* userAdapter.find({ age: { $in: [30, null] } as never });
+        expect(users).toHaveLength(expected);
+        users.forEach((u) => expect(u.age).toBe(30));
       }),
     );
 
-    it.effect('limit: should return only the specified number of records', () =>
+    it.effect('evaluates $nin containing null elements to false for all rows', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ age: { $nin: [30, null] } as never });
+        expect(users).toHaveLength(0);
+      }),
+    );
+
+    it.effect('handles invalid non-array operands for $in/$nin gracefully', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ role: { $in: null } as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ role: { $nin: null } as never })).toHaveLength(sampleUsers.length);
+      }),
+    );
+
+    it.effect('evaluates unrecognized operator keys ($bogus) to false', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ role: { $bogus: 'user' } as never });
+        expect(users).toHaveLength(0);
+      }),
+    );
+
+    it.effect('evaluates invalid non-object $not operands to false', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ $not: 'user' as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $not: [{ role: 'user' }] as never })).toHaveLength(0);
+      }),
+    );
+
+    it.effect('treats empty objects inside logical conjunctions/disjunctions as true', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ $and: [{}] })).toHaveLength(sampleUsers.length);
+        expect(yield* userAdapter.find({ $and: [{}, { role: 'admin' }] })).toHaveLength(1);
+        expect(yield* userAdapter.find({ $or: [{}] })).toHaveLength(sampleUsers.length);
+        expect(yield* userAdapter.find({ $or: [{ role: 'admin' }, {}] })).toHaveLength(sampleUsers.length);
+        expect(yield* userAdapter.find({ $nand: [{}] })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $nor: [{}] })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $nor: [{ role: 'admin' }, {}] })).toHaveLength(0);
+      }),
+    );
+
+    it.effect('treats filters consisting solely of undefined values as empty predicates', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ $or: [{ role: undefined }] })).toHaveLength(sampleUsers.length);
+        expect(yield* userAdapter.find({ $and: [{ role: undefined }, { role: 'admin' }] })).toHaveLength(1);
+      }),
+    );
+
+    it.effect('evaluates non-array operands for logical operators ($and/$or) to false', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ $and: { role: 'admin' } as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $or: { role: 'admin' } as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $nand: null as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $nor: 'nope' as never })).toHaveLength(0);
+      }),
+    );
+
+    it.effect('evaluates non-object elements within logical operator arrays to false', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ $and: [null] as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $and: ['role'] as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $or: [{ role: 'admin' }, 5] as never })).toHaveLength(1);
+      }),
+    );
+
+    it.effect('fails with SqliteClientError when unknown columns appear inside negated clauses', () =>
+      Effect.gen(function* () {
+        const direct = yield* Effect.exit(userAdapter.find({ nope: 'x' } as never));
+        assert(Exit.isFailure(direct));
+        expect((Option.getOrThrow(Cause.failureOption(direct.cause)) as SqliteClientError).message).toMatch(/Unknown column "nope"/);
+
+        const negated = yield* Effect.exit(userAdapter.find({ $not: { nope: 'x' } } as never));
+        assert(Exit.isFailure(negated));
+        expect((Option.getOrThrow(Cause.failureOption(negated.cause)) as SqliteClientError).message).toMatch(/Unknown column "nope"/);
+      }),
+    );
+
+    it.effect('rejects Object.prototype property keys as invalid unknown columns', () =>
+      Effect.gen(function* () {
+        for (const key of ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__']) {
+          const exit = yield* Effect.exit(userAdapter.find({ [key]: 'x' } as never));
+          assert(Exit.isFailure(exit));
+          const failure = Cause.failureOption(exit.cause);
+          assert(Option.isSome(failure));
+          expect(failure.value).toBeInstanceOf(SqliteClientError);
+          expect((failure.value as SqliteClientError).message).toMatch(/Unknown column/);
+        }
+
+        const orderExit = yield* Effect.exit(userAdapter.find({}, { order: { constructor: 'asc' } as never }));
+        assert(Exit.isFailure(orderExit));
+        expect((Option.getOrThrow(Cause.failureOption(orderExit.cause)) as SqliteClientError).message).toMatch(/Unknown column/);
+
+        expect(Object.keys((yield* userAdapter.find({}, { select: { constructor: 1 } as never }))[0])).toEqual(['id']);
+      }),
+    );
+
+    it.effect('evaluates Object.prototype keys inside operator objects to false', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ role: { $eq: 'admin', constructor: 'x' } as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ role: { $bogus: 'admin', toString: 'x' } as never })).toHaveLength(0);
+      }),
+    );
+
+    it.effect('coerces $null values to boolean flags and handles null operands', () =>
+      Effect.gen(function* () {
+        const nullBio = sampleUsers.filter((u) => u.bio === null).length;
+        expect(yield* userAdapter.find({ bio: { $null: 'yes' as never } })).toHaveLength(nullBio);
+        expect(yield* userAdapter.find({ bio: { $null: '' as never } })).toHaveLength(sampleUsers.length - nullBio);
+        expect(yield* userAdapter.find({ bio: { $null: null as never } })).toHaveLength(sampleUsers.length - nullBio);
+      }),
+    );
+
+    it.effect('evaluates negation of an empty filter ($not: {}) to false', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ $not: {} })).toHaveLength(0);
+        expect(yield* userAdapter.find({ $not: { role: undefined } })).toHaveLength(0);
+      }),
+    );
+
+    it.effect('ignores undefined field filter properties instead of binding SQL NULL', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ role: undefined });
+        expect(users).toHaveLength(sampleUsers.length);
+
+        const scoped = yield* userAdapter.find({ role: 'admin', age: undefined });
+        expect(scoped).toHaveLength(1);
+      }),
+    );
+
+    it.effect('ignores undefined operator values ($eq: undefined) treating field as unconstrained', () =>
+      Effect.gen(function* () {
+        const byField = yield* userAdapter.find({ age: undefined });
+        const byOperator = yield* userAdapter.find({ age: { $eq: undefined } });
+
+        expect(byOperator).toHaveLength(sampleUsers.length);
+        expect(byOperator).toEqual(byField);
+      }),
+    );
+
+    it.effect('drops undefined operator keys while applying defined sibling operator conditions', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ age: { $gt: undefined, $lt: 30 } }, { order: { name: 'asc' } });
+        const expected = sampleUsers.filter((u) => u.age != null && u.age < 30).length;
+
+        expect(users).toHaveLength(expected);
+        expect(users.every((u) => u.age! < 30)).toBe(true);
+      }),
+    );
+
+    it.effect('treats undefined operator arguments as absent across all operator types', () =>
+      Effect.gen(function* () {
+        const filters = [
+          { bio: { $null: undefined } },
+          { role: { $in: undefined } },
+          { role: { $nin: undefined } },
+          { role: { $not: undefined } },
+          { name: { $like: undefined } },
+          { name: { $glob: undefined } },
+        ];
+
+        for (const filter of filters) {
+          expect(yield* userAdapter.find(filter as never)).toHaveLength(sampleUsers.length);
+        }
+      }),
+    );
+
+    it.effect('leaves column unconstrained when operator object contains only undefined values', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ role: 'user', age: { $gte: undefined, $lte: undefined } });
+        const expected = sampleUsers.filter((u) => u.role === 'user').length;
+
+        expect(users).toHaveLength(expected);
+      }),
+    );
+
+    it.effect('evaluates $not containing only undefined operands to false', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.find({ $not: { age: { $gt: undefined } } })).toHaveLength(0);
+      }),
+    );
+
+    it.effect('fails with a SqliteClientError when querying against an unmapped table column', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({ unknownColumn: 'test' } as unknown as Partial<User>));
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect(failure.value).toBeInstanceOf(SqliteClientError);
+        expect((failure.value as SqliteClientError).message).toMatch(/Unknown column "unknownColumn"/);
+      }),
+    );
+  });
+});
+
+describe('Ordering & Pagination', () => {
+  describe('Limit and Offset Options', () => {
+    it.effect('restricts maximum returned row count according to the limit option', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({}, { limit: 2 });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -567,7 +954,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('limit: limit 0 should return no records', () =>
+    it.effect('returns an empty array when limit is set to zero', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({}, { limit: 0 });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -575,7 +962,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('limit: limit below 0 should return all records', () =>
+    it.effect('returns all matching records when limit is a negative integer', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({}, { limit: -1 });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -583,7 +970,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('offset: should skip the specified number of records', () =>
+    it.effect('bypasses the initial N records according to the offset option', () =>
       Effect.gen(function* () {
         const allUsers = yield* userAdapter.find({}, { order: { id: 'asc' } });
 
@@ -597,7 +984,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('offset: large offset should return empty array', () =>
+    it.effect('returns an empty array when offset exceeds total row count', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({}, { offset: 1000 });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -605,7 +992,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('limit and offset: should correctly apply both limit and offset', () =>
+    it.effect('combines limit and offset parameters to paginate result windows', () =>
       Effect.gen(function* () {
         const allUsers = yield* userAdapter.find({}, { order: { id: 'asc' } });
 
@@ -621,7 +1008,76 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('order: should sort by name ascending', () =>
+    it.effect('executes offset pagination without explicit limit constraint', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({}, { offset: 3, order: { id: 'asc' } });
+        expect(users).toHaveLength(sampleUsers.length - 3);
+      }),
+    );
+
+    it.effect('interprets negative limit values as unconstrained limit with offset', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({}, { limit: -1, offset: 6, order: { id: 'asc' } });
+        expect(users).toHaveLength(sampleUsers.length - 6);
+      }),
+    );
+
+    it.effect('treats offset 0 as a no-op returning full query result set', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({}, { offset: 0 });
+        expect(users).toHaveLength(sampleUsers.length);
+      }),
+    );
+
+    it.effect('emits standard SQL LIMIT/OFFSET clauses on raw Drizzle database instances', () =>
+      Effect.gen(function* () {
+        const raw = drizzle(client);
+        const adapter = Adapter(raw, usersTable);
+
+        expect(yield* adapter.find({}, { offset: 2, order: { id: 'asc' } })).toHaveLength(sampleUsers.length - 2);
+        expect(yield* adapter.find({}, { limit: -1 })).toHaveLength(sampleUsers.length);
+        expect(yield* adapter.find({}, { limit: 2 })).toHaveLength(2);
+      }),
+    );
+
+    it.effect('fails fast with SqliteClientError when limit is a non-integer float', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({}, { limit: 2.5 }));
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect((failure.value as SqliteClientError).message).toMatch(/Query option "limit" must be an integer/i);
+      }),
+    );
+
+    it.effect('fails fast with SqliteClientError when limit is NaN', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({}, { limit: Number.NaN }));
+        assert(Exit.isFailure(exit));
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/Query option "limit" must be an integer/i);
+      }),
+    );
+
+    it.effect('fails fast with SqliteClientError when offset is a non-integer float', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({}, { offset: 1.5 }));
+        assert(Exit.isFailure(exit));
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/Query option "offset" must be an integer/i);
+      }),
+    );
+
+    it.effect('clamps negative offset values to zero', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({}, { offset: -5, order: { id: 'asc' } });
+        expect(users).toHaveLength(sampleUsers.length);
+      }),
+    );
+  });
+
+  describe('Sorting and Ordering Options', () => {
+    it.effect('orders matching records by a string field in ascending sequence', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({}, { order: { name: 'asc' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -631,7 +1087,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('order: should sort by age descending (SQLite default: NULLS LAST for DESC)', () =>
+    it.effect('orders matching records by a numeric field descending with nulls ordered last', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({}, { order: { age: 'desc' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -653,7 +1109,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('order: should sort by age ascending (SQLite default: NULLS FIRST for ASC)', () =>
+    it.effect('orders matching records by a numeric field ascending with nulls ordered first', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({}, { order: { age: 'asc' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -677,7 +1133,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('order: multiple columns (role asc, name desc)', () =>
+    it.effect('applies multi-column sorting rules in sequence', () =>
       Effect.gen(function* () {
         const users = yield* userAdapter.find({}, { order: { role: 'asc', name: 'desc' } });
         expectTypeOf(users).toEqualTypeOf<User[]>();
@@ -696,10 +1152,302 @@ describe('Adapter find()', () => {
         expect(users.map((u) => u.id)).toEqual(sortedManually.map((u) => u.id));
       }),
     );
+
+    it.effect('selects the deterministic first row according to order specifications', () =>
+      Effect.gen(function* () {
+        const usersAge30 = yield* userAdapter.find({ age: 30 }, { order: { id: 'asc' } });
+        expect(usersAge30.length).toBeGreaterThan(0);
+
+        const minIdAge30 = usersAge30[0].id;
+        const maxIdAge30 = usersAge30[usersAge30.length - 1].id;
+
+        const userAsc = yield* userAdapter.findOne({ age: 30 }, { order: { id: 'asc' } });
+        expectTypeOf(userAsc).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(userAsc)).toBe(true);
+        if (Option.isSome(userAsc)) {
+          expect(userAsc.value.id).toBe(minIdAge30);
+        }
+
+        const userDesc = yield* userAdapter.findOne({ age: 30 }, { order: { id: 'desc' } });
+        expectTypeOf(userDesc).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(userDesc)).toBe(true);
+        if (Option.isSome(userDesc)) {
+          expect(userDesc.value.id).toBe(maxIdAge30);
+        }
+      }),
+    );
+
+    it.effect('fails with a SqliteClientError when ordering by an unmapped table column', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({}, { order: { nope: 'asc' } as never }));
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect(failure.value).toBeInstanceOf(SqliteClientError);
+        expect((failure.value as SqliteClientError).message).toMatch(/Unknown column "nope"/);
+        expect(() => client.prepare('SELECT * FROM users ORDER BY nope')).toThrow(/no such column/i);
+      }),
+    );
+  });
+});
+
+describe('Projections & Selections', () => {
+  describe('Inclusion and Exclusion Projections', () => {
+    it.effect('includes only specified columns and primary key when using inclusion select', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({}, { select: { name: 1, email: 1 } });
+        expectTypeOf(users).toEqualTypeOf<Array<{ id: number; name: string; email: string | null }>>();
+        expect(users.length).toBeGreaterThan(0);
+        users.forEach((user) => {
+          expect(Object.keys(user).sort()).toEqual(['id', 'name', 'email'].sort());
+          expect(user).toHaveProperty('id');
+          expect(user).toHaveProperty('name');
+          expect(user).toHaveProperty('email');
+        });
+      }),
+    );
+
+    it.effect('excludes specified columns while retaining remaining schema fields', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({}, { select: { name: 1, email: 1, bio: 0 } });
+        expectTypeOf(users).toEqualTypeOf<Array<{ id: number; name: string; email: string | null }>>();
+        expect(users.length).toBeGreaterThan(0);
+        users.forEach((user) => {
+          expect(Object.keys(user).sort()).toEqual(['id', 'name', 'email'].sort());
+          expect(user).not.toHaveProperty('bio');
+        });
+      }),
+    );
+
+    it.effect('omits primary key "id" when explicitly marked for exclusion in select', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({}, { select: { id: 0, name: 1 } });
+        expectTypeOf(users).toEqualTypeOf<Array<{ name: string }>>();
+        expect(users.length).toBeGreaterThan(0);
+        users.forEach((user) => {
+          expect(Object.keys(user).sort()).toEqual(['name'].sort());
+          expect(user).not.toHaveProperty('id');
+        });
+      }),
+    );
+
+    it.effect('returns all default table columns when provided an empty select object', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({}, { select: {} });
+        expectTypeOf(users).toEqualTypeOf<User[]>();
+        expect(users.length).toBeGreaterThan(0);
+        const sampleUserKeys = Object.keys(usersTable);
+        users.forEach((user) => {
+          sampleUserKeys.forEach((key) => expect(user).toHaveProperty(key));
+          expect(Object.keys(user).length).toBe(sampleUserKeys.length);
+        });
+      }),
+    );
+
+    it.effect('correctly projects TypeScript types for inclusion, exclusion, and mutation return aliases', () =>
+      Effect.gen(function* () {
+        const excluded = yield* userAdapter.find({}, { select: { bio: 0 } });
+        expectTypeOf(excluded).toEqualTypeOf<Array<Omit<User, 'bio'>>>();
+
+        const excludedId = yield* userAdapter.find({}, { select: { id: 0, bio: 0 } });
+        expectTypeOf(excludedId).toEqualTypeOf<Array<Omit<User, 'id' | 'bio'>>>();
+
+        const included = yield* userAdapter.find({}, { select: { name: 1 } });
+        expectTypeOf(included).toEqualTypeOf<Array<{ id: number; name: string }>>();
+
+        const includedNoId = yield* userAdapter.find({}, { select: { id: 0, name: 1 } });
+        expectTypeOf(includedNoId).toEqualTypeOf<Array<{ name: string }>>();
+
+        const updated = yield* userAdapter.update({ id: 1, name: 'x' } as User, { select: { name: 1 } });
+        expectTypeOf(updated).toEqualTypeOf<Array<{ id: number; name: string }>>();
+
+        const inserted = yield* userAdapter.insert({ name: 'x', email: 'x@e.com' }, { select: { id: 1 } });
+        expectTypeOf(inserted).toEqualTypeOf<Array<{ id: number }>>();
+
+        const deleted = yield* userAdapter.delete({ id: 1 } as User, { select: { id: 1, name: 1 } });
+        expectTypeOf(deleted).toEqualTypeOf<Array<{ id: number; name: string }>>();
+
+        const updatedOne = yield* userAdapter.findOneAndUpdate({ id: 1 } as User, { name: 'x' }, { select: { name: 1 } });
+        expectTypeOf(updatedOne).toEqualTypeOf<Option.Option<{ id: number; name: string }>>();
+
+        const deletedOne = yield* userAdapter.findOneAndDelete({ id: 1 } as User, { select: { name: 1 } });
+        expectTypeOf(deletedOne).toEqualTypeOf<Option.Option<{ id: number; name: string }>>();
+      }),
+    );
+
+    it.effect('allows primary key exclusion alongside joined table field selections', () =>
+      Effect.gen(function* () {
+        const items = yield* userAdapter.find(
+          { email: 'alice@example.com' },
+          {
+            joins: [
+              { table: officesTable, on: { officeId: 'id' }, type: 'left' },
+              { table: postsTable, on: { id: 'userId' }, type: 'left' },
+            ],
+            select: { id: 0, name: 1, location: 1 },
+          },
+        );
+        expectTypeOf(items).toEqualTypeOf<Array<{ name: string; location: string | null }>>();
+        expect(items).toHaveLength(3);
+        expect(items[0]).toEqual({ name: 'Alice', location: 'New York' });
+        expect(Object.keys(items[0]).sort()).toEqual(['location', 'name'].sort());
+      }),
+    );
+
+    it.effect('applies field selection projections to single-row option lookups', () =>
+      Effect.gen(function* () {
+        const aliceSample = sampleUsers.find((u) => u.email === 'alice@example.com')!;
+        const user = yield* userAdapter.findOne({ email: 'alice@example.com' }, { select: { name: 1 } });
+        assert(Option.isSome(user));
+        expectTypeOf(user.value).toEqualTypeOf<{ id: number; name: string }>();
+        expect(Option.isSome(user)).toBe(true);
+        expect(user).toEqual(Option.some({ id: expect.any(Number), name: aliceSample.name }));
+        expect(Object.keys(user.value).sort()).toEqual(['id', 'name'].sort());
+      }),
+    );
+
+    it.effect('treats undefined projection flags as unflagged schema fields', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ email: 'alice@example.com' }, { select: { id: undefined, name: 1 } });
+        expect(Object.keys(users[0]).sort()).toEqual(['id', 'name']);
+      }),
+    );
+
+    it.effect('supports primary-key-only inclusion select projections', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ email: 'alice@example.com' }, { select: { id: 1 } });
+        expect(Object.keys(users[0])).toEqual(['id']);
+      }),
+    );
+
+    it.effect('applies selection projections across findOne and findOneAndDelete operations', () =>
+      Effect.gen(function* () {
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' }, { select: { name: 1 } });
+        assert(Option.isSome(alice));
+        expect(Object.keys(alice.value).sort()).toEqual(['id', 'name']);
+
+        const deleted = yield* userAdapter.findOneAndDelete({ email: 'alice@example.com' }, { select: { id: 0, name: 1 } });
+        assert(Option.isSome(deleted));
+        expect(Object.keys(deleted.value)).toEqual(['name']);
+      }),
+    );
+
+    it.effect('retains all unmentioned schema columns when using exclusion select', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ email: 'alice@example.com' }, { select: { bio: 0 } });
+        expectTypeOf(users).toEqualTypeOf<Array<Omit<User, 'bio'>>>();
+        expect(Object.keys(users[0])).toEqual(['id', 'name', 'email', 'age', 'role', 'officeId']);
+      }),
+    );
+
+    it.effect('drops primary key "id" when explicitly marked for exclusion', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ email: 'alice@example.com' }, { select: { id: 0 } });
+        expectTypeOf(users).toEqualTypeOf<Array<Omit<User, 'id'>>>();
+        expect(Object.keys(users[0])).toEqual(['name', 'email', 'age', 'role', 'officeId', 'bio']);
+      }),
+    );
+
+    it.effect('prioritizes inclusion flags over exclusion flags in mixed projections', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ email: 'alice@example.com' }, { select: { name: 1, bio: 0, age: 0 } });
+        expect(Object.keys(users[0]).sort()).toEqual(['id', 'name']);
+      }),
+    );
+
+    it.effect('treats all-undefined projection objects as default full-schema lookups', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ email: 'alice@example.com' }, { select: { bio: undefined } });
+        expect(Object.keys(users[0])).toEqual(Object.keys(usersTable));
+      }),
+    );
+
+    it.effect('ignores non-existent schema column keys inside selection projections', () =>
+      Effect.gen(function* () {
+        const users = yield* userAdapter.find({ email: 'alice@example.com' }, { select: { nope: 1, name: 1 } as never });
+        expect(Object.keys(users[0]).sort()).toEqual(['id', 'name']);
+      }),
+    );
+
+    it.effect('applies exclusion select projections to insert, update, and delete return values', () =>
+      Effect.gen(function* () {
+        const inserted = yield* userAdapter.insert({ name: 'Proj', email: 'proj@example.com' }, { select: { bio: 0, officeId: 0 } });
+        expect(Object.keys(inserted[0])).toEqual(['id', 'name', 'email', 'age', 'role']);
+
+        const updated = yield* userAdapter.update({ ...(inserted[0] as User), age: 41 }, { select: { email: 0 } });
+        expect(Object.keys(updated[0])).toEqual(['id', 'name', 'age', 'role', 'officeId', 'bio']);
+
+        const deleted = yield* userAdapter.delete({ id: inserted[0].id } as User, { select: { id: 0, name: 1 } });
+        expect(Object.keys(deleted[0])).toEqual(['name']);
+      }),
+    );
   });
 
-  describe('joins', () => {
-    it.effect('inner join: users with their offices (users without office should be excluded)', () =>
+  describe('Degenerate Projections and Validation', () => {
+    const dropAll = { id: 0, name: 0, email: 0, age: 0, role: 0, officeId: 0, bio: 0 } as const;
+
+    it.effect('fails with SqliteClientError when exclusion projection drops all schema columns', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({}, { select: dropAll }));
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect(failure.value).toBeInstanceOf(SqliteClientError);
+        expect((failure.value as SqliteClientError).message).toMatch(/must keep at least one column/i);
+      }),
+    );
+
+    it.effect('fails with SqliteClientError when inclusion projection specifies only unknown columns', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({}, { select: { id: 0, nope: 1 } as never }));
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect((failure.value as SqliteClientError).message).toMatch(/must keep at least one column/i);
+      }),
+    );
+
+    it.effect('rejects degenerate all-excluded projections across insert, update, and delete write operations', () =>
+      Effect.gen(function* () {
+        const insertExit = yield* Effect.exit(userAdapter.insert({ name: 'Zed', email: 'zed@example.com' }, { select: dropAll }));
+        assert(Exit.isFailure(insertExit));
+
+        const updateExit = yield* Effect.exit(userAdapter.update({ id: 1, name: 'Zed' } as User, { select: dropAll }));
+        assert(Exit.isFailure(updateExit));
+
+        const deleteExit = yield* Effect.exit(userAdapter.delete({ id: 1 } as User, { select: dropAll }));
+        assert(Exit.isFailure(deleteExit));
+
+        const findOneExit = yield* Effect.exit(userAdapter.findOne({}, { select: dropAll }));
+        assert(Exit.isFailure(findOneExit));
+
+        const deleteOneExit = yield* Effect.exit(userAdapter.findOneAndDelete({}, { select: dropAll }));
+        assert(Exit.isFailure(deleteOneExit));
+
+        expect(yield* userAdapter.count()).toBe(sampleUsers.length);
+        expect(yield* userAdapter.count({ name: 'Zed' })).toBe(0);
+      }),
+    );
+
+    it.effect('allows dropping primary table columns if joined table columns are projected', () =>
+      Effect.gen(function* () {
+        const rows = yield* userAdapter.find(
+          { name: 'Alice' },
+          {
+            joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'inner' }],
+            select: { ...dropAll, location: 1 },
+          },
+        );
+
+        expect(rows).toEqual([{ location: 'New York' }]);
+      }),
+    );
+  });
+});
+
+describe('Relational Joins', () => {
+  describe('Join Types (Inner, Left, Right, Full, Cross)', () => {
+    it.effect('performs an inner join returning matching records from both tables', () =>
       Effect.gen(function* () {
         const joinedResult = yield* userAdapter.find(
           {},
@@ -718,7 +1466,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('left join: all users, with their offices if present (users without office should have null for office fields)', () =>
+    it.effect('performs a left outer join retaining left rows and null-filling missing right rows', () =>
       Effect.gen(function* () {
         const joinedResult = yield* userAdapter.find(
           {},
@@ -741,7 +1489,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('right join: (emulated by Drizzle) all offices, with their users if present', () =>
+    it.effect('emulates a right outer join retaining right rows and null-filling left rows', () =>
       Effect.gen(function* () {
         const joinedResult = yield* userAdapter.find(
           {},
@@ -769,7 +1517,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('full join: (emulated by Drizzle) all users and all offices', () =>
+    it.effect('emulates a full outer join returning all records from both left and right relations', () =>
       Effect.gen(function* () {
         const joinedResult = yield* userAdapter.find(
           {},
@@ -800,7 +1548,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('cross join: users and offices', () =>
+    it.effect('performs a cross join computing the Cartesian product of involved tables', () =>
       Effect.gen(function* () {
         const joinedResult = yield* userAdapter.find(
           {},
@@ -823,7 +1571,26 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('join with select: select user name and office location', () =>
+    it.effect('retrieves a single joined row structure wrapped in Option.some', () =>
+      Effect.gen(function* () {
+        const aliceSample = sampleUsers.find((u) => u.email === 'alice@example.com')!;
+        const joinedResult = yield* userAdapter.findOne(
+          { email: aliceSample.email },
+          {
+            joins: [{ table: officesTable, on: { officeId: 'id' } }],
+          },
+        );
+        expect(Option.isSome(joinedResult)).toBe(true);
+        if (Option.isSome(joinedResult)) {
+          expect(joinedResult.value.users.email).toBe(aliceSample.email);
+          expect(joinedResult.value.offices.name).toBe(sampleOffices.find((o) => o.name === 'HQ')!.name);
+        }
+      }),
+    );
+  });
+
+  describe('Relational Filtering & Column Resolution', () => {
+    it.effect('applies field selection across joined tables', () =>
       Effect.gen(function* () {
         const items = yield* userAdapter.find(
           {},
@@ -842,7 +1609,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('join with filter on main table: users in role "admin" and their office', () =>
+    it.effect('applies primary table filter predicates to joined queries', () =>
       Effect.gen(function* () {
         const alice = sampleUsers.find((u) => u.email === 'alice@example.com')!;
         const joinedResult = yield* userAdapter.find(
@@ -862,7 +1629,7 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('join with filter on main table (FK) that implies a filter on joined table', () =>
+    it.effect('filters joined queries using primary table foreign key equality', () =>
       Effect.gen(function* () {
         const hqOfficeOpt = yield* officeAdapter.findOne({ name: 'HQ' });
         assert(Option.isSome(hqOfficeOpt), 'Expected HQ office to be found');
@@ -885,7 +1652,40 @@ describe('Adapter find()', () => {
       }),
     );
 
-    it.effect('join with order by joined table column (location asc, NULLS FIRST for SQLite ASC)', () =>
+    it.effect('filters joined queries using secondary table column predicates', () =>
+      Effect.gen(function* () {
+        const joined = yield* userAdapter.find({ location: 'New York' } as never, {
+          joins: [{ table: officesTable, on: { officeId: 'id' } }],
+        });
+
+        const expected = sampleUsers.filter((u) => u.officeId === 1).length;
+        expect(joined).toHaveLength(expected);
+        joined.forEach((item) => expect(item.offices.location).toBe('New York'));
+      }),
+    );
+
+    it.effect('resolves ambiguous column names to primary table when present in both relations', () =>
+      Effect.gen(function* () {
+        const joined = yield* userAdapter.find(
+          { name: 'Alice' },
+          {
+            joins: [{ table: officesTable, on: { officeId: 'id' } }],
+          },
+        );
+
+        expect(joined).toHaveLength(1);
+        expect(joined[0].users.name).toBe('Alice');
+        expect(joined[0].offices.name).toBe('HQ');
+
+        const projected = yield* userAdapter.find(
+          { email: 'alice@example.com' },
+          { joins: [{ table: officesTable, on: { officeId: 'id' } }], select: { name: 1 } },
+        );
+        expect(projected).toEqual([{ id: expect.any(Number), name: 'Alice' }]);
+      }),
+    );
+
+    it.effect('orders joined result sets by a secondary table column', () =>
       Effect.gen(function* () {
         const items = yield* userAdapter.find(
           {},
@@ -916,324 +1716,229 @@ describe('Adapter find()', () => {
         }
       }),
     );
-  });
 
-  describe('Filter Logic - Advanced', () => {
-    it.effect('should handle $eq with case sensitivity for text fields (SQLite default)', () =>
+    it.effect('maintains isolated column maps for distinct join query configurations', () =>
       Effect.gen(function* () {
-        const usersLower = yield* userAdapter.find({ name: 'alice' });
-        expectTypeOf(usersLower).toEqualTypeOf<User[]>();
-        expect(usersLower.filter((u) => u.name === 'alice')).toHaveLength(0);
-
-        const usersUpper = yield* userAdapter.find({ name: 'Alice' });
-        expectTypeOf(usersUpper).toEqualTypeOf<User[]>();
-        expect(usersUpper.filter((u) => u.name === 'Alice').length).toBeGreaterThan(0);
-      }),
-    );
-
-    it.effect('should handle $like with case insensitivity for text fields (SQLite default for ASCII)', () =>
-      Effect.gen(function* () {
-        const users = yield* userAdapter.find({ name: { $like: 'aliCE%' } });
-        expectTypeOf(users).toEqualTypeOf<User[]>();
-        expect(users.some((u) => u.name === 'Alice')).toBe(true);
-      }),
-    );
-
-    it.effect('should handle $glob with case sensitivity for text fields (SQLite default)', () =>
-      Effect.gen(function* () {
-        const usersSensitive = yield* userAdapter.find({ name: { $glob: 'A*' } });
-        expectTypeOf(usersSensitive).toEqualTypeOf<User[]>();
-        expect(usersSensitive.some((u) => u.name === 'Alice')).toBe(true);
-
-        const usersSensitiveFail = yield* userAdapter.find({ name: { $glob: 'a*' } });
-        expectTypeOf(usersSensitiveFail).toEqualTypeOf<User[]>();
-        expect(usersSensitiveFail.some((u) => u.name === 'Alice')).toBe(false);
-      }),
-    );
-
-    it.effect('should correctly filter with $lt: null, $lte: null (SQLite: field < NULL is UNKNOWN/FALSE)', () =>
-      Effect.gen(function* () {
-        const usersLt = yield* userAdapter.find({ age: { $lt: null } });
-        expectTypeOf(usersLt).toEqualTypeOf<User[]>();
-        expect(usersLt).toHaveLength(0);
-
-        const usersLte = yield* userAdapter.find({ age: { $lte: null } });
-        expectTypeOf(usersLte).toEqualTypeOf<User[]>();
-        expect(usersLte).toHaveLength(0);
-      }),
-    );
-
-    it.effect('should handle complex nested logical operators ($and with $or)', () =>
-      Effect.gen(function* () {
-        const expectedUsers = sampleUsers.filter((u) => (u.role === 'admin' || (u.age != null && u.age < 25)) && u.officeId === 1);
-
-        const foundUsers = yield* userAdapter.find({
-          $and: [{ $or: [{ role: 'admin' }, { age: { $lt: 25 } }] }, { officeId: 1 }],
-        });
-        expectTypeOf(foundUsers).toEqualTypeOf<User[]>();
-        expect(foundUsers).toHaveLength(expectedUsers.length);
-        if (expectedUsers.length > 0) {
-          expect(foundUsers.map((u) => u.email).sort()).toEqual(expectedUsers.map((u) => u.email).sort());
-        }
-      }),
-    );
-  });
-
-  describe('Query Options - Advanced', () => {
-    it.effect('select: should allow id: 0 with other fields from joined table', () =>
-      Effect.gen(function* () {
-        const items = yield* userAdapter.find(
-          { email: 'alice@example.com' },
-          {
-            joins: [
-              { table: officesTable, on: { officeId: 'id' }, type: 'left' },
-              { table: postsTable, on: { id: 'userId' }, type: 'left' },
-            ],
-            select: { id: 0, name: 1, location: 1 },
-          },
+        const withOffices = yield* userAdapter.find(
+          { name: 'Alice' },
+          { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'inner' }], select: { name: 1, location: 1 } },
         );
-        expectTypeOf(items).toEqualTypeOf<Array<{ name: string; location: string | null }>>();
-        expect(items).toHaveLength(3);
-        expect(items[0]).toEqual({ name: 'Alice', location: 'New York' });
-        expect(Object.keys(items[0]).sort()).toEqual(['location', 'name'].sort());
+        expect(withOffices).toEqual([{ id: 1, name: 'Alice', location: 'New York' }]);
+
+        const withPosts = yield* userAdapter.find(
+          { name: 'Alice' },
+          { joins: [{ table: postsTable, on: { id: 'userId' }, type: 'inner' }], select: { name: 1, title: 1 }, order: { title: 'asc' } },
+        );
+        expect(withPosts.map((r) => r.title)).toEqual(['Hello World', 'SQLite Tips', 'Tech Deep Dive']);
+
+        const again = yield* userAdapter.find(
+          { name: 'Alice' },
+          { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'inner' }], select: { name: 1, location: 1 } },
+        );
+        expect(again).toEqual(withOffices);
+      }),
+    );
+
+    it.effect('caches and reuses column resolution maps for identical join configurations', () =>
+      Effect.gen(function* () {
+        const run = () =>
+          userAdapter.find({ role: 'user' }, { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'left' }], order: { name: 'asc' } });
+
+        const first = yield* run();
+        const second = yield* run();
+        expect(second).toEqual(first);
+        expect(first.length).toBeGreaterThan(0);
+      }),
+    );
+
+    it.effect('resolves unique joined column names to the secondary table schema', () =>
+      Effect.gen(function* () {
+        const rows = yield* userAdapter.find({ location: 'Boston' } as never, {
+          joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'inner' }],
+          order: { name: 'asc' },
+        });
+
+        expect(rows.map((r) => r.users.name)).toEqual(['Mallory', 'Trent']);
+      }),
+    );
+
+    it.effect('resolves the ambiguous primary key "id" to the primary table in join selection projections', () =>
+      Effect.gen(function* () {
+        const rows = yield* userAdapter.find(
+          { id: 1 },
+          { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'inner' }], select: { id: 1, name: 1 } },
+        );
+
+        expect(rows).toEqual([{ id: 1, name: 'Alice' }]);
       }),
     );
   });
 });
 
-describe('Adapter count()', () => {
-  it.effect('should return the total number of users without a filter', () =>
-    Effect.gen(function* () {
-      const count = yield* userAdapter.count();
-      expectTypeOf(count).toEqualTypeOf<number>();
-      expect(count).toBe(sampleUsers.length);
-    }),
-  );
+describe('Inserts & Upserts', () => {
+  describe('Basic Insert Operations', () => {
+    it.effect('persists a single record and returns all generated and schema fields', () =>
+      Effect.gen(function* () {
+        const newUser: Omit<InsertUser, 'id'> = { name: 'Zane', email: 'zane@example.com', age: 22 };
+        const insertedUsers = yield* userAdapter.insert(newUser);
+        expectTypeOf(insertedUsers).toEqualTypeOf<User[]>();
+        expect(insertedUsers).toHaveLength(1);
+        const insertedUser = insertedUsers[0];
+        expect(insertedUser).toEqual(
+          expect.objectContaining({
+            name: 'Zane',
+            email: 'zane@example.com',
+            age: 22,
+            role: 'user',
+          }),
+        );
+        expect(insertedUser.id).toBeTypeOf('number');
 
-  it.effect('should return the count of users matching the filter', () =>
-    Effect.gen(function* () {
-      const usersAge30Count = sampleUsers.filter((u) => u.age === 30).length;
-      const count = yield* userAdapter.count({ age: 30 });
-      expectTypeOf(count).toEqualTypeOf<number>();
-      expect(count).toBe(usersAge30Count);
-    }),
-  );
+        const count = yield* userAdapter.count({ email: 'zane@example.com' });
+        expect(count).toBe(1);
+      }),
+    );
 
-  it.effect('should return 0 if no users match the filter', () =>
-    Effect.gen(function* () {
-      const count = yield* userAdapter.count({ name: 'NonExistentName' });
-      expectTypeOf(count).toEqualTypeOf<number>();
-      expect(count).toBe(0);
-    }),
-  );
+    it.effect('applies schema column default values when fields are omitted from insert payloads', () =>
+      Effect.gen(function* () {
+        const newPost: Omit<InsertPost, 'id' | 'views'> = { title: 'Post with default views', userId: 1 };
+        const insertedPosts = yield* postAdapter.insert(newPost);
+        expectTypeOf(insertedPosts).toEqualTypeOf<Post[]>();
+        expect(insertedPosts[0].views).toBe(0);
 
-  it.effect('should return 0 for count on an empty table', () =>
-    Effect.gen(function* () {
-      client.exec('DELETE FROM users;');
-      const count = yield* userAdapter.count();
-      expectTypeOf(count).toEqualTypeOf<number>();
-      expect(count).toBe(0);
-    }),
-  );
+        const newUser: Omit<InsertUser, 'id' | 'role'> = { name: 'Default Role User', email: 'default@example.com' };
+        const insertedUser = yield* userAdapter.insert(newUser);
+        expectTypeOf(insertedUser).toEqualTypeOf<User[]>();
+        expect(insertedUser[0].role).toBe('user');
+      }),
+    );
 
-  it.effect('should return count with a complex filter', () =>
-    Effect.gen(function* () {
-      const expectedCount = sampleUsers.filter((u) => u.role === 'user' && u.age != null && u.age < 30).length;
-      const count = yield* userAdapter.count({ $and: [{ role: 'user' }, { age: { $lt: 30 } }] });
-      expectTypeOf(count).toEqualTypeOf<number>();
-      expect(count).toBe(expectedCount);
-    }),
-  );
-});
+    it.effect('batch inserts multiple records in a single database operation', () =>
+      Effect.gen(function* () {
+        const newUsers: Array<Omit<InsertUser, 'id'>> = [
+          { name: 'Yara', email: 'yara@example.com', age: 29 },
+          { name: 'Xavi', email: 'xavi@example.com', age: 33 },
+        ];
+        const insertedUsers = yield* userAdapter.insert(newUsers);
+        expectTypeOf(insertedUsers).toEqualTypeOf<User[]>();
+        expect(insertedUsers).toHaveLength(2);
+        expect(insertedUsers.find((u) => u.name === 'Yara')).toBeDefined();
+        expect(insertedUsers.find((u) => u.name === 'Xavi')).toBeDefined();
 
-describe('Adapter findOne()', () => {
-  it.effect('should find a single user by filter', () =>
-    Effect.gen(function* () {
-      const aliceSample = sampleUsers.find((u) => u.email === 'alice@example.com')!;
-      const foundUser = yield* userAdapter.findOne({ email: 'alice@example.com' });
-      expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(foundUser)).toBe(true);
-      expect(foundUser).toEqual(Option.some(expect.objectContaining({ name: aliceSample.name, email: aliceSample.email })));
-    }),
-  );
+        const yaraCount = yield* userAdapter.count({ email: 'yara@example.com' });
+        expect(yaraCount).toBe(1);
 
-  it.effect('should return null if no user matches the filter', () =>
-    Effect.gen(function* () {
-      const foundUser = yield* userAdapter.findOne({ email: 'nonexistent@example.com' });
-      expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isNone(foundUser)).toBe(true);
-    }),
-  );
+        const xaviCount = yield* userAdapter.count({ email: 'xavi@example.com' });
+        expect(xaviCount).toBe(1);
+      }),
+    );
 
-  it.effect('should return null when finding one on an empty table', () =>
-    Effect.gen(function* () {
-      client.exec('DELETE FROM users;');
-      const foundUser = yield* userAdapter.findOne({ name: 'Alice' });
-      expectTypeOf(foundUser).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isNone(foundUser)).toBe(true);
-    }),
-  );
+    it.effect('projects inserted record return payload according to select option', () =>
+      Effect.gen(function* () {
+        const newUser: Omit<InsertUser, 'id'> = { name: 'Wendy', email: 'wendy@example.com', age: 40 };
+        const insertedUsers = yield* userAdapter.insert(newUser, { select: { name: 1, email: 1 } });
+        expectTypeOf(insertedUsers).toEqualTypeOf<Array<{ id: number; name: string; email: string | null }>>();
+        expect(insertedUsers[0]).toEqual({ id: expect.any(Number), name: 'Wendy', email: 'wendy@example.com' });
+      }),
+    );
 
-  it.effect('should use options like select', () =>
-    Effect.gen(function* () {
-      const aliceSample = sampleUsers.find((u) => u.email === 'alice@example.com')!;
-      const user = yield* userAdapter.findOne({ email: 'alice@example.com' }, { select: { name: 1 } });
-      assert(Option.isSome(user));
-      expectTypeOf(user.value).toEqualTypeOf<{ id: number; name: string }>();
-      expect(Option.isSome(user)).toBe(true);
-      expect(user).toEqual(Option.some({ id: expect.any(Number), name: aliceSample.name }));
-      expect(Object.keys(user.value).sort()).toEqual(['id', 'name'].sort());
-    }),
-  );
+    it.effect('fails with constraint violation error when inserting null into a non-nullable column', () =>
+      Effect.gen(function* () {
+        const newUser = { email: 'nonnull@example.com' } as Omit<InsertUser, 'id' | 'name'>;
+        const exit = yield* Effect.exit(userAdapter.insert(newUser as Omit<InsertUser, 'id'>));
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/NOT NULL constraint failed: users.name/i);
+      }),
+    );
 
-  it.effect('should respect order option if multiple records match filter (picks first based on order)', () =>
-    Effect.gen(function* () {
-      const usersAge30 = yield* userAdapter.find({ age: 30 }, { order: { id: 'asc' } });
-      expect(usersAge30.length).toBeGreaterThan(0);
+    it.effect('fails with constraint violation error on unhandled unique key collisions', () =>
+      Effect.gen(function* () {
+        const existingUserEmail = sampleUsers[0].email!;
+        const newUser: Omit<InsertUser, 'id'> = { name: 'Conflict User', email: existingUserEmail };
+        const exit = yield* Effect.exit(userAdapter.insert(newUser));
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
+      }),
+    );
 
-      const minIdAge30 = usersAge30[0].id;
-      const maxIdAge30 = usersAge30[usersAge30.length - 1].id;
+    it.effect('fails with foreign key constraint violation error on invalid references', () =>
+      Effect.gen(function* () {
+        const newUser: Omit<InsertUser, 'id'> = { name: 'FK User', email: 'fk@example.com', officeId: 9999 };
+        const exit = yield* Effect.exit(userAdapter.insert(newUser));
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/FOREIGN KEY constraint failed/i);
+      }),
+    );
 
-      const userAsc = yield* userAdapter.findOne({ age: 30 }, { order: { id: 'asc' } });
-      expectTypeOf(userAsc).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(userAsc)).toBe(true);
-      if (Option.isSome(userAsc)) {
-        expect(userAsc.value.id).toBe(minIdAge30);
-      }
+    it.effect('inserts DEFAULT VALUES when given an empty payload object', () =>
+      Effect.gen(function* () {
+        const before = yield* defaultsAdapter.count();
 
-      const userDesc = yield* userAdapter.findOne({ age: 30 }, { order: { id: 'desc' } });
-      expectTypeOf(userDesc).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(userDesc)).toBe(true);
-      if (Option.isSome(userDesc)) {
-        expect(userDesc.value.id).toBe(maxIdAge30);
-      }
-    }),
-  );
+        const rows = yield* defaultsAdapter.insert({} as never);
+        expect(rows).toHaveLength(1);
+        expect(yield* defaultsAdapter.count()).toBe(before + 1);
 
-  it.effect('should work with joins', () =>
-    Effect.gen(function* () {
-      const aliceSample = sampleUsers.find((u) => u.email === 'alice@example.com')!;
-      const joinedResult = yield* userAdapter.findOne(
-        { email: aliceSample.email },
-        {
-          joins: [{ table: officesTable, on: { officeId: 'id' } }],
-        },
-      );
-      expect(Option.isSome(joinedResult)).toBe(true);
-      if (Option.isSome(joinedResult)) {
-        expect(joinedResult.value.users.email).toBe(aliceSample.email);
-        expect(joinedResult.value.offices.name).toBe(sampleOffices.find((o) => o.name === 'HQ')!.name);
-      }
-    }),
-  );
-});
+        const row = rows[0];
+        expect(row.a).toBeNull();
+        expect(row.b).toBe(42);
 
-describe('Adapter insert()', () => {
-  it.effect('should insert a single record and return it (with all fields by default)', () =>
-    Effect.gen(function* () {
-      const newUser: Omit<InsertUser, 'id'> = { name: 'Zane', email: 'zane@example.com', age: 22 };
-      const insertedUsers = yield* userAdapter.insert(newUser);
-      expectTypeOf(insertedUsers).toEqualTypeOf<User[]>();
-      expect(insertedUsers).toHaveLength(1);
-      const insertedUser = insertedUsers[0];
-      expect(insertedUser).toEqual(
-        expect.objectContaining({
-          name: 'Zane',
-          email: 'zane@example.com',
-          age: 22,
-          role: 'user',
-        }),
-      );
-      expect(insertedUser.id).toBeTypeOf('number');
+        const batch = yield* defaultsAdapter.insert([{}, {}] as never);
+        expect(batch).toHaveLength(2);
+        expect(yield* defaultsAdapter.count()).toBe(before + 3);
 
-      const count = yield* userAdapter.count({ email: 'zane@example.com' });
-      expect(count).toBe(1);
-    }),
-  );
+        client.exec("CREATE TABLE defaults_probe (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT DEFAULT 'd')");
+        client.exec('INSERT INTO defaults_probe DEFAULT VALUES');
+        expect(client.prepare('SELECT count(*) AS c FROM defaults_probe').get()).toEqual({ c: 1 });
+        client.exec('DROP TABLE defaults_probe');
+      }),
+    );
 
-  it.effect('should apply default values for omitted fields', () =>
-    Effect.gen(function* () {
-      const newPost: Omit<InsertPost, 'id' | 'views'> = { title: 'Post with default views', userId: 1 };
-      const insertedPosts = yield* postAdapter.insert(newPost);
-      expectTypeOf(insertedPosts).toEqualTypeOf<Post[]>();
-      expect(insertedPosts[0].views).toBe(0);
+    it.effect('maintains no-op behavior when given an empty insertion array', () =>
+      Effect.gen(function* () {
+        const before = yield* officeAdapter.count();
+        expect(yield* officeAdapter.insert([])).toEqual([]);
+        expect(yield* officeAdapter.count()).toBe(before);
+      }),
+    );
 
-      const newUser: Omit<InsertUser, 'id' | 'role'> = { name: 'Default Role User', email: 'default@example.com' };
-      const insertedUser = yield* userAdapter.insert(newUser);
-      expectTypeOf(insertedUser).toEqualTypeOf<User[]>();
-      expect(insertedUser[0].role).toBe('user');
-    }),
-  );
+    it.effect('strips primary key "id" property from insertion payloads', () =>
+      Effect.gen(function* () {
+        const inserted = yield* userAdapter.insert({ id: 9999, name: 'Forced Id', email: 'forcedid@example.com' } as InsertUser);
+        expect(inserted[0].id).not.toBe(9999);
 
-  it.effect('should insert multiple records and return them', () =>
-    Effect.gen(function* () {
-      const newUsers: Array<Omit<InsertUser, 'id'>> = [
-        { name: 'Yara', email: 'yara@example.com', age: 29 },
-        { name: 'Xavi', email: 'xavi@example.com', age: 33 },
-      ];
-      const insertedUsers = yield* userAdapter.insert(newUsers);
-      expectTypeOf(insertedUsers).toEqualTypeOf<User[]>();
-      expect(insertedUsers).toHaveLength(2);
-      expect(insertedUsers.find((u) => u.name === 'Yara')).toBeDefined();
-      expect(insertedUsers.find((u) => u.name === 'Xavi')).toBeDefined();
+        expect(Option.isNone(yield* userAdapter.findOne({ id: 9999 }))).toBe(true);
+      }),
+    );
 
-      const yaraCount = yield* userAdapter.count({ email: 'yara@example.com' });
-      expect(yaraCount).toBe(1);
+    it.effect('treats id-only insert payloads as DEFAULT VALUES insertions', () =>
+      Effect.gen(function* () {
+        const before = yield* defaultsAdapter.count();
 
-      const xaviCount = yield* userAdapter.count({ email: 'xavi@example.com' });
-      expect(xaviCount).toBe(1);
-    }),
-  );
+        const inserted = yield* defaultsAdapter.insert({ id: 4242 } as never);
+        expect(inserted).toHaveLength(1);
+        expect(inserted[0].id).not.toBe(4242);
+        expect(yield* defaultsAdapter.count()).toBe(before + 1);
+        expect(Option.isNone(yield* defaultsAdapter.findOne({ id: 4242 }))).toBe(true);
+      }),
+    );
 
-  it.effect('should return selected fields if select option is provided', () =>
-    Effect.gen(function* () {
-      const newUser: Omit<InsertUser, 'id'> = { name: 'Wendy', email: 'wendy@example.com', age: 40 };
-      const insertedUsers = yield* userAdapter.insert(newUser, { select: { name: 1, email: 1 } });
-      expectTypeOf(insertedUsers).toEqualTypeOf<Array<{ id: number; name: string; email: string | null }>>();
-      expect(insertedUsers[0]).toEqual({ id: expect.any(Number), name: 'Wendy', email: 'wendy@example.com' });
-    }),
-  );
+    it.effect('populates omitted schema columns with declared Drizzle default values', () =>
+      Effect.gen(function* () {
+        const inserted = yield* userAdapter.insert([
+          { name: 'With Role', email: 'withrole@example.com', role: 'lead' },
+          { name: 'Without Role', email: 'withoutrole@example.com' },
+        ]);
 
-  it.effect('inserting empty array should return empty array and not throw', () =>
-    Effect.gen(function* () {
-      const users = yield* userAdapter.insert([]);
-      expectTypeOf(users).toEqualTypeOf<User[]>();
-      expect(users).toEqual([]);
-    }),
-  );
+        expect(inserted.find((u) => u.email === 'withrole@example.com')!.role).toBe('lead');
+        expect(inserted.find((u) => u.email === 'withoutrole@example.com')!.role).toBe('user');
+      }),
+    );
+  });
 
-  it.effect('should return Err if NOT NULL constraint is violated', () =>
-    Effect.gen(function* () {
-      const newUser = { email: 'nonnull@example.com' } as Omit<InsertUser, 'id' | 'name'>;
-      const exit = yield* Effect.exit(userAdapter.insert(newUser as Omit<InsertUser, 'id'>));
-      expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect access.
-      expect(exit.cause.error.message).toMatch(/NOT NULL constraint failed: users.name/i);
-    }),
-  );
-
-  it.effect('should return Err if UNIQUE constraint is violated (without conflict handling)', () =>
-    Effect.gen(function* () {
-      const existingUserEmail = sampleUsers[0].email!;
-      const newUser: Omit<InsertUser, 'id'> = { name: 'Conflict User', email: existingUserEmail };
-      const exit = yield* Effect.exit(userAdapter.insert(newUser));
-      expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect access.
-      expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
-    }),
-  );
-
-  it.effect('should return Err if FOREIGN KEY constraint is violated', () =>
-    Effect.gen(function* () {
-      const newUser: Omit<InsertUser, 'id'> = { name: 'FK User', email: 'fk@example.com', officeId: 9999 };
-      const exit = yield* Effect.exit(userAdapter.insert(newUser));
-      expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect access.
-      expect(exit.cause.error.message).toMatch(/FOREIGN KEY constraint failed/i);
-    }),
-  );
-
-  describe('conflict resolution (SQLite ON CONFLICT behavior)', () => {
+  describe('Conflict Resolution (ON CONFLICT ignore / update / merge)', () => {
     beforeEach(() => {
       Effect.runSync(
         Effect.provideService(
@@ -1250,7 +1955,7 @@ describe('Adapter insert()', () => {
       );
     });
 
-    it.effect('onConflictDoNothing (ignore): should not insert or update if email conflicts, returns empty for conflicted row', () =>
+    it.effect('bypasses row insertion on conflict when resolution is set to ignore', () =>
       Effect.gen(function* () {
         const originalAliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
         assert(Option.isSome(originalAliceOpt));
@@ -1274,7 +1979,7 @@ describe('Adapter insert()', () => {
       }),
     );
 
-    it.effect('onConflictDoUpdate (update with explicit set): should update specified fields if email conflicts', () =>
+    it.effect('updates explicitly declared fields on unique key conflict', () =>
       Effect.gen(function* () {
         const aliceEmail = 'alice@example.com';
         const conflictingUser: Omit<InsertUser, 'id'> = { name: 'New Alice Name Attempt', email: aliceEmail, age: 100, role: 'attemptedRole' };
@@ -1308,7 +2013,7 @@ describe('Adapter insert()', () => {
       }),
     );
 
-    it.effect('onConflictDoUpdate (update with explicit set using SQL): should update using SQL expression', () =>
+    it.effect('applies raw SQL expression modifications on unique key conflict', () =>
       Effect.gen(function* () {
         const initialPair: InsertUniquePair = { valA: 'A1', valB: 'B1', valC: 'Initial C' };
         const insertedInitial = (yield* uniquePairAdapter.insert(initialPair))[0];
@@ -1334,46 +2039,44 @@ describe('Adapter insert()', () => {
       }),
     );
 
-    it.effect(
-      'onConflictDoUpdate (update with implicit set from new values - using excluded): should update with new record values if email conflicts',
-      () =>
-        Effect.gen(function* () {
-          const aliceEmail = 'alice@example.com';
-          const conflictingUser: Omit<InsertUser, 'id'> = { name: 'Implicit Update Alice', email: aliceEmail, age: 33, role: 'superadmin' };
+    it.effect('implicitly updates conflicting records using values from the excluded insert row', () =>
+      Effect.gen(function* () {
+        const aliceEmail = 'alice@example.com';
+        const conflictingUser: Omit<InsertUser, 'id'> = { name: 'Implicit Update Alice', email: aliceEmail, age: 33, role: 'superadmin' };
 
-          const updated = yield* userAdapter.insert(conflictingUser, {
-            conflict: {
-              target: ['email'],
-              resolution: 'update',
-              set: {
-                name: conflictingUser.name,
-                age: conflictingUser.age,
-                role: conflictingUser.role,
-                email: conflictingUser.email,
-              },
+        const updated = yield* userAdapter.insert(conflictingUser, {
+          conflict: {
+            target: ['email'],
+            resolution: 'update',
+            set: {
+              name: conflictingUser.name,
+              age: conflictingUser.age,
+              role: conflictingUser.role,
+              email: conflictingUser.email,
             },
-          });
+          },
+        });
 
-          expectTypeOf(updated).toEqualTypeOf<User[]>();
-          expect(updated).toHaveLength(1);
-          expect(updated[0].name).toBe('Implicit Update Alice');
-          expect(updated[0].age).toBe(33);
-          expect(updated[0].role).toBe('superadmin');
-          expect(updated[0].email).toBe(aliceEmail);
+        expectTypeOf(updated).toEqualTypeOf<User[]>();
+        expect(updated).toHaveLength(1);
+        expect(updated[0].name).toBe('Implicit Update Alice');
+        expect(updated[0].age).toBe(33);
+        expect(updated[0].role).toBe('superadmin');
+        expect(updated[0].email).toBe(aliceEmail);
 
-          const found = yield* userAdapter.findOne({ email: aliceEmail });
-          expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
-          expect(Option.isSome(found)).toBe(true);
+        const found = yield* userAdapter.findOne({ email: aliceEmail });
+        expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(found)).toBe(true);
 
-          if (Option.isSome(found)) {
-            expect(found.value.name).toBe('Implicit Update Alice');
-            expect(found.value.age).toBe(33);
-            expect(found.value.role).toBe('superadmin');
-          }
-        }),
+        if (Option.isSome(found)) {
+          expect(found.value.name).toBe('Implicit Update Alice');
+          expect(found.value.age).toBe(33);
+          expect(found.value.role).toBe('superadmin');
+        }
+      }),
     );
 
-    it.effect('onConflictDoUpdate (merge behavior): should update existing NULL fields with new values, keep existing non-NULL fields', () =>
+    it.effect('merges insert payload into existing row by updating null fields and keeping non-null fields', () =>
       Effect.gen(function* () {
         const aliceOriginalOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
         assert(Option.isSome(aliceOriginalOpt));
@@ -1426,7 +2129,7 @@ describe('Adapter insert()', () => {
       }),
     );
 
-    it.effect('onConflict with composite unique key target', () =>
+    it.effect('resolves unique key collisions over multi-column composite targets', () =>
       Effect.gen(function* () {
         const initialRecord: InsertUniquePair = { valA: 'testA', valB: 'testB', valC: 'initialC' };
         yield* uniquePairAdapter.insert(initialRecord);
@@ -1453,8 +2156,8 @@ describe('Adapter insert()', () => {
     );
   });
 
-  describe('Conflict Resolution - Advanced', () => {
-    it.effect('onConflictDoUpdate (implicit from new values) should update all non-PK, non-conflict-target fields provided in new data', () =>
+  describe('Advanced Conflict Handling & Encoding', () => {
+    it.effect('implicitly maps non-target fields to excluded column updates', () =>
       Effect.gen(function* () {
         const bobEmail = 'bob@example.com';
         const originalBobOpt = yield* userAdapter.findOne({ email: bobEmail });
@@ -1498,7 +2201,7 @@ describe('Adapter insert()', () => {
       }),
     );
 
-    it.effect('onConflictDoNothing with multiple conflicting records in a batch insert, some non-conflicting', () =>
+    it.effect('ignores conflicting rows while inserting non-conflicting rows during batch operations', () =>
       Effect.gen(function* () {
         const newRecords: Array<Omit<InsertUser, 'id'>> = [
           { name: 'Alice New Data', email: 'alice@example.com', age: 100 },
@@ -1522,7 +2225,7 @@ describe('Adapter insert()', () => {
       }),
     );
 
-    it.effect('onConflictDoUpdate with multiple records in batch: some conflict (update), some new (insert)', () =>
+    it.effect('updates existing rows and inserts new rows during mixed batch operations', () =>
       Effect.gen(function* () {
         const newRecords: Array<Omit<InsertUser, 'id'>> = [
           { name: 'Alice Updated Batch', email: 'alice@example.com', age: 100 },
@@ -1556,388 +2259,755 @@ describe('Adapter insert()', () => {
         expect(uniqueUser.age).toBe(25);
       }),
     );
+
+    it.effect('excludes target columns from implicit conflict set expressions', () =>
+      Effect.gen(function* () {
+        client.exec('CREATE TABLE nocase_probe (id INTEGER PRIMARY KEY AUTOINCREMENT, k TEXT COLLATE NOCASE UNIQUE, v TEXT)');
+        const probeTable = sqliteTable('nocase_probe', {
+          id: integer('id').primaryKey({ autoIncrement: true }),
+          k: text('k'),
+          v: text('v'),
+        });
+        const probe = Adapter(db, probeTable);
+
+        yield* probe.insert({ k: 'alice@example.com', v: 'first' });
+
+        const merged = yield* probe.insert({ k: 'ALICE@EXAMPLE.COM', v: 'second' }, { conflict: { resolution: 'update', target: ['k'] } });
+
+        expect(merged[0].k).toBe('alice@example.com');
+        expect(merged[0].v).toBe('second');
+        client.exec('DROP TABLE nocase_probe');
+      }),
+    );
+
+    it.effect('fails fast when implicit conflict resolution yields an empty update set', () =>
+      Effect.gen(function* () {
+        client.exec('CREATE TABLE only_target_probe (id INTEGER PRIMARY KEY AUTOINCREMENT, k TEXT UNIQUE)');
+        const probeTable = sqliteTable('only_target_probe', {
+          id: integer('id').primaryKey({ autoIncrement: true }),
+          k: text('k'),
+        });
+        const probe = Adapter(db, probeTable);
+        yield* probe.insert({ k: 'a' });
+
+        const exit = yield* Effect.exit(probe.insert({ k: 'a' }, { conflict: { resolution: 'update', target: ['k'] } }));
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect(failure.value).toBeInstanceOf(SqliteClientError);
+        expect((failure.value as SqliteClientError).message).toMatch(/requires at least one valid column to set/i);
+
+        const updated = yield* probe.insert({ k: 'a' }, { conflict: { resolution: 'update', target: ['k'], set: { k: 'b' } } });
+        expect(updated[0].k).toBe('b');
+        client.exec('DROP TABLE only_target_probe');
+      }),
+    );
+
+    it.effect('maps batch conflict update sets to excluded row values', () =>
+      Effect.gen(function* () {
+        const processed = yield* userAdapter.insert(
+          [
+            { name: 'Alice Excluded', email: 'alice@example.com', age: 111 },
+            { name: 'Bob Excluded', email: 'bob@example.com', age: 222 },
+            { name: 'Fresh Excluded', email: 'fresh-excluded@example.com', age: 333 },
+          ],
+          { conflict: { target: ['email'], resolution: 'update' } },
+        );
+
+        expect(processed).toHaveLength(3);
+        expect(processed.find((u) => u.email === 'alice@example.com')).toEqual(expect.objectContaining({ name: 'Alice Excluded', age: 111 }));
+        expect(processed.find((u) => u.email === 'bob@example.com')).toEqual(expect.objectContaining({ name: 'Bob Excluded', age: 222 }));
+        expect(processed.find((u) => u.email === 'fresh-excluded@example.com')).toEqual(
+          expect.objectContaining({ name: 'Fresh Excluded', age: 333 }),
+        );
+      }),
+    );
+
+    it.effect('preserves existing non-null fields while populating null fields during merge', () =>
+      Effect.gen(function* () {
+        const eve = yield* userAdapter.findOne({ email: 'eve@example.com' });
+        assert(Option.isSome(eve));
+        expect(eve.value.bio).toBeNull();
+
+        const merged = yield* userAdapter.insert(
+          { name: 'Eve Merged', email: 'eve@example.com', bio: 'Filled bio', age: 99 },
+          {
+            conflict: { target: ['email'], resolution: 'merge' },
+          },
+        );
+
+        expect(merged).toHaveLength(1);
+        expect(merged[0].bio).toBe('Filled bio');
+        expect(merged[0].name).toBe(eve.value.name);
+        expect(merged[0].age).toBe(eve.value.age);
+      }),
+    );
+
+    it.effect('emits targetless ON CONFLICT DO NOTHING when conflict target is empty array', () =>
+      Effect.gen(function* () {
+        const inserted = yield* userAdapter.insert(
+          { name: 'Ignored', email: 'alice@example.com' },
+          { conflict: { target: [], resolution: 'ignore' } },
+        );
+        expect(inserted).toEqual([]);
+
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(alice));
+        expect(alice.value.name).toBe('Alice');
+      }),
+    );
+
+    it.effect('fails fast when update conflict resolution is requested without conflict target', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          userAdapter.insert({ name: 'Invalid', email: 'alice@example.com' }, { conflict: { target: [], resolution: 'update' } }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/requires at least one valid target column/i);
+      }),
+    );
+
+    it.effect('fails with SQLite error when conflict target is not covered by unique index', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          userAdapter.insert({ name: 'Alice', email: 'dup@example.com' }, { conflict: { target: ['name'], resolution: 'ignore' } }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint/i);
+      }),
+    );
+
+    it.effect('strips undefined and unknown column properties from conflict set payloads', () =>
+      Effect.gen(function* () {
+        const updated = yield* userAdapter.insert(
+          { name: 'Ignored Name', email: 'alice@example.com', age: 51 },
+          {
+            conflict: {
+              target: ['email'],
+              resolution: 'update',
+              set: { age: 52, bio: undefined, unknownColumn: 'nope' } as never,
+            },
+          },
+        );
+
+        expect(updated).toHaveLength(1);
+        expect(updated[0].age).toBe(52);
+        expect(updated[0].name).toBe('Alice');
+      }),
+    );
+
+    it.effect('fails fast with SqliteClientError when given an unsupported resolution strategy', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          userAdapter.insert({ name: 'Bogus', email: 'bogus@example.com' }, { conflict: { target: ['email'], resolution: 'nope' as never } }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/Unsupported conflict resolution "nope"/i);
+      }),
+    );
+
+    it.effect('respects Drizzle snake_case casing configuration during conflict set mapping', () =>
+      Effect.gen(function* () {
+        const cased = drizzle(client, { casing: 'snake_case' });
+        const adapter = Adapter(cased, casingTable);
+
+        yield* adapter.insert([
+          { userKey: 'k1', displayName: 'one' },
+          { userKey: 'k2', displayName: 'two' },
+        ]);
+
+        const upserted = yield* adapter.insert(
+          [
+            { userKey: 'k1', displayName: 'ONE' },
+            { userKey: 'k2', displayName: 'TWO' },
+          ],
+          { conflict: { target: ['userKey'], resolution: 'update' } },
+        );
+
+        expect(upserted).toHaveLength(2);
+        expect([...upserted].sort((a, b) => a.id - b.id).map((r) => [r.id, r.userKey, r.displayName])).toEqual([
+          [1, 'k1', 'ONE'],
+          [2, 'k2', 'TWO'],
+        ]);
+      }),
+    );
+
+    it.effect('encodes set values through column mappers during conflict merge resolution', () =>
+      Effect.gen(function* () {
+        yield* typedAdapter.insert({ label: 'alpha', occurredAt: null, active: null, meta: null });
+
+        const merged = yield* typedAdapter.insert(
+          { label: 'alpha' },
+          { conflict: { resolution: 'merge', target: ['label'], set: { occurredAt: DATE_B, active: true, meta: { tag: 'filled' } } } },
+        );
+
+        expect(merged).toHaveLength(1);
+        expect(merged[0].occurredAt).toBeInstanceOf(Date);
+        expect(merged[0].occurredAt!.getTime()).toBe(DATE_B.getTime());
+        expect(merged[0].active).toBe(true);
+        expect(merged[0].meta).toEqual({ tag: 'filled' });
+
+        const raw = client.prepare('SELECT occurred_at, active FROM typed_table WHERE label = ?').get('alpha') as {
+          occurred_at: number;
+          active: number;
+        };
+        expect(raw.occurred_at).toBe(Math.floor(DATE_B.getTime() / 1000));
+        expect(raw.active).toBe(1);
+      }),
+    );
+
+    it.effect('retains existing non-null values over encoded conflict merge values', () =>
+      Effect.gen(function* () {
+        yield* typedAdapter.insert({ label: 'alpha', occurredAt: DATE_A, active: false });
+
+        const merged = yield* typedAdapter.insert(
+          { label: 'alpha' },
+          { conflict: { resolution: 'merge', target: ['label'], set: { occurredAt: DATE_B, active: true } } },
+        );
+
+        expect(merged[0].occurredAt!.getTime()).toBe(DATE_A.getTime());
+        expect(merged[0].active).toBe(false);
+      }),
+    );
+
+    it.effect('produces identical value encodings between update and merge conflict strategies', () =>
+      Effect.gen(function* () {
+        yield* typedAdapter.insert([
+          { label: 'a', occurredAt: null },
+          { label: 'b', occurredAt: null },
+        ]);
+
+        const updated = yield* typedAdapter.insert(
+          { label: 'a' },
+          { conflict: { resolution: 'update', target: ['label'], set: { occurredAt: DATE_B } } },
+        );
+        const merged = yield* typedAdapter.insert(
+          { label: 'b' },
+          { conflict: { resolution: 'merge', target: ['label'], set: { occurredAt: DATE_B } } },
+        );
+
+        expect(updated[0].occurredAt!.getTime()).toBe(merged[0].occurredAt!.getTime());
+      }),
+    );
+
+    it.effect('supports raw SQL expressions within conflict merge set payloads', () =>
+      Effect.gen(function* () {
+        yield* uniquePairAdapter.insert({ valA: 'A1', valB: 'B1', valC: null });
+
+        const merged = yield* uniquePairAdapter.insert(
+          { valA: 'A1', valB: 'B1' },
+          { conflict: { resolution: 'merge', target: ['valA', 'valB'], set: { valC: sql`'from-sql'` } } },
+        );
+
+        expect(merged[0].valC).toBe('from-sql');
+      }),
+    );
   });
 });
 
-describe('Adapter update()', () => {
-  it.effect('should update an existing user and return the updated record', () =>
-    Effect.gen(function* () {
-      const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
-      assert(Option.isSome(aliceOpt));
-      const alice = aliceOpt.value;
+describe('Updates & Deletes', () => {
+  describe('Update Operations & Column Touch Scope', () => {
+    it.effect('updates matching record by primary key and returns updated schema fields', () =>
+      Effect.gen(function* () {
+        const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(aliceOpt));
+        const alice = aliceOpt.value;
 
-      const updatedData: User = { ...alice, name: 'Alice Smith', age: 31 };
+        const updatedData: User = { ...alice, name: 'Alice Smith', age: 31 };
 
-      const updatedUsers = yield* userAdapter.update(updatedData);
-      expectTypeOf(updatedUsers).toEqualTypeOf<User[]>();
-      expect(updatedUsers).toHaveLength(1);
-      expect(updatedUsers[0].name).toBe('Alice Smith');
-      expect(updatedUsers[0].age).toBe(31);
-      expect(updatedUsers[0].id).toBe(alice.id);
+        const updatedUsers = yield* userAdapter.update(updatedData);
+        expectTypeOf(updatedUsers).toEqualTypeOf<User[]>();
+        expect(updatedUsers).toHaveLength(1);
+        expect(updatedUsers[0].name).toBe('Alice Smith');
+        expect(updatedUsers[0].age).toBe(31);
+        expect(updatedUsers[0].id).toBe(alice.id);
 
-      const found = yield* userAdapter.findOne({ id: alice.id });
-      expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(found)).toBe(true);
-      if (Option.isSome(found)) {
-        expect(found.value.name).toBe('Alice Smith');
-      }
-    }),
-  );
+        const found = yield* userAdapter.findOne({ id: alice.id });
+        expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(found)).toBe(true);
+        if (Option.isSome(found)) {
+          expect(found.value.name).toBe('Alice Smith');
+        }
+      }),
+    );
 
-  it.effect('should allow updating a field to null', () =>
-    Effect.gen(function* () {
-      const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
-      assert(Option.isSome(bobOpt), 'Expected Bob to be found');
-      const bob = bobOpt.value;
-      expect(bob.bio).not.toBeNull();
+    it.effect('persists explicit null assignments to nullable columns', () =>
+      Effect.gen(function* () {
+        const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
+        assert(Option.isSome(bobOpt), 'Expected Bob to be found');
+        const bob = bobOpt.value;
+        expect(bob.bio).not.toBeNull();
 
-      const updatedData: User = { ...bob, bio: null };
-      const users = yield* userAdapter.update(updatedData);
-      expectTypeOf(users).toEqualTypeOf<User[]>();
-      expect(users[0].bio).toBeNull();
+        const updatedData: User = { ...bob, bio: null };
+        const users = yield* userAdapter.update(updatedData);
+        expectTypeOf(users).toEqualTypeOf<User[]>();
+        expect(users[0].bio).toBeNull();
 
-      const found = yield* userAdapter.findOne({ id: bob.id });
-      expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
-      if (Option.isSome(found)) {
-        expect(found.value.bio).toBeNull();
-      }
-    }),
-  );
+        const found = yield* userAdapter.findOne({ id: bob.id });
+        expectTypeOf(found).toEqualTypeOf<Option.Option<User>>();
+        if (Option.isSome(found)) {
+          expect(found.value.bio).toBeNull();
+        }
+      }),
+    );
 
-  it.effect('should return selected fields if select option is provided', () =>
-    Effect.gen(function* () {
-      const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
-      assert(Option.isSome(bobOpt), 'Expected Bob to be found');
-      const bob = bobOpt.value;
+    it.effect('projects updated record return payload according to select option', () =>
+      Effect.gen(function* () {
+        const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
+        assert(Option.isSome(bobOpt), 'Expected Bob to be found');
+        const bob = bobOpt.value;
 
-      const updatedData: User = { ...bob, role: 'lead_user' };
+        const updatedData: User = { ...bob, role: 'lead_user' };
 
-      const updatedUsers = yield* userAdapter.update(updatedData, { select: { id: 1, role: 1 } });
-      expectTypeOf(updatedUsers).toEqualTypeOf<Array<{ id: number; role: string | null }>>();
-      expect(updatedUsers[0]).toEqual({ id: bob.id, role: 'lead_user' });
-    }),
-  );
+        const updatedUsers = yield* userAdapter.update(updatedData, { select: { id: 1, role: 1 } });
+        expectTypeOf(updatedUsers).toEqualTypeOf<Array<{ id: number; role: string | null }>>();
+        expect(updatedUsers[0]).toEqual({ id: bob.id, role: 'lead_user' });
+      }),
+    );
 
-  it.effect('should return Err if record.id is null/undefined', () =>
-    Effect.gen(function* () {
-      const invalidUser = { name: 'No ID User', email: 'noid@example.com' } as unknown as User;
-      const exit = yield* Effect.exit(userAdapter.update(invalidUser));
-      expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect access.
-      expect(exit.cause.error.message).toMatch(/Missing required "id" for update operation/i);
-    }),
-  );
+    it.effect('fails with SqliteClientError when update payload lacks an id property', () =>
+      Effect.gen(function* () {
+        const invalidUser = { name: 'No ID User', email: 'noid@example.com' } as unknown as User;
+        const exit = yield* Effect.exit(userAdapter.update(invalidUser));
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/Missing required "id" for update operation/i);
+      }),
+    );
 
-  it.effect('should return an empty array if id does not exist (updates 0 rows)', () =>
-    Effect.gen(function* () {
-      const nonExistentUser: User = { id: 9999, name: 'Ghost', email: 'ghost@example.com', age: null, role: null, officeId: null, bio: null };
-      const users = yield* userAdapter.update(nonExistentUser);
-      expectTypeOf(users).toEqualTypeOf<User[]>();
-      expect(users).toEqual([]);
-    }),
-  );
+    it.effect('returns an empty array when updating a non-existent primary key', () =>
+      Effect.gen(function* () {
+        const nonExistentUser: User = { id: 9999, name: 'Ghost', email: 'ghost@example.com', age: null, role: null, officeId: null, bio: null };
+        const users = yield* userAdapter.update(nonExistentUser);
+        expectTypeOf(users).toEqualTypeOf<User[]>();
+        expect(users).toEqual([]);
+      }),
+    );
 
-  it.effect('should return Err if update violates UNIQUE constraint', () =>
-    Effect.gen(function* () {
-      const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
-      const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
-      assert(Option.isSome(aliceOpt) && Option.isSome(bobOpt), 'Expected users to be found');
-      const alice = aliceOpt.value;
-      const bob = bobOpt.value;
+    it.effect('fails with unique constraint error on conflicting update operations', () =>
+      Effect.gen(function* () {
+        const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        const bobOpt = yield* userAdapter.findOne({ email: 'bob@example.com' });
+        assert(Option.isSome(aliceOpt) && Option.isSome(bobOpt), 'Expected users to be found');
+        const alice = aliceOpt.value;
+        const bob = bobOpt.value;
 
-      const updatedBob: User = { ...bob, email: alice.email };
-      const exit = yield* Effect.exit(userAdapter.update(updatedBob));
-      expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect access.
-      expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
-    }),
-  );
+        const updatedBob: User = { ...bob, email: alice.email };
+        const exit = yield* Effect.exit(userAdapter.update(updatedBob));
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
+      }),
+    );
 
-  it.effect('should return Err if update violates FOREIGN KEY constraint', () =>
-    Effect.gen(function* () {
-      const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
-      assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
-      const charlie = charlieOpt.value;
-      const updatedCharlie: User = { ...charlie, officeId: 9999 };
-      const exit = yield* Effect.exit(userAdapter.update(updatedCharlie));
-      expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect access.
-      expect(exit.cause.error.message).toMatch(/FOREIGN KEY constraint failed/i);
-    }),
-  );
+    it.effect('fails with foreign key error on invalid reference updates', () =>
+      Effect.gen(function* () {
+        const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
+        assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
+        const charlie = charlieOpt.value;
+        const updatedCharlie: User = { ...charlie, officeId: 9999 };
+        const exit = yield* Effect.exit(userAdapter.update(updatedCharlie));
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/FOREIGN KEY constraint failed/i);
+      }),
+    );
 
-  it.effect('attempting to change PK `id` via update payload should be ignored', () =>
-    Effect.gen(function* () {
-      const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
-      assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
-      const charlie = charlieOpt.value;
-      const updateDataWithChangedIdField: User = {
-        ...charlie,
-        id: charlie.id + 1000,
-        name: 'Charlie Did ID Change?',
-      };
+    it.effect('ignores primary key modifications attempted inside update payloads', () =>
+      Effect.gen(function* () {
+        const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
+        assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
+        const charlie = charlieOpt.value;
+        const updateDataWithChangedIdField: User = {
+          ...charlie,
+          id: charlie.id + 1000,
+          name: 'Charlie Did ID Change?',
+        };
 
-      const updatedUsers = yield* userAdapter.update(updateDataWithChangedIdField);
-      expectTypeOf(updatedUsers).toEqualTypeOf<User[]>();
-      expect(updatedUsers.length).toBe(0);
-    }),
-  );
+        const updatedUsers = yield* userAdapter.update(updateDataWithChangedIdField);
+        expectTypeOf(updatedUsers).toEqualTypeOf<User[]>();
+        expect(updatedUsers.length).toBe(0);
+      }),
+    );
+
+    it.effect('prevents rewriting primary key columns during row update execution', () =>
+      Effect.gen(function* () {
+        client.exec(
+          'CREATE TABLE IF NOT EXISTS pk_touch_log (msg TEXT);' +
+            'DELETE FROM pk_touch_log;' +
+            "CREATE TRIGGER users_pk_touch AFTER UPDATE OF id ON users BEGIN INSERT INTO pk_touch_log VALUES ('fired'); END;",
+        );
+
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(alice));
+
+        const updated = yield* userAdapter.update({ ...alice.value, name: 'Alice Renamed' });
+        expect(updated[0].name).toBe('Alice Renamed');
+
+        const log = client.prepare('SELECT COUNT(*) AS n FROM pk_touch_log').get() as { n: number };
+        expect(log.n).toBe(0);
+      }),
+    );
+
+    it.effect('executes zero-column update successfully when payload contains only id', () =>
+      Effect.gen(function* () {
+        const readTouched = watchUpdatedColumns(['id', 'name', 'email', 'age', 'role', 'bio']);
+
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(alice));
+
+        const updated = yield* userAdapter.update({ id: alice.value.id } as User);
+        expect(updated).toHaveLength(1);
+        expect(updated[0]).toEqual(alice.value);
+        expect(readTouched()).toEqual([]);
+      }),
+    );
+
+    it.effect('applies projection when updating with an id-only payload', () =>
+      Effect.gen(function* () {
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(alice));
+
+        const updated = yield* userAdapter.update({ id: alice.value.id } as User, { select: { name: 1 } });
+        expect(updated).toEqual([{ id: alice.value.id, name: 'Alice' }]);
+      }),
+    );
+
+    it.effect('returns empty array when updating non-existent row with id-only payload', () =>
+      Effect.gen(function* () {
+        expect(yield* userAdapter.update({ id: 999_999 } as User)).toEqual([]);
+      }),
+    );
+
+    it.effect('restricts modified database columns strictly to payload properties', () =>
+      Effect.gen(function* () {
+        const readTouched = watchUpdatedColumns(['id', 'name', 'email', 'age', 'role', 'bio']);
+
+        const bob = yield* userAdapter.findOne({ email: 'bob@example.com' });
+        assert(Option.isSome(bob));
+
+        yield* userAdapter.update({ id: bob.value.id, role: 'writer' } as User);
+        expect(readTouched()).toEqual(['role']);
+      }),
+    );
+
+    it.effect('ignores undefined payload fields during update operations', () =>
+      Effect.gen(function* () {
+        const bob = yield* userAdapter.findOne({ email: 'bob@example.com' });
+        assert(Option.isSome(bob));
+
+        const updated = yield* userAdapter.update({ ...bob.value, bio: undefined as never, role: 'kept' });
+        expect(updated[0].role).toBe('kept');
+        expect(updated[0].bio).toBe(bob.value.bio);
+      }),
+    );
+  });
+
+  describe('Delete Operations & Foreign Key Cascades', () => {
+    it.effect('deletes matching record by primary key and returns deleted row payload', () =>
+      Effect.gen(function* () {
+        const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
+        assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
+        const charlie = charlieOpt.value;
+
+        const deletedUsers = yield* userAdapter.delete(charlie);
+        expectTypeOf(deletedUsers).toEqualTypeOf<User[]>();
+        expect(deletedUsers).toHaveLength(1);
+        expect(deletedUsers[0].id).toBe(charlie.id);
+        expect(deletedUsers[0].name).toBe(charlie.name);
+
+        const found = yield* userAdapter.findOne({ id: charlie.id });
+        expect(Option.isNone(found)).toBe(true);
+
+        const count = yield* userAdapter.count();
+        expect(count).toBe(sampleUsers.length - 1);
+      }),
+    );
+
+    it.effect('projects deleted record return payload according to select option', () =>
+      Effect.gen(function* () {
+        const davidOpt = yield* userAdapter.findOne({ email: 'david@example.com' });
+        assert(Option.isSome(davidOpt), 'Expected David to be found');
+        const david = davidOpt.value;
+
+        const deletedUsers = yield* userAdapter.delete(david, { select: { name: 1 } });
+        expectTypeOf(deletedUsers).toEqualTypeOf<Array<{ id: number; name: string }>>();
+
+        expect(deletedUsers[0]).toEqual({ id: david.id, name: 'David' });
+        expect(Object.keys(deletedUsers[0]).sort()).toEqual(['id', 'name'].sort());
+      }),
+    );
+
+    it.effect('fails with SqliteClientError when delete payload lacks an id property', () =>
+      Effect.gen(function* () {
+        const invalidUser = { name: 'No ID User To Delete' } as unknown as User;
+        const exit = yield* Effect.exit(userAdapter.delete(invalidUser));
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/Missing required "id" for delete operation/i);
+      }),
+    );
+
+    it.effect('returns an empty array when deleting a non-existent primary key', () =>
+      Effect.gen(function* () {
+        const nonExistentUser: User = { id: 8888, name: 'Phantom', email: 'phantom@example.com', age: null, role: null, officeId: null, bio: null };
+        const users = yield* userAdapter.delete(nonExistentUser);
+        expectTypeOf(users).toEqualTypeOf<User[]>();
+        expect(users).toEqual([]);
+      }),
+    );
+
+    it.effect('cascades user row deletions to dependent child post records', () =>
+      Effect.gen(function* () {
+        const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(aliceOpt));
+        const alice = aliceOpt.value;
+
+        const alicePostsBefore = yield* postAdapter.find({ userId: alice.id });
+        expectTypeOf(alicePostsBefore).toEqualTypeOf<Post[]>();
+        expect(alicePostsBefore.length).toBeGreaterThan(0);
+
+        const deletedUsers = yield* userAdapter.delete(alice);
+        expectTypeOf(deletedUsers).toEqualTypeOf<User[]>();
+
+        const alicePostsAfter = yield* postAdapter.find({ userId: alice.id });
+        expectTypeOf(alicePostsAfter).toEqualTypeOf<Post[]>();
+        expect(alicePostsAfter).toHaveLength(0);
+      }),
+    );
+
+    it.effect('cascades parent office deletions across multi-level user and post relationships', () =>
+      Effect.gen(function* () {
+        const hqOfficeOpt = yield* officeAdapter.findOne({ name: 'HQ' });
+        assert(Option.isSome(hqOfficeOpt), 'Expected HQ office to be found');
+        const hqOffice = hqOfficeOpt.value;
+
+        const usersInHQBefore = yield* userAdapter.find({ officeId: hqOffice.id });
+        expectTypeOf(usersInHQBefore).toEqualTypeOf<User[]>();
+        expect(usersInHQBefore.length).toBeGreaterThan(0);
+
+        const userIdsInHQ = usersInHQBefore.map((u) => u.id);
+        const postsOfUsersInHQBefore = yield* postAdapter.find({ userId: { $in: userIdsInHQ } });
+        expectTypeOf(postsOfUsersInHQBefore).toEqualTypeOf<Post[]>();
+        expect(postsOfUsersInHQBefore.length).toBeGreaterThan(0);
+
+        const deletedOffices = yield* officeAdapter.delete(hqOffice);
+        expectTypeOf(deletedOffices).toEqualTypeOf<Office[]>();
+
+        const usersInHQAfter = yield* userAdapter.find({ officeId: hqOffice.id });
+        expectTypeOf(usersInHQAfter).toEqualTypeOf<User[]>();
+        expect(usersInHQAfter).toHaveLength(0);
+
+        const postsOfUsersInHQAfter = yield* postAdapter.find({ userId: { $in: userIdsInHQ } });
+        expectTypeOf(postsOfUsersInHQAfter).toEqualTypeOf<Post[]>();
+        expect(postsOfUsersInHQAfter).toHaveLength(0);
+      }),
+    );
+  });
 });
 
-describe('Adapter delete()', () => {
-  it.effect('should delete an existing user and return the deleted record', () =>
-    Effect.gen(function* () {
-      const charlieOpt = yield* userAdapter.findOne({ email: 'charlie@example.com' });
-      assert(Option.isSome(charlieOpt), 'Expected Charlie to be found');
-      const charlie = charlieOpt.value;
+describe('findOneAndUpdate & findOneAndDelete', () => {
+  describe('findOneAndUpdate Operations', () => {
+    it.effect('locates and updates first matching row returning updated entity as Option.some', () =>
+      Effect.gen(function* () {
+        const eveOriginalOpt = yield* userAdapter.findOne({ email: 'eve@example.com' });
+        assert(Option.isSome(eveOriginalOpt), 'Expected Eve to be found');
+        const eveOriginal = eveOriginalOpt.value;
 
-      const deletedUsers = yield* userAdapter.delete(charlie);
-      expectTypeOf(deletedUsers).toEqualTypeOf<User[]>();
-      expect(deletedUsers).toHaveLength(1);
-      expect(deletedUsers[0].id).toBe(charlie.id);
-      expect(deletedUsers[0].name).toBe(charlie.name);
+        const updatePayload = { age: 31, role: 'senior_manager' };
 
-      const found = yield* userAdapter.findOne({ id: charlie.id });
-      expect(Option.isNone(found)).toBe(true);
+        const updatedUserOpt = yield* userAdapter.findOneAndUpdate({ email: 'eve@example.com' }, updatePayload);
 
-      const count = yield* userAdapter.count();
-      expect(count).toBe(sampleUsers.length - 1);
-    }),
-  );
+        expectTypeOf(updatedUserOpt).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(updatedUserOpt)).toBe(true);
+        if (Option.isSome(updatedUserOpt)) {
+          const updatedUser = updatedUserOpt.value;
+          expect(updatedUser.id).toBe(eveOriginal.id);
+          expect(updatedUser.age).toBe(updatePayload.age);
+          expect(updatedUser.role).toBe(updatePayload.role);
+        }
 
-  it.effect('should return selected fields if select option is provided', () =>
-    Effect.gen(function* () {
-      const davidOpt = yield* userAdapter.findOne({ email: 'david@example.com' });
-      assert(Option.isSome(davidOpt), 'Expected David to be found');
-      const david = davidOpt.value;
+        const found = yield* userAdapter.findOne({ id: eveOriginal.id });
+        expect(Option.isSome(found)).toBe(true);
+        if (Option.isSome(found)) {
+          expect(found.value.age).toBe(updatePayload.age);
+          expect(found.value.role).toBe(updatePayload.role);
+        }
+      }),
+    );
 
-      const deletedUsers = yield* userAdapter.delete(david, { select: { name: 1 } });
-      expectTypeOf(deletedUsers).toEqualTypeOf<Array<{ id: number; name: string }>>();
+    it.effect('upserts new record combining filter and update payloads when upsert is true', () =>
+      Effect.gen(function* () {
+        const newUserEmail = 'newupsert@example.com';
 
-      expect(deletedUsers[0]).toEqual({ id: david.id, name: 'David' });
-      expect(Object.keys(deletedUsers[0]).sort()).toEqual(['id', 'name'].sort());
-    }),
-  );
+        const filterForUpsert: Partial<User> = { email: newUserEmail };
+        const upsertPayload: Partial<Omit<InsertUser, 'id'>> = { name: 'New Upserted', age: 25, role: 'intern' };
 
-  it.effect('should return Err if record.id is null/undefined', () =>
-    Effect.gen(function* () {
-      const invalidUser = { name: 'No ID User To Delete' } as unknown as User;
-      const exit = yield* Effect.exit(userAdapter.delete(invalidUser));
-      expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect access.
-      expect(exit.cause.error.message).toMatch(/Missing required "id" for delete operation/i);
-    }),
-  );
+        const upsertedUserOpt = yield* userAdapter.findOneAndUpdate(filterForUpsert, upsertPayload, { upsert: true });
 
-  it.effect('should return an empty array if id does not exist (deletes 0 rows)', () =>
-    Effect.gen(function* () {
-      const nonExistentUser: User = { id: 8888, name: 'Phantom', email: 'phantom@example.com', age: null, role: null, officeId: null, bio: null };
-      const users = yield* userAdapter.delete(nonExistentUser);
-      expectTypeOf(users).toEqualTypeOf<User[]>();
-      expect(users).toEqual([]);
-    }),
-  );
-});
+        expectTypeOf(upsertedUserOpt).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(upsertedUserOpt)).toBe(true);
+        if (Option.isSome(upsertedUserOpt)) {
+          const upsertedUser = upsertedUserOpt.value;
 
-describe('Adapter findOneAndUpdate()', () => {
-  it.effect('should find and update a user if filter matches', () =>
-    Effect.gen(function* () {
-      const eveOriginalOpt = yield* userAdapter.findOne({ email: 'eve@example.com' });
-      assert(Option.isSome(eveOriginalOpt), 'Expected Eve to be found');
-      const eveOriginal = eveOriginalOpt.value;
+          expect(upsertedUser.email).toBe(newUserEmail);
+          expect(upsertedUser.name).toBe(upsertPayload.name);
+          expect(upsertedUser.age).toBe(upsertPayload.age);
+          expect(upsertedUser.role).toBe(upsertPayload.role);
+          expect(upsertedUser.id).toBeTypeOf('number');
+        }
 
-      const updatePayload = { age: 31, role: 'senior_manager' };
+        const found = yield* userAdapter.findOne({ email: newUserEmail });
+        expect(Option.isSome(found)).toBe(true);
+        if (Option.isSome(found)) {
+          expect(found.value.name).toBe(upsertPayload.name);
+        }
+      }),
+    );
 
-      const updatedUserOpt = yield* userAdapter.findOneAndUpdate({ email: 'eve@example.com' }, updatePayload);
+    it.effect('merges filter and update properties prioritizing update keys during upsert', () =>
+      Effect.gen(function* () {
+        const newUserEmail = 'newupsertfilter@example.com';
+        const filterData: Partial<User> = { email: newUserEmail, role: 'default_role_from_filter', name: 'Name From Filter (will be overwritten)' };
+        const updateData: Partial<Omit<InsertUser, 'id'>> = { name: 'New Upserted Filter', age: 26 };
 
-      expectTypeOf(updatedUserOpt).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(updatedUserOpt)).toBe(true);
-      if (Option.isSome(updatedUserOpt)) {
-        const updatedUser = updatedUserOpt.value;
-        expect(updatedUser.id).toBe(eveOriginal.id);
-        expect(updatedUser.age).toBe(updatePayload.age);
-        expect(updatedUser.role).toBe(updatePayload.role);
-      }
+        const upsertedUserOpt = yield* userAdapter.findOneAndUpdate(filterData, updateData, { upsert: true });
 
-      const found = yield* userAdapter.findOne({ id: eveOriginal.id });
-      expect(Option.isSome(found)).toBe(true);
-      if (Option.isSome(found)) {
-        expect(found.value.age).toBe(updatePayload.age);
-        expect(found.value.role).toBe(updatePayload.role);
-      }
-    }),
-  );
+        expectTypeOf(upsertedUserOpt).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(upsertedUserOpt)).toBe(true);
+        if (Option.isSome(upsertedUserOpt)) {
+          const upsertedUser = upsertedUserOpt.value;
+          expect(upsertedUser.email).toBe(newUserEmail);
+          expect(upsertedUser.name).toBe(updateData.name);
+          expect(upsertedUser.age).toBe(updateData.age);
+          expect(upsertedUser.role).toBe(filterData.role);
+        }
+      }),
+    );
 
-  it.effect('should insert a new user if filter does not match and upsert is true', () =>
-    Effect.gen(function* () {
-      const newUserEmail = 'newupsert@example.com';
+    it.effect('returns Option.none when no match is found and upsert is false', () =>
+      Effect.gen(function* () {
+        const user = yield* userAdapter.findOneAndUpdate({ email: 'nosuchuser@example.com' }, { name: 'No Update' });
+        expect(Option.isNone(user)).toBe(true);
+      }),
+    );
 
-      const filterForUpsert: Partial<User> = { email: newUserEmail };
-      const upsertPayload: Partial<Omit<InsertUser, 'id'>> = { name: 'New Upserted', age: 25, role: 'intern' };
+    it.effect('applies selection projection to updated records', () =>
+      Effect.gen(function* () {
+        const malloryOriginalOpt = yield* userAdapter.findOne({ email: 'mallory@example.com' });
+        assert(Option.isSome(malloryOriginalOpt), 'Expected Mallory to be found');
+        const malloryOriginal = malloryOriginalOpt.value;
 
-      const upsertedUserOpt = yield* userAdapter.findOneAndUpdate(filterForUpsert, upsertPayload, { upsert: true });
+        const updatePayload = { bio: 'Updated Bio via FindOneAndUpdate' };
 
-      expectTypeOf(upsertedUserOpt).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(upsertedUserOpt)).toBe(true);
-      if (Option.isSome(upsertedUserOpt)) {
-        const upsertedUser = upsertedUserOpt.value;
+        const selectedUser = yield* userAdapter.findOneAndUpdate({ email: 'mallory@example.com' }, updatePayload, { select: { id: 1, bio: 1 } });
+        expectTypeOf(selectedUser).toEqualTypeOf<Option.Option<{ id: number; bio: string | null }>>();
+        expect(Option.isSome(selectedUser)).toBe(true);
+        if (Option.isSome(selectedUser)) {
+          expect(selectedUser.value).toEqual({ id: malloryOriginal.id, bio: updatePayload.bio });
+        }
+      }),
+    );
 
-        expect(upsertedUser.email).toBe(newUserEmail);
-        expect(upsertedUser.name).toBe(upsertPayload.name);
-        expect(upsertedUser.age).toBe(upsertPayload.age);
-        expect(upsertedUser.role).toBe(upsertPayload.role);
-        expect(upsertedUser.id).toBeTypeOf('number');
-      }
+    it.effect('applies selection projection to newly upserted records', () =>
+      Effect.gen(function* () {
+        const newUserEmail = 'selectupsert@example.com';
+        const filterForUpsert: Partial<User> = { email: newUserEmail };
+        const unwrappedResult = yield* userAdapter.findOneAndUpdate(
+          filterForUpsert,
+          { name: 'Select Upsert', age: 22 },
+          { upsert: true, select: { name: 1, email: 1 } },
+        );
+        expectTypeOf(unwrappedResult).toEqualTypeOf<Option.Option<{ id: number; name: string; email: string | null }>>();
+        expect(Option.isSome(unwrappedResult)).toBe(true);
+        if (Option.isSome(unwrappedResult)) {
+          expect(unwrappedResult.value).toEqual(expect.objectContaining({ id: expect.any(Number), name: 'Select Upsert', email: newUserEmail }));
+        }
+      }),
+    );
 
-      const found = yield* userAdapter.findOne({ email: newUserEmail });
-      expect(Option.isSome(found)).toBe(true);
-      if (Option.isSome(found)) {
-        expect(found.value.name).toBe(upsertPayload.name);
-      }
-    }),
-  );
+    it.effect('returns unmodified matching row when provided an empty update object', () =>
+      Effect.gen(function* () {
+        const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(aliceOpt));
+        const alice = aliceOpt.value;
 
-  it.effect('should insert a new user using filter data combined with update data (update data overwrites filter for same keys)', () =>
-    Effect.gen(function* () {
-      const newUserEmail = 'newupsertfilter@example.com';
-      const filterData: Partial<User> = { email: newUserEmail, role: 'default_role_from_filter', name: 'Name From Filter (will be overwritten)' };
-      const updateData: Partial<Omit<InsertUser, 'id'>> = { name: 'New Upserted Filter', age: 26 };
+        const returnedUserOpt = yield* userAdapter.findOneAndUpdate({ email: 'alice@example.com' }, {});
 
-      const upsertedUserOpt = yield* userAdapter.findOneAndUpdate(filterData, updateData, { upsert: true });
+        expectTypeOf(returnedUserOpt).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(returnedUserOpt)).toBe(true);
+        if (Option.isSome(returnedUserOpt)) {
+          expect(returnedUserOpt.value.id).toBe(alice.id);
+          expect(returnedUserOpt.value.name).toBe(alice.name);
+        }
 
-      expectTypeOf(upsertedUserOpt).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(upsertedUserOpt)).toBe(true);
-      if (Option.isSome(upsertedUserOpt)) {
-        const upsertedUser = upsertedUserOpt.value;
-        expect(upsertedUser.email).toBe(newUserEmail);
-        expect(upsertedUser.name).toBe(updateData.name);
-        expect(upsertedUser.age).toBe(updateData.age);
-        expect(upsertedUser.role).toBe(filterData.role);
-      }
-    }),
-  );
+        const aliceAfter = yield* userAdapter.findOne({ id: alice.id });
+        expect(aliceAfter).toEqual(Option.some(alice));
+      }),
+    );
 
-  it.effect('should return null if filter does not match and upsert is false (or not specified)', () =>
-    Effect.gen(function* () {
-      const user = yield* userAdapter.findOneAndUpdate({ email: 'nosuchuser@example.com' }, { name: 'No Update' });
-      expect(Option.isNone(user)).toBe(true);
-    }),
-  );
+    it.effect('inserts new row on empty database when upsert is enabled', () =>
+      Effect.gen(function* () {
+        client.exec('DELETE FROM users;');
+        const newUserEmail = 'emptyupsert@example.com';
+        const filterForUpsert: Partial<User> = { email: newUserEmail };
+        const payload = { name: 'Empty Upsert', age: 20 };
+        const userOpt = yield* userAdapter.findOneAndUpdate(filterForUpsert, payload, { upsert: true });
+        expectTypeOf(userOpt).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(userOpt)).toBe(true);
+        if (Option.isSome(userOpt)) {
+          expect(userOpt.value.email).toBe(newUserEmail);
+          expect(userOpt.value.name).toBe(payload.name);
+        }
+        expect(yield* userAdapter.count()).toBe(1);
+      }),
+    );
 
-  it.effect('should apply select option on returned record (update)', () =>
-    Effect.gen(function* () {
-      const malloryOriginalOpt = yield* userAdapter.findOne({ email: 'mallory@example.com' });
-      assert(Option.isSome(malloryOriginalOpt), 'Expected Mallory to be found');
-      const malloryOriginal = malloryOriginalOpt.value;
+    it.effect('fails with NOT NULL constraint error when upsert payload lacks required fields', () =>
+      Effect.gen(function* () {
+        const newUserEmail = 'failupsert@example.com';
 
-      const updatePayload = { bio: 'Updated Bio via FindOneAndUpdate' };
+        const filterForUpsert: Partial<User> = { email: newUserEmail };
+        const payload = { age: 22 };
+        const exit = yield* Effect.exit(userAdapter.findOneAndUpdate(filterForUpsert, payload, { upsert: true }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/NOT NULL constraint failed: users.name/i);
+      }),
+    );
 
-      const selectedUser = yield* userAdapter.findOneAndUpdate({ email: 'mallory@example.com' }, updatePayload, { select: { id: 1, bio: 1 } });
-      expectTypeOf(selectedUser).toEqualTypeOf<Option.Option<{ id: number; bio: string | null }>>();
-      expect(Option.isSome(selectedUser)).toBe(true);
-      if (Option.isSome(selectedUser)) {
-        expect(selectedUser.value).toEqual({ id: malloryOriginal.id, bio: updatePayload.bio });
-      }
-    }),
-  );
+    it.effect('updates only the first row matching multi-record filter criteria according to order', () =>
+      Effect.gen(function* () {
+        const usersAge30 = sampleUsers.filter((u) => u.age === 30);
+        expect(usersAge30.length).toBeGreaterThan(1);
 
-  it.effect('should apply select option on returned record (insert with upsert:true)', () =>
-    Effect.gen(function* () {
-      const newUserEmail = 'selectupsert@example.com';
-      const filterForUpsert: Partial<User> = { email: newUserEmail };
-      const unwrappedResult = yield* userAdapter.findOneAndUpdate(
-        filterForUpsert,
-        { name: 'Select Upsert', age: 22 },
-        { upsert: true, select: { name: 1, email: 1 } },
-      );
-      expectTypeOf(unwrappedResult).toEqualTypeOf<Option.Option<{ id: number; name: string; email: string | null }>>();
-      expect(Option.isSome(unwrappedResult)).toBe(true);
-      if (Option.isSome(unwrappedResult)) {
-        expect(unwrappedResult.value).toEqual(expect.objectContaining({ id: expect.any(Number), name: 'Select Upsert', email: newUserEmail }));
-      }
-    }),
-  );
+        const initialAge30Users = yield* userAdapter.find({ age: 30 }, { order: { id: 'asc' } });
+        const firstUserId = initialAge30Users[0].id;
 
-  it.effect('should return the found record if filter matches but data for update is empty and record is unchanged', () =>
-    Effect.gen(function* () {
-      const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
-      assert(Option.isSome(aliceOpt));
-      const alice = aliceOpt.value;
+        const updatedUserOpt = yield* userAdapter.findOneAndUpdate(
+          { age: 30 },
+          { bio: 'Updated by findOneAndUpdate for age 30' },
+          { order: { id: 'asc' } },
+        );
+        expectTypeOf(updatedUserOpt).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(updatedUserOpt)).toBe(true);
+        if (Option.isSome(updatedUserOpt)) {
+          expect(updatedUserOpt.value.id).toBe(firstUserId);
+          expect(updatedUserOpt.value.bio).toBe('Updated by findOneAndUpdate for age 30');
+        }
 
-      const returnedUserOpt = yield* userAdapter.findOneAndUpdate({ email: 'alice@example.com' }, {});
+        const otherAge30Users = yield* userAdapter.find({ age: 30, id: { $ne: firstUserId } });
+        otherAge30Users.forEach((user) => {
+          const originalUser = usersAge30.find((u) => u.email === user.email);
+          expect(user.bio).toBe(originalUser?.bio);
+        });
+      }),
+    );
 
-      expectTypeOf(returnedUserOpt).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(returnedUserOpt)).toBe(true);
-      if (Option.isSome(returnedUserOpt)) {
-        expect(returnedUserOpt.value.id).toBe(alice.id);
-        expect(returnedUserOpt.value.name).toBe(alice.name);
-      }
-
-      const aliceAfter = yield* userAdapter.findOne({ id: alice.id });
-      expect(aliceAfter).toEqual(Option.some(alice));
-    }),
-  );
-
-  it.effect('should upsert correctly on an empty table with upsert: true', () =>
-    Effect.gen(function* () {
-      client.exec('DELETE FROM users;');
-      const newUserEmail = 'emptyupsert@example.com';
-      const filterForUpsert: Partial<User> = { email: newUserEmail };
-      const payload = { name: 'Empty Upsert', age: 20 };
-      const userOpt = yield* userAdapter.findOneAndUpdate(filterForUpsert, payload, { upsert: true });
-      expectTypeOf(userOpt).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(userOpt)).toBe(true);
-      if (Option.isSome(userOpt)) {
-        expect(userOpt.value.email).toBe(newUserEmail);
-        expect(userOpt.value.name).toBe(payload.name);
-      }
-      expect(yield* userAdapter.count()).toBe(1);
-    }),
-  );
-
-  it.effect('should fail upsert if combined data for insert violates NOT NULL constraint', () =>
-    Effect.gen(function* () {
-      const newUserEmail = 'failupsert@example.com';
-
-      const filterForUpsert: Partial<User> = { email: newUserEmail };
-      const payload = { age: 22 };
-      const exit = yield* Effect.exit(userAdapter.findOneAndUpdate(filterForUpsert, payload, { upsert: true }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      // @ts-expect-error Internal effect access.
-      expect(exit.cause.error.message).toMatch(/NOT NULL constraint failed: users.name/i);
-    }),
-  );
-
-  it.effect('should update only the first matching record if filter matches multiple (respecting implicit/explicit order)', () =>
-    Effect.gen(function* () {
-      const usersAge30 = sampleUsers.filter((u) => u.age === 30);
-      expect(usersAge30.length).toBeGreaterThan(1);
-
-      const initialAge30Users = yield* userAdapter.find({ age: 30 }, { order: { id: 'asc' } });
-      const firstUserId = initialAge30Users[0].id;
-
-      const updatedUserOpt = yield* userAdapter.findOneAndUpdate(
-        { age: 30 },
-        { bio: 'Updated by findOneAndUpdate for age 30' },
-        { order: { id: 'asc' } },
-      );
-      expectTypeOf(updatedUserOpt).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(updatedUserOpt)).toBe(true);
-      if (Option.isSome(updatedUserOpt)) {
-        expect(updatedUserOpt.value.id).toBe(firstUserId);
-        expect(updatedUserOpt.value.bio).toBe('Updated by findOneAndUpdate for age 30');
-      }
-
-      const otherAge30Users = yield* userAdapter.find({ age: 30, id: { $ne: firstUserId } });
-      otherAge30Users.forEach((user) => {
-        const originalUser = usersAge30.find((u) => u.email === user.email);
-        expect(user.bio).toBe(originalUser?.bio);
-      });
-    }),
-  );
-
-  describe('Upsert Behavior with Conflicts - Additional', () => {
-    it.effect('upsert: true, new record (from filter + data) insert conflicts with an existing different record unique constraint', () =>
+    it.effect('fails when upsert insertion triggers a unique constraint collision on secondary field', () =>
       Effect.gen(function* () {
         const bobEmail = sampleUsers.find((u) => u.name === 'Bob')!.email!;
         const newNonExistentEmail = 'nonexistentupsertconflict@example.com';
@@ -1958,7 +3028,7 @@ describe('Adapter findOneAndUpdate()', () => {
       }),
     );
 
-    it.effect('upsert: true, filter matches, but update causes unique constraint violation with another record', () =>
+    it.effect('fails when upsert update phase triggers unique key conflict with another row', () =>
       Effect.gen(function* () {
         const aliceEmail = sampleUsers.find((u) => u.name === 'Alice')!.email!;
         const bobEmail = sampleUsers.find((u) => u.name === 'Bob')!.email!;
@@ -1976,7 +3046,7 @@ describe('Adapter findOneAndUpdate()', () => {
       }),
     );
 
-    it.effect('upsert: true, filter includes null value, no match, should insert with null value from filter merged with payload', () =>
+    it.effect('retains null values present in filter during upsert insertion', () =>
       Effect.gen(function* () {
         const filterWithNull: Partial<User> = { email: 'upsertnullbio@example.com', bio: null };
         const payload = { name: 'Upsert Null Bio User', age: 33 };
@@ -2000,9 +3070,9 @@ describe('Adapter findOneAndUpdate()', () => {
       }),
     );
 
-    it.effect('upsert: true should return error when using complex filter operators', () =>
+    it.effect('disallows complex query operators ($gt, $or, etc.) when upsert is enabled', () =>
       Effect.gen(function* () {
-        const complexFilter = { age: { $gt: 200 } };
+        const complexFilter = { age: { $gt: 200 } } as never;
         const payload: Partial<Omit<InsertUser, 'id'>> = {
           name: 'Should Fail',
           email: 'fail@example.com',
@@ -2015,132 +3085,980 @@ describe('Adapter findOneAndUpdate()', () => {
         expect(exit.cause.error.message).toMatch(/Cannot use complex filter when upserting/i);
       }),
     );
+
+    it.effect('fails with SqliteClientError when upsert filter references unknown columns', () =>
+      Effect.gen(function* () {
+        const before = yield* userAdapter.count();
+
+        const exit = yield* Effect.exit(userAdapter.findOneAndUpdate({ nope: 'x' } as never, { name: 'Ghost' }, { upsert: true } as never));
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect(failure.value).toBeInstanceOf(SqliteClientError);
+        expect((failure.value as SqliteClientError).message).toMatch(/Unknown column "nope"/);
+
+        expect(yield* userAdapter.count()).toBe(before);
+        expect(yield* userAdapter.count({ name: 'Ghost' })).toBe(0);
+      }),
+    );
+
+    it.effect('supports comparison operator filters on primary key "id" column', () =>
+      Effect.gen(function* () {
+        const all = yield* userAdapter.find({}, { order: { id: 'asc' } });
+        const second = all[1];
+
+        const updated = yield* userAdapter.findOneAndUpdate({ id: { $gte: second.id } }, { role: 'picked' });
+        assert(Option.isSome(updated));
+        expect(updated.value.id).toBe(second.id);
+        expect(updated.value.role).toBe('picked');
+
+        const ordered = yield* userAdapter.findOneAndUpdate({ id: { $gte: second.id } }, { role: 'picked-desc' }, { order: { id: 'desc' } });
+        assert(Option.isSome(ordered));
+        expect(ordered.value.id).toBe(all[all.length - 1].id);
+
+        const deleted = yield* userAdapter.findOneAndDelete({ id: { $gt: second.id } });
+        assert(Option.isSome(deleted));
+        expect(deleted.value.id).toBe(all[2].id);
+      }),
+    );
+
+    it.effect('evaluates { id: null } filter as IS NULL predicate instead of equality', () =>
+      Effect.gen(function* () {
+        expect(Option.isNone(yield* userAdapter.findOneAndUpdate({ id: null as never }, { role: 'nope' }))).toBe(true);
+        expect(Option.isNone(yield* userAdapter.findOneAndDelete({ id: null as never }))).toBe(true);
+        expect(yield* userAdapter.count()).toBe(sampleUsers.length);
+      }),
+    );
+
+    it.effect('utilizes optimized fast path for direct primary key { id } lookups', () =>
+      Effect.gen(function* () {
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(alice));
+
+        const updated = yield* userAdapter.findOneAndUpdate({ id: alice.value.id }, { role: 'fast-path' });
+        assert(Option.isSome(updated));
+        expect(updated.value.role).toBe('fast-path');
+      }),
+    );
+
+    it.effect('ignores undefined properties inside update payload objects', () =>
+      Effect.gen(function* () {
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(alice));
+
+        const updated = yield* userAdapter.findOneAndUpdate({ id: alice.value.id }, { role: undefined, bio: undefined });
+        assert(Option.isSome(updated));
+        expect(updated.value).toEqual(alice.value);
+      }),
+    );
+
+    it.effect('prevents undefined payload values from overwriting filter criteria during upserts', () =>
+      Effect.gen(function* () {
+        const created = yield* userAdapter.findOneAndUpdate(
+          { email: 'undef@example.com', name: 'From Filter' },
+          { name: undefined, age: 44 },
+          { upsert: true },
+        );
+        assert(Option.isSome(created));
+        expect(created.value.name).toBe('From Filter');
+        expect(created.value.age).toBe(44);
+      }),
+    );
+
+    it.effect('honors select projection when upserting with an empty payload', () =>
+      Effect.gen(function* () {
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(alice));
+
+        const projected = yield* userAdapter.findOneAndUpdate({ email: 'alice@example.com' }, {}, { upsert: true, select: { name: 1 } });
+        assert(Option.isSome(projected));
+        expect(projected.value).toEqual({ id: alice.value.id, name: 'Alice' });
+      }),
+    );
+
+    it.effect('restricts update modification scope strictly to touched payload columns during upsert', () =>
+      Effect.gen(function* () {
+        const readTouched = watchUpdatedColumns(['id', 'name', 'email', 'age', 'role', 'bio']);
+
+        const updated = yield* userAdapter.findOneAndUpdate({ email: 'alice@example.com' }, { bio: 'Rewritten bio' }, { upsert: true });
+        assert(Option.isSome(updated));
+        expect(updated.value.bio).toBe('Rewritten bio');
+        expect(updated.value.name).toBe('Alice');
+        expect(readTouched()).toEqual(['bio']);
+      }),
+    );
+
+    it.effect('restricts modified columns strictly to payload properties during plain findOneAndUpdate', () =>
+      Effect.gen(function* () {
+        const readTouched = watchUpdatedColumns(['id', 'name', 'email', 'age', 'role', 'bio']);
+
+        yield* userAdapter.findOneAndUpdate({ email: 'bob@example.com' }, { age: 25 });
+        expect(readTouched()).toEqual(['age']);
+      }),
+    );
+
+    it.effect('applies select projection when findOneAndUpdate payload is empty', () =>
+      Effect.gen(function* () {
+        const projected = yield* userAdapter.findOneAndUpdate({ email: 'alice@example.com' }, {}, { select: { name: 1 } });
+        assert(Option.isSome(projected));
+        expect(Object.keys(projected.value).sort()).toEqual(['id', 'name']);
+      }),
+    );
+  });
+
+  describe('findOneAndDelete Operations', () => {
+    it.effect('deletes matching record and returns deleted payload wrapped in Option.some', () =>
+      Effect.gen(function* () {
+        const trentOpt = yield* userAdapter.findOne({ email: 'trent@example.com' });
+        assert(Option.isSome(trentOpt), 'Expected Trent to be found');
+        const trent = trentOpt.value;
+
+        const initialCount = yield* userAdapter.count();
+
+        const deletedUserOpt = yield* userAdapter.findOneAndDelete({ email: 'trent@example.com' });
+        expectTypeOf(deletedUserOpt).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(deletedUserOpt)).toBe(true);
+        if (Option.isSome(deletedUserOpt)) {
+          expect(deletedUserOpt.value.id).toBe(trent.id);
+          expect(deletedUserOpt.value.name).toBe(trent.name);
+        }
+
+        expect(Option.isNone(yield* userAdapter.findOne({ id: trent.id }))).toBe(true);
+        const currentCount = yield* userAdapter.count();
+        expect(currentCount).toBe(initialCount - 1);
+      }),
+    );
+
+    it.effect('returns Option.none when no record matches delete filter', () =>
+      Effect.gen(function* () {
+        const user = yield* userAdapter.findOneAndDelete({ email: 'ghost@example.com' });
+        expectTypeOf(user).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isNone(user)).toBe(true);
+      }),
+    );
+
+    it.effect('returns Option.none when executing findOneAndDelete against an empty table', () =>
+      Effect.gen(function* () {
+        client.exec('DELETE FROM users;');
+        const user = yield* userAdapter.findOneAndDelete({ name: 'AnyName' });
+        expectTypeOf(user).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isNone(user)).toBe(true);
+      }),
+    );
+
+    it.effect('applies selection projection to deleted records returned by findOneAndDelete', () =>
+      Effect.gen(function* () {
+        const ursulaOpt = yield* userAdapter.findOne({ email: 'ursula@example.com' });
+        assert(Option.isSome(ursulaOpt), 'Expected Ursula to be found');
+        const ursula = ursulaOpt.value;
+
+        const deletedUser = yield* userAdapter.findOneAndDelete({ email: 'ursula@example.com' }, { select: { id: 1, name: 1, email: 1 } });
+        expectTypeOf(deletedUser).toEqualTypeOf<Option.Option<{ id: number; name: string; email: string | null }>>();
+        expect(Option.isSome(deletedUser)).toBe(true);
+        if (Option.isSome(deletedUser)) {
+          expect(deletedUser.value).toEqual({ id: ursula.id, name: 'Ursula User', email: 'ursula@example.com' });
+        }
+      }),
+    );
+
+    it.effect('deletes only the first matching record in multi-match queries according to ordering', () =>
+      Effect.gen(function* () {
+        const usersAge30 = sampleUsers.filter((u) => u.age === 30);
+        expect(usersAge30.length).toBeGreaterThan(1);
+
+        const initialAge30Users = yield* userAdapter.find({ age: 30 }, { order: { id: 'asc' } });
+        const firstUserId = initialAge30Users[0].id;
+        const firstUserName = initialAge30Users[0].name;
+
+        const deletedUserOpt = yield* userAdapter.findOneAndDelete({ age: 30 }, { order: { id: 'asc' } });
+        expectTypeOf(deletedUserOpt).toEqualTypeOf<Option.Option<User>>();
+        expect(Option.isSome(deletedUserOpt)).toBe(true);
+        if (Option.isSome(deletedUserOpt)) {
+          expect(deletedUserOpt.value.id).toBe(firstUserId);
+          expect(deletedUserOpt.value.name).toBe(firstUserName);
+        }
+
+        expect(Option.isNone(yield* userAdapter.findOne({ id: firstUserId }))).toBe(true);
+        expect(yield* userAdapter.count({ age: 30 })).toBe(initialAge30Users.length - 1);
+      }),
+    );
+
+    it.effect('deletes the first row deterministically when no explicit ordering is specified', () =>
+      Effect.gen(function* () {
+        const age30 = yield* userAdapter.find({ age: 30 }, { order: { id: 'asc' } });
+        expect(age30.length).toBeGreaterThan(1);
+
+        const deleted = yield* userAdapter.findOneAndDelete({ age: 30 });
+        assert(Option.isSome(deleted));
+        expect(deleted.value.id).toBe(age30[0].id);
+      }),
+    );
   });
 });
 
-describe('Adapter findOneAndDelete()', () => {
-  it.effect('should find and delete a user if filter matches, returning the deleted record', () =>
-    Effect.gen(function* () {
-      const trentOpt = yield* userAdapter.findOne({ email: 'trent@example.com' });
-      assert(Option.isSome(trentOpt), 'Expected Trent to be found');
-      const trent = trentOpt.value;
+describe('Data Type Marshalling & Custom Column Types', () => {
+  describe('Column Encoding & Value Marshalling', () => {
+    const seedTyped = () =>
+      typedAdapter.insert([
+        { label: 'alpha', occurredAt: DATE_A, active: true, payload: Buffer.from('alpha-blob'), meta: { tag: 'first' } },
+        { label: 'beta', occurredAt: DATE_B, active: false, payload: Buffer.from('beta-blob'), meta: { tag: 'second' } },
+        { label: 'gamma', occurredAt: null, active: null, payload: null, meta: null },
+      ]);
 
-      const initialCount = yield* userAdapter.count();
+    it.effect('binds Date objects as literal comparison values rather than operator objects', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
 
-      const deletedUserOpt = yield* userAdapter.findOneAndDelete({ email: 'trent@example.com' });
-      expectTypeOf(deletedUserOpt).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(deletedUserOpt)).toBe(true);
-      if (Option.isSome(deletedUserOpt)) {
-        expect(deletedUserOpt.value.id).toBe(trent.id);
-        expect(deletedUserOpt.value.name).toBe(trent.name);
-      }
+        const exact = yield* typedAdapter.find({ occurredAt: DATE_A });
+        expectTypeOf(exact).toEqualTypeOf<Typed[]>();
+        expect(exact.map((r) => r.label)).toEqual(['alpha']);
+        expect(exact[0].occurredAt).toBeInstanceOf(Date);
+        expect(exact[0].occurredAt!.getTime()).toBe(DATE_A.getTime());
+      }),
+    );
 
-      expect(Option.isNone(yield* userAdapter.findOne({ id: trent.id }))).toBe(true);
-      const currentCount = yield* userAdapter.count();
-      expect(currentCount).toBe(initialCount - 1);
-    }),
-  );
+    it.effect('supports comparison operators against custom Date column values', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
 
-  it.effect('should return null if no user matches filter', () =>
-    Effect.gen(function* () {
-      const user = yield* userAdapter.findOneAndDelete({ email: 'ghost@example.com' });
-      expectTypeOf(user).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isNone(user)).toBe(true);
-    }),
-  );
+        const after = yield* typedAdapter.find({ occurredAt: { $gt: DATE_A } });
+        expect(after.map((r) => r.label)).toEqual(['beta']);
 
-  it.effect('should return null when trying to delete on an empty table', () =>
-    Effect.gen(function* () {
-      client.exec('DELETE FROM users;');
-      const user = yield* userAdapter.findOneAndDelete({ name: 'AnyName' });
-      expectTypeOf(user).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isNone(user)).toBe(true);
-    }),
-  );
+        const range = yield* typedAdapter.find({ occurredAt: { $gte: DATE_A, $lte: DATE_B } }, { order: { occurredAt: 'asc' } });
+        expect(range.map((r) => r.label)).toEqual(['alpha', 'beta']);
 
-  it.effect('should apply select option on returned (deleted) record', () =>
-    Effect.gen(function* () {
-      const ursulaOpt = yield* userAdapter.findOne({ email: 'ursula@example.com' });
-      assert(Option.isSome(ursulaOpt), 'Expected Ursula to be found');
-      const ursula = ursulaOpt.value;
+        const nulls = yield* typedAdapter.find({ occurredAt: { $null: true } });
+        expect(nulls.map((r) => r.label)).toEqual(['gamma']);
+      }),
+    );
 
-      const deletedUser = yield* userAdapter.findOneAndDelete({ email: 'ursula@example.com' }, { select: { id: 1, name: 1, email: 1 } });
-      expectTypeOf(deletedUser).toEqualTypeOf<Option.Option<{ id: number; name: string; email: string | null }>>();
-      expect(Option.isSome(deletedUser)).toBe(true);
-      if (Option.isSome(deletedUser)) {
-        expect(deletedUser.value).toEqual({ id: ursula.id, name: 'Ursula User', email: 'ursula@example.com' });
-      }
-    }),
-  );
+    it.effect('binds Buffer binary objects as literal comparison values', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
 
-  it.effect('should delete only the first matching record if filter matches multiple (respecting order)', () =>
-    Effect.gen(function* () {
-      const usersAge30 = sampleUsers.filter((u) => u.age === 30);
-      expect(usersAge30.length).toBeGreaterThan(1);
+        const found = yield* typedAdapter.find({ payload: Buffer.from('beta-blob') });
+        expect(found.map((r) => r.label)).toEqual(['beta']);
+        expect(Buffer.isBuffer(found[0].payload)).toBe(true);
+      }),
+    );
 
-      const initialAge30Users = yield* userAdapter.find({ age: 30 }, { order: { id: 'asc' } });
-      const firstUserId = initialAge30Users[0].id;
-      const firstUserName = initialAge30Users[0].name;
+    it.effect('marshals JavaScript boolean values to SQLite integer flags (1 and 0)', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
 
-      const deletedUserOpt = yield* userAdapter.findOneAndDelete({ age: 30 }, { order: { id: 'asc' } });
-      expectTypeOf(deletedUserOpt).toEqualTypeOf<Option.Option<User>>();
-      expect(Option.isSome(deletedUserOpt)).toBe(true);
-      if (Option.isSome(deletedUserOpt)) {
-        expect(deletedUserOpt.value.id).toBe(firstUserId);
-        expect(deletedUserOpt.value.name).toBe(firstUserName);
-      }
+        const active = yield* typedAdapter.find({ active: true });
+        expect(active.map((r) => r.label)).toEqual(['alpha']);
 
-      expect(Option.isNone(yield* userAdapter.findOne({ id: firstUserId }))).toBe(true);
-      expect(yield* userAdapter.count({ age: 30 })).toBe(initialAge30Users.length - 1);
-    }),
-  );
+        const inactive = yield* typedAdapter.find({ active: false });
+        expect(inactive.map((r) => r.label)).toEqual(['beta']);
+
+        const raw = client.prepare('SELECT active FROM typed_table WHERE label = ?').get('alpha') as { active: number };
+        expect(raw.active).toBe(1);
+      }),
+    );
+
+    it.effect('marshals plain JavaScript objects to JSON column string values', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
+
+        const found = yield* typedAdapter.find({ meta: { tag: 'second' } });
+        expect(found.map((r) => r.label)).toEqual(['beta']);
+        expect(found[0].meta).toEqual({ tag: 'second' });
+      }),
+    );
+
+    it.effect('honors query operators when used on custom typed table columns', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
+
+        const found = yield* typedAdapter.find({ label: { $in: ['alpha', 'gamma'] } }, { order: { label: 'asc' } });
+        expect(found.map((r) => r.label)).toEqual(['alpha', 'gamma']);
+      }),
+    );
+
+    it.effect('encodes Date operands through column mappers for $like and $nlike operators', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
+
+        const exit = yield* Effect.exit(typedAdapter.find({ occurredAt: { $like: DATE_A as never } }));
+        assert(Exit.isSuccess(exit));
+        expect(exit.value).toHaveLength(0);
+
+        const negated = yield* typedAdapter.find({ occurredAt: { $nlike: DATE_A as never } }, { order: { label: 'asc' } });
+        expect(negated.map((r) => r.label)).toEqual(['alpha', 'beta']);
+      }),
+    );
+
+    it.effect('encodes boolean operands through column mappers for $glob and $nglob operators', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
+
+        const exit = yield* Effect.exit(typedAdapter.find({ active: { $glob: true as never } }));
+        assert(Exit.isSuccess(exit));
+        expect(exit.value).toHaveLength(0);
+
+        const negated = yield* Effect.exit(typedAdapter.find({ active: { $nglob: true as never } }));
+        assert(Exit.isSuccess(negated));
+      }),
+    );
+
+    it.effect('evaluates pattern operators against serialized JSON string representations', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
+
+        const exact = yield* typedAdapter.find({ meta: { $glob: { tag: 'second' } as never } });
+        expect(exact.map((r) => r.label)).toEqual(['beta']);
+
+        const byLike = yield* typedAdapter.find({ meta: { $like: { tag: 'first' } as never } });
+        expect(byLike.map((r) => r.label)).toEqual(['alpha']);
+      }),
+    );
+
+    it.effect('preserves Buffer BLOB operands across all pattern operator expressions', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
+
+        const exit = yield* Effect.exit(typedAdapter.find({ payload: { $glob: Buffer.from('alpha-blob') as never } }));
+        assert(Exit.isSuccess(exit));
+      }),
+    );
+
+    it.effect('evaluates pattern operators on standard TEXT columns without value transformation', () =>
+      Effect.gen(function* () {
+        const starts = yield* userAdapter.find({ name: { $like: 'A%' } }, { order: { name: 'asc' } });
+        expect(starts.map((u) => u.name)).toEqual(['Alice']);
+
+        const globbed = yield* userAdapter.find({ name: { $glob: '*e' } }, { order: { name: 'asc' } });
+        expect(globbed.map((u) => u.name)).toEqual(['Alice', 'Charlie', 'Eve']);
+
+        const notGlobbed = yield* userAdapter.find({ name: { $nglob: '*e' } }, { order: { name: 'asc' } });
+        expect(notGlobbed.map((u) => u.name)).toEqual(['Bob', 'David', 'Mallory', 'Trent', 'Ursula User']);
+      }),
+    );
+
+    it.effect('consistently encodes Date objects across all comparator operators ($eq, $in, ranges)', () =>
+      Effect.gen(function* () {
+        yield* seedTyped();
+
+        const byEq = yield* typedAdapter.find({ occurredAt: { $eq: DATE_A } });
+        const byIn = yield* typedAdapter.find({ occurredAt: { $in: [DATE_A] } });
+        const byRange = yield* typedAdapter.find({ occurredAt: { $gte: DATE_A, $lte: DATE_A } });
+
+        expect(byEq.map((r) => r.label)).toEqual(['alpha']);
+        expect(byIn.map((r) => r.label)).toEqual(['alpha']);
+        expect(byRange.map((r) => r.label)).toEqual(['alpha']);
+      }),
+    );
+  });
+
+  describe('Storage Classes & Type Affinity', () => {
+    it.effect('applies numeric affinity when comparing numeric strings against INTEGER columns', () =>
+      Effect.gen(function* () {
+        const expected = sampleUsers.filter((u) => u.age === 30).length;
+        const users = yield* userAdapter.find({ age: '30' as never });
+        expect(users).toHaveLength(expected);
+      }),
+    );
+
+    it.effect('prevents numeric values from matching TEXT columns under strict type affinity', () =>
+      Effect.gen(function* () {
+        yield* userAdapter.insert({ name: '42', email: 'fortytwo@example.com' });
+
+        expect(yield* userAdapter.find({ name: 42 as never })).toHaveLength(0);
+        expect(yield* userAdapter.find({ name: '42' })).toHaveLength(1);
+      }),
+    );
+
+    it.effect('sorts TEXT columns lexicographically while INTEGER columns sort numerically', () =>
+      Effect.gen(function* () {
+        yield* postAdapter.insert([
+          { title: '2', views: 2 },
+          { title: '10', views: 10 },
+        ]);
+
+        const byTitle = yield* postAdapter.find({ title: { $in: ['2', '10'] } }, { order: { title: 'asc' } });
+        expect(byTitle.map((p) => p.title)).toEqual(['10', '2']);
+
+        const byViews = yield* postAdapter.find({ views: { $in: [2, 10] } }, { order: { views: 'asc' } });
+        expect(byViews.map((p) => p.views)).toEqual([2, 10]);
+      }),
+    );
+
+    it.effect('treats underscore "_" inside LIKE patterns as a wildcard character', () =>
+      Effect.gen(function* () {
+        yield* userAdapter.insert([
+          { name: 'a_b', email: 'underscore@example.com' },
+          { name: 'axb', email: 'wildcard@example.com' },
+        ]);
+
+        const users = yield* userAdapter.find({ name: { $like: 'a_b' } }, { order: { name: 'asc' } });
+        expect(users.map((u) => u.name)).toEqual(['a_b', 'axb']);
+      }),
+    );
+
+    it.effect('applies ASCII case-insensitivity to LIKE while enforcing case-sensitivity for GLOB', () =>
+      Effect.gen(function* () {
+        yield* userAdapter.insert({ name: 'Emile', email: 'emile@example.com' });
+
+        expect((yield* userAdapter.find({ name: { $like: 'emILE' } })).map((u) => u.name)).toEqual(['Emile']);
+        expect((yield* userAdapter.find({ name: { $glob: 'emile' } })).map((u) => u.name)).toEqual([]);
+        expect((yield* userAdapter.find({ name: { $glob: 'Emile' } })).map((u) => u.name)).toEqual(['Emile']);
+      }),
+    );
+
+    it.effect('supports single-character "?" and character class bracket wildcards in GLOB patterns', () =>
+      Effect.gen(function* () {
+        const single = yield* userAdapter.find({ name: { $glob: '?ob' } });
+        expect(single.map((u) => u.name)).toEqual(['Bob']);
+
+        const klass = yield* userAdapter.find({ name: { $glob: '[AB]*' } }, { order: { name: 'asc' } });
+        expect(klass.map((u) => u.name)).toEqual(['Alice', 'Bob']);
+      }),
+    );
+
+    it.effect('permits storing multiple NULL values inside UNIQUE constrained columns', () =>
+      Effect.gen(function* () {
+        yield* userAdapter.insert([
+          { name: 'No Mail One', email: null },
+          { name: 'No Mail Two', email: null },
+        ]);
+
+        const users = yield* userAdapter.find({ email: null });
+        expect(users).toHaveLength(2);
+      }),
+    );
+
+    it.effect('guarantees AUTOINCREMENT primary key values are never reused following row deletion', () =>
+      Effect.gen(function* () {
+        const all = yield* userAdapter.find({}, { order: { id: 'desc' } });
+        const last = all[0];
+
+        yield* userAdapter.delete(last);
+        const inserted = yield* userAdapter.insert({ name: 'After Delete', email: 'afterdelete@example.com' });
+        expect(inserted[0].id).toBeGreaterThan(last.id);
+      }),
+    );
+
+    it.effect('returns pre-trigger state when RETURNING is executed prior to AFTER triggers', () =>
+      Effect.gen(function* () {
+        client.exec("CREATE TRIGGER users_bump AFTER UPDATE OF name ON users BEGIN UPDATE users SET bio = 'set by trigger' WHERE id = NEW.id; END;");
+
+        const alice = yield* userAdapter.findOne({ email: 'alice@example.com' });
+        assert(Option.isSome(alice));
+
+        const updated = yield* userAdapter.update({ id: alice.value.id, name: 'Alice Triggered' } as User);
+        expect(updated[0].bio).toBe(alice.value.bio);
+
+        const stored = yield* userAdapter.findOne({ id: alice.value.id });
+        assert(Option.isSome(stored));
+        expect(stored.value.bio).toBe('set by trigger');
+      }),
+    );
+
+    it.effect('fails with SQLITE_MAX_VARIABLE_NUMBER error when batch insert parameters exceed limits', () =>
+      Effect.gen(function* () {
+        const rows = Array.from({ length: 12_000 }, (_, i) => ({ name: `bulk-${i}`, email: `bulk-${i}@example.com`, bio: `bio-${i}` }));
+
+        const exit = yield* Effect.exit(userAdapter.insert(rows));
+        assert(Exit.isFailure(exit));
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/too many SQL variables/i);
+
+        const smaller = yield* userAdapter.insert(rows.slice(0, 1_000));
+        expect(smaller).toHaveLength(1_000);
+      }),
+    );
+  });
 });
 
-describe('Foreign Key Cascades (SQLite ON DELETE CASCADE Behavior Verification)', () => {
-  it.effect('deleting a user should cascade delete their posts', () =>
+describe('Transaction Management & Concurrency', () => {
+  class BusinessError extends Data.TaggedError('BusinessError')<{ readonly reason: string }> {}
+
+  describe('Transaction Execution & Rollback Semantics', () => {
+    it.effect('commits all database mutations when transaction closure effect succeeds', () =>
+      Effect.gen(function* () {
+        const result = yield* userAdapter.transaction((tx) =>
+          Effect.gen(function* () {
+            yield* tx.insert({ name: 'Tx One', email: 'tx1@example.com' });
+            yield* tx.insert({ name: 'Tx Two', email: 'tx2@example.com' });
+            return yield* tx.count();
+          }),
+        );
+
+        expect(result).toBe(sampleUsers.length + 2);
+        expect(yield* userAdapter.count()).toBe(sampleUsers.length + 2);
+      }),
+    );
+
+    it.effect('rolls back all mutations and preserves typed domain errors when transaction effect fails', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          userAdapter.transaction((tx) =>
+            Effect.gen(function* () {
+              yield* tx.insert({ name: 'Rolled Back', email: 'rollback@example.com' });
+              return yield* new BusinessError({ reason: 'nope' });
+            }),
+          ),
+        );
+
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect(failure.value).toBeInstanceOf(BusinessError);
+        expect((failure.value as BusinessError).reason).toBe('nope');
+
+        expect(Option.isNone(yield* userAdapter.findOne({ email: 'rollback@example.com' }))).toBe(true);
+        expect(yield* userAdapter.count()).toBe(sampleUsers.length);
+      }),
+    );
+
+    it.effect('rolls back mutations and preserves SqliteClientError on database constraint failure', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          userAdapter.transaction((tx) =>
+            Effect.gen(function* () {
+              yield* tx.insert({ name: 'Tx Ok', email: 'txok@example.com' });
+              return yield* tx.insert({ name: 'Tx Dup', email: 'alice@example.com' });
+            }),
+          ),
+        );
+
+        assert(Exit.isFailure(exit));
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        expect(failure.value).toBeInstanceOf(SqliteClientError);
+        expect((failure.value as SqliteClientError).message).toMatch(/UNIQUE constraint failed: users.email/i);
+
+        expect(Option.isNone(yield* userAdapter.findOne({ email: 'txok@example.com' }))).toBe(true);
+      }),
+    );
+
+    it.effect('supports nested transaction scopes via SQL savepoints', () =>
+      Effect.gen(function* () {
+        const result = yield* userAdapter.transaction((tx) =>
+          Effect.gen(function* () {
+            yield* tx.insert({ name: 'Outer', email: 'outer@example.com' });
+
+            const inner = yield* Effect.exit(
+              tx.transaction((nested) =>
+                Effect.gen(function* () {
+                  yield* nested.insert({ name: 'Inner', email: 'inner@example.com' });
+                  return yield* new BusinessError({ reason: 'inner failed' });
+                }),
+              ),
+            );
+
+            expect(Exit.isFailure(inner)).toBe(true);
+            return yield* tx.count();
+          }),
+        );
+
+        expect(result).toBe(sampleUsers.length + 1);
+        expect(Option.isSome(yield* userAdapter.findOne({ email: 'outer@example.com' }))).toBe(true);
+        expect(Option.isNone(yield* userAdapter.findOne({ email: 'inner@example.com' }))).toBe(true);
+      }),
+    );
+
+    it.effect('exposes transaction-bound adapter instances within transaction closure contexts', () =>
+      Effect.gen(function* () {
+        const found = yield* userAdapter.transaction((tx) => tx.findOne({ email: 'alice@example.com' }));
+        assert(Option.isSome(found));
+        expect(found.value.name).toBe('Alice');
+      }),
+    );
+
+    it.effect('rolls back transactions when asynchronous effects are attempted', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          userAdapter.transaction((tx) =>
+            Effect.gen(function* () {
+              yield* tx.insert({ name: 'Async', email: 'async@example.com' });
+              yield* Effect.sleep('1 millis');
+            }),
+          ),
+        );
+
+        assert(Exit.isFailure(exit));
+        expect(Cause.isDie(exit.cause) || Option.isSome(Cause.failureOption(exit.cause))).toBe(true);
+        expect(Option.isNone(yield* userAdapter.findOne({ email: 'async@example.com' }))).toBe(true);
+      }),
+    );
+
+    it.effect('retains outer transaction updates when nested savepoint transactions abort', () =>
+      Effect.gen(function* () {
+        yield* userAdapter.transaction((tx) =>
+          Effect.gen(function* () {
+            yield* tx.insert({ name: 'Kept', email: 'kept@example.com' });
+
+            const inner = yield* Effect.exit(
+              tx.transaction((nested) =>
+                Effect.gen(function* () {
+                  yield* nested.findOneAndUpdate({ email: 'kept@example.com' }, { role: 'inner' });
+                  return yield* nested.insert({ name: 'Dup', email: 'alice@example.com' });
+                }),
+              ),
+            );
+
+            expect(Exit.isFailure(inner)).toBe(true);
+          }),
+        );
+
+        const kept = yield* userAdapter.findOne({ email: 'kept@example.com' });
+        assert(Option.isSome(kept));
+        expect(kept.value.role).toBe('user');
+      }),
+    );
+  });
+
+  describe('Transaction Isolation & Lock Behavior (WAL)', () => {
+    const itemsTable = sqliteTable('items', {
+      id: integer('id').primaryKey({ autoIncrement: true }),
+      v: text('v').notNull(),
+    });
+
+    let dir: string;
+    let writer: Database.Database;
+    let outsider: Database.Database;
+    let itemAdapter: Adapter<typeof itemsTable>;
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'yoru-sqlite-'));
+      writer = new Database(join(dir, 'tx.db'));
+      writer.pragma('journal_mode = WAL');
+      writer.pragma('busy_timeout = 50');
+      writer.exec('CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT NOT NULL)');
+
+      outsider = new Database(join(dir, 'tx.db'));
+      outsider.pragma('busy_timeout = 50');
+
+      itemAdapter = Adapter(drizzle(writer), itemsTable);
+    });
+
+    afterEach(() => {
+      writer.close();
+      outsider.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    const writeFromOutside = (v: string): string => {
+      try {
+        outsider.prepare('INSERT INTO items (v) VALUES (?)').run(v);
+        return 'ok';
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+
+    it('fails deferred transaction with database locked when snapshot is invalidated by concurrent writer', () => {
+      let outside = '';
+      const exit = Effect.runSyncExit(
+        itemAdapter.transaction((tx) =>
+          Effect.gen(function* () {
+            yield* tx.count();
+            outside = writeFromOutside('outside');
+            return yield* tx.insert({ v: 'inside' });
+          }),
+        ),
+      );
+
+      expect(outside).toBe('ok');
+      assert(Exit.isFailure(exit));
+      const failure = Cause.failureOption(exit.cause);
+      assert(Option.isSome(failure));
+      expect((failure.value as SqliteClientError).message).toMatch(/database is locked/i);
+    });
+
+    it('acquires write lock immediately under immediate transaction behavior preventing concurrent writes', () => {
+      let outside = '';
+      const exit = Effect.runSyncExit(
+        itemAdapter.transaction(
+          (tx) =>
+            Effect.gen(function* () {
+              yield* tx.count();
+              outside = writeFromOutside('outside');
+              return yield* tx.insert({ v: 'inside' });
+            }),
+          { behavior: 'immediate' },
+        ),
+      );
+
+      expect(outside).toMatch(/database is locked/i);
+      assert(Exit.isSuccess(exit));
+      expect(exit.value[0].v).toBe('inside');
+      expect(writer.prepare('SELECT COUNT(*) AS n FROM items').get()).toEqual({ n: 1 });
+    });
+
+    it('executes atomic findOneAndUpdate upserts inside immediate transactions to prevent concurrency conflicts', () => {
+      const exit = Effect.runSyncExit(itemAdapter.findOneAndUpdate({ v: 'seed' }, { v: 'upserted' }, { upsert: true }));
+
+      assert(Exit.isSuccess(exit));
+      assert(Option.isSome(exit.value));
+      expect(exit.value.value.v).toBe('upserted');
+    });
+  });
+});
+
+describe('Infrastructure, Diagnostics & Resource Management', () => {
+  describe('SqliteClientLayer & Connection Lifecycle', () => {
+    const withClient = <A>(options: Parameters<typeof makeSqliteConfig>[0], use: (db: BetterSQLite3Database) => A) =>
+      Effect.runPromiseExit(
+        Effect.scoped(
+          Effect.provide(
+            Effect.gen(function* () {
+              const client = yield* SqliteClientTag;
+              return use(client);
+            }),
+            Layer.provide(SqliteClientLayer, Layer.succeed(SqliteConfigTag, makeSqliteConfig(options))),
+          ),
+        ),
+      );
+
+    it('initializes migrated SQLite database connection applying configured pragmas', async () => {
+      const exit = await withClient({ dbCredentials: { url: ':memory:' } }, (db) => ({
+        tables: db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table' order by name`).map((r) => r.name),
+        foreignKeys: db.get<{ foreign_keys: number }>(sql`pragma foreign_keys`),
+        busyTimeout: db.get<{ timeout: number }>(sql`pragma busy_timeout`),
+      }));
+
+      assert(Exit.isSuccess(exit));
+      expect(exit.value.tables).toEqual(expect.arrayContaining(['account', 'user']));
+      expect(exit.value.foreignKeys).toEqual({ foreign_keys: 1 });
+      expect(exit.value.busyTimeout).toEqual({ timeout: 5000 });
+    });
+
+    it('applies custom busy timeout configurations to the active SQLite connection', async () => {
+      const exit = await withClient({ dbCredentials: { url: ':memory:' }, busyTimeout: 250 }, (db) =>
+        db.get<{ timeout: number }>(sql`pragma busy_timeout`),
+      );
+
+      assert(Exit.isSuccess(exit));
+      expect(exit.value).toEqual({ timeout: 250 });
+    });
+
+    it('executes adapter operations against the initialized Layer schema', async () => {
+      const exit = await withClient({ dbCredentials: { url: ':memory:' } }, (db) => {
+        const table = sqliteTable('user', {
+          id: integer('id').primaryKey({ autoIncrement: true }),
+          ownerId: text('owner_id').notNull().unique(),
+        });
+
+        const adapter = Adapter(db, table);
+        return Effect.runSync(
+          Effect.gen(function* () {
+            yield* adapter.insert({ ownerId: 'owner-1' });
+            return yield* adapter.findOne({ ownerId: 'owner-1' });
+          }),
+        );
+      });
+
+      assert(Exit.isSuccess(exit));
+      assert(Option.isSome(exit.value));
+      expect(exit.value.value.ownerId).toBe('owner-1');
+    });
+
+    it('closes the SQLite database connection automatically when Effect scope releases', async () => {
+      let handle: BetterSQLite3Database | undefined;
+      const exit = await withClient({ dbCredentials: { url: ':memory:' } }, (db) => {
+        handle = db;
+        return true;
+      });
+
+      assert(Exit.isSuccess(exit));
+      expect(() => handle!.get(sql`select 1`)).toThrow(/not open/i);
+    });
+
+    it('fails with SqliteClientError when configured migrations directory is missing', async () => {
+      const exit = await withClient({ out: 'migrations-does-not-exist', dbCredentials: { url: ':memory:' } }, () => true);
+
+      assert(Exit.isFailure(exit));
+      const failure = Cause.failureOption(exit.cause);
+      assert(Option.isSome(failure));
+      expect(failure.value).toBeInstanceOf(SqliteClientError);
+    });
+  });
+
+  describe('SqliteClientError Diagnostics', () => {
+    it.effect('attaches compiled SQL statement objects to SqliteClientError failure payloads', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.insert({ email: 'nonull@example.com' } as InsertUser));
+        assert(Exit.isFailure(exit));
+
+        const failure = Cause.failureOption(exit.cause);
+        assert(Option.isSome(failure));
+        const error = failure.value as SqliteClientError;
+
+        expect(error.message).toMatch(/NOT NULL constraint failed: users.name/i);
+        expect(error.query).toEqual(expect.objectContaining({ sql: expect.stringContaining('insert into "users"') }));
+      }),
+    );
+
+    it.effect('reports missing primary key id as a typed SqliteClientError failure during update/delete', () =>
+      Effect.gen(function* () {
+        const updateExit = yield* Effect.exit(userAdapter.update({ name: 'No Id' } as User));
+        assert(Exit.isFailure(updateExit));
+        expect(Option.isSome(Cause.failureOption(updateExit.cause))).toBe(true);
+
+        const deleteExit = yield* Effect.exit(userAdapter.delete({ name: 'No Id' } as User));
+        assert(Exit.isFailure(deleteExit));
+        expect(Option.isSome(Cause.failureOption(deleteExit.cause))).toBe(true);
+      }),
+    );
+
+    it.effect('reports invalid join condition specifications as typed errors', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({}, { joins: [{ table: officesTable, on: {}, type: 'left' }] }));
+        assert(Exit.isFailure(exit));
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/Join conditions \(on\) must be specified/i);
+      }),
+    );
+
+    it.effect('reports unknown join column keys as typed errors', () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'nope' as never } }] }));
+        assert(Exit.isFailure(exit));
+        // @ts-expect-error Internal effect access.
+        expect(exit.cause.error.message).toMatch(/Invalid join keys/i);
+      }),
+    );
+  });
+});
+
+describe('Static Contract Verification & Type Safety', () => {
+  const pin = (_query: unknown): void => void 0;
+
+  class ComptimeBoom extends Data.TaggedError('ComptimeBoom')<{}> {}
+
+  it('validates static TypeScript type constraints on query filter surfaces', () => {
+    pin(userAdapter.find({ name: 'Alice', age: { $gte: 18 }, bio: { $null: true } }));
+    pin(userAdapter.find({ $or: [{ role: 'admin' }, { $and: [{ age: { $lt: 25 } }, { name: { $like: 'B%' } }] }] }));
+    pin(userAdapter.find({ $not: { role: 'admin' } }));
+    pin(userAdapter.find({ email: null, age: { $in: [1, 2] } }));
+
+    // @ts-expect-error `nope` is not a column of `users`.
+    pin(userAdapter.find({ nope: 'x' }));
+    // @ts-expect-error `age` is an integer column, not a string one.
+    pin(userAdapter.find({ age: 'thirty' }));
+    // @ts-expect-error `$in` takes an array of the column type.
+    pin(userAdapter.find({ role: { $in: 'admin' } }));
+    // @ts-expect-error `$bogus` is not a comparison operator.
+    pin(userAdapter.find({ role: { $bogus: 'admin' } }));
+    // @ts-expect-error `$and` takes an array of filters.
+    pin(userAdapter.find({ $and: { role: 'admin' } }));
+    // @ts-expect-error `$null` is a boolean flag, not a value.
+    pin(userAdapter.find({ bio: { $null: 'yes' } }));
+  });
+
+  it('validates static TypeScript type constraints on selection projection options', () => {
+    pin(userAdapter.find({}, { select: { name: 1, bio: 0 } }));
+    pin(userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'id' } }], select: { location: 1 } }));
+
+    // @ts-expect-error unknown projection keys are rejected.
+    pin(userAdapter.find({}, { select: { nope: 1 } }));
+    // @ts-expect-error projection flags are 0 or 1.
+    pin(userAdapter.find({}, { select: { name: true } }));
+    // @ts-expect-error a joined column cannot be projected without the join.
+    pin(userAdapter.find({}, { select: { location: 1 } }));
+  });
+
+  it('validates static TypeScript type constraints on order sorting options', () => {
+    pin(userAdapter.find({}, { order: { name: 'asc', age: 'desc' } }));
+
+    // @ts-expect-error only 'asc' and 'desc' are valid directions.
+    pin(userAdapter.find({}, { order: { name: 'ascending' } }));
+    // @ts-expect-error unknown order keys are rejected.
+    pin(userAdapter.find({}, { order: { nope: 'asc' } }));
+  });
+
+  it('validates static TypeScript type constraints on relational join configurations', () => {
+    pin(userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'left' }] }));
+
+    // @ts-expect-error `nope` is not a column of `users`.
+    pin(userAdapter.find({}, { joins: [{ table: officesTable, on: { nope: 'id' } }] }));
+    // @ts-expect-error `nope` is not a column of `offices`.
+    pin(userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'nope' } }] }));
+    // @ts-expect-error `outer` is not a supported join type.
+    pin(userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'outer' }] }));
+  });
+
+  it.effect('enforces join type nullability inside static return type signatures', () =>
     Effect.gen(function* () {
-      const aliceOpt = yield* userAdapter.findOne({ email: 'alice@example.com' });
-      assert(Option.isSome(aliceOpt));
-      const alice = aliceOpt.value;
+      const inner = yield* userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'inner' }] });
+      expectTypeOf(inner).toEqualTypeOf<Array<{ readonly users: User } & { readonly offices: Office }>>();
 
-      const alicePostsBefore = yield* postAdapter.find({ userId: alice.id });
-      expectTypeOf(alicePostsBefore).toEqualTypeOf<Post[]>();
-      expect(alicePostsBefore.length).toBeGreaterThan(0);
+      const left = yield* userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'left' }] });
+      expectTypeOf(left).toEqualTypeOf<Array<{ readonly users: User } & { readonly offices: Office | null }>>();
 
-      const deletedUsers = yield* userAdapter.delete(alice);
-      expectTypeOf(deletedUsers).toEqualTypeOf<User[]>();
+      const right = yield* userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'right' }] });
+      expectTypeOf(right).toEqualTypeOf<Array<{ readonly users: User | null } & { readonly offices: Office }>>();
 
-      const alicePostsAfter = yield* postAdapter.find({ userId: alice.id });
-      expectTypeOf(alicePostsAfter).toEqualTypeOf<Post[]>();
-      expect(alicePostsAfter).toHaveLength(0);
+      const full = yield* userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'id' }, type: 'full' }] });
+      expectTypeOf(full).toEqualTypeOf<Array<{ readonly users: User | null } & { readonly offices: Office | null }>>();
     }),
   );
 
-  it.effect('deleting an office should cascade delete users in that office, and their posts indirectly', () =>
-    Effect.gen(function* () {
-      const hqOfficeOpt = yield* officeAdapter.findOne({ name: 'HQ' });
-      assert(Option.isSome(hqOfficeOpt), 'Expected HQ office to be found');
-      const hqOffice = hqOfficeOpt.value;
+  it('validates static TypeScript type constraints on insertion payloads and conflict options', () => {
+    pin(userAdapter.insert({ name: 'A', email: 'a@e.com' }));
+    pin(userAdapter.insert([{ name: 'A' }, { name: 'B' }]));
+    pin(userAdapter.insert({ name: 'A' }, { conflict: { resolution: 'ignore', target: ['email'] } }));
 
-      const usersInHQBefore = yield* userAdapter.find({ officeId: hqOffice.id });
-      expectTypeOf(usersInHQBefore).toEqualTypeOf<User[]>();
-      expect(usersInHQBefore.length).toBeGreaterThan(0);
+    // @ts-expect-error the primary key is assigned by SQLite, never by the caller.
+    pin(userAdapter.insert({ id: 1, name: 'A' }));
+    // @ts-expect-error `name` is NOT NULL without a default, so it is required.
+    pin(userAdapter.insert({ email: 'a@e.com' }));
+    // @ts-expect-error `nope` is not a column of `users`.
+    pin(userAdapter.insert({ name: 'A', nope: 1 }));
+    // @ts-expect-error conflict targets are column names of the table.
+    pin(userAdapter.insert({ name: 'A' }, { conflict: { resolution: 'ignore', target: ['nope'] } }));
+    // @ts-expect-error only the three documented resolutions exist.
+    pin(userAdapter.insert({ name: 'A' }, { conflict: { resolution: 'replace', target: ['email'] } }));
+  });
 
-      const userIdsInHQ = usersInHQBefore.map((u) => u.id);
-      const postsOfUsersInHQBefore = yield* postAdapter.find({ userId: { $in: userIdsInHQ } });
-      expectTypeOf(postsOfUsersInHQBefore).toEqualTypeOf<Post[]>();
-      expect(postsOfUsersInHQBefore.length).toBeGreaterThan(0);
+  it('validates static TypeScript type constraints on update and delete entity payloads', () => {
+    const row = { id: 1, name: 'A', email: null, age: null, role: null, officeId: null, bio: null } satisfies User;
+    pin(userAdapter.update(row));
+    pin(userAdapter.delete(row));
 
-      const deletedOffices = yield* officeAdapter.delete(hqOffice);
-      expectTypeOf(deletedOffices).toEqualTypeOf<Office[]>();
+    // @ts-expect-error `update` takes a full select row, so `id` cannot be missing.
+    pin(userAdapter.update({ name: 'A' }));
+    // @ts-expect-error `delete` takes a full select row, so `id` cannot be missing.
+    pin(userAdapter.delete({ name: 'A' }));
+  });
 
-      const usersInHQAfter = yield* userAdapter.find({ officeId: hqOffice.id });
-      expectTypeOf(usersInHQAfter).toEqualTypeOf<User[]>();
-      expect(usersInHQAfter).toHaveLength(0);
+  it('validates static TypeScript type constraints on findOneAndUpdate options and upserts', () => {
+    pin(userAdapter.findOneAndUpdate({ email: 'a@e.com' }, { name: 'A' }, { upsert: true }));
+    pin(userAdapter.findOneAndUpdate({ age: { $gt: 30 } }, { name: 'A' }));
 
-      const postsOfUsersInHQAfter = yield* postAdapter.find({ userId: { $in: userIdsInHQ } });
-      expectTypeOf(postsOfUsersInHQAfter).toEqualTypeOf<Post[]>();
-      expect(postsOfUsersInHQAfter).toHaveLength(0);
-    }),
-  );
+    // @ts-expect-error operator filters are not allowed together with `upsert: true`.
+    pin(userAdapter.findOneAndUpdate({ age: { $gt: 30 } }, { name: 'A' }, { upsert: true }));
+    // @ts-expect-error the update payload may never carry the primary key.
+    pin(userAdapter.findOneAndUpdate({ email: 'a@e.com' }, { id: 2 }));
+    // @ts-expect-error `findOneAndUpdate` has no `limit` option.
+    pin(userAdapter.findOneAndUpdate({ email: 'a@e.com' }, { name: 'A' }, { limit: 1 }));
+    // @ts-expect-error `findOneAndUpdate` has no `joins` option.
+    pin(userAdapter.findOneAndUpdate({ email: 'a@e.com' }, { name: 'A' }, { joins: [] }));
+  });
+
+  it('verifies static Effect error and success type channels across adapter methods', () => {
+    expectTypeOf(userAdapter.count()).toEqualTypeOf<Effect.Effect<number, SqliteClientError>>();
+    expectTypeOf(userAdapter.find()).toEqualTypeOf<Effect.Effect<User[], SqliteClientError>>();
+    expectTypeOf(userAdapter.findOne()).toEqualTypeOf<Effect.Effect<Option.Option<User>, SqliteClientError>>();
+    expectTypeOf(userAdapter.insert({ name: 'A' })).toEqualTypeOf<Effect.Effect<User[], SqliteClientError>>();
+    expectTypeOf(userAdapter.findOneAndDelete()).toEqualTypeOf<Effect.Effect<Option.Option<User>, SqliteClientError>>();
+
+    const tx = userAdapter.transaction(() => Effect.fail(new ComptimeBoom()));
+    expectTypeOf(tx).toEqualTypeOf<Effect.Effect<never, SqliteClientError | ComptimeBoom, never>>();
+
+    const withReq = userAdapter.transaction(() => Effect.map(SqliteClientTag, () => 1));
+    expectTypeOf(withReq).toEqualTypeOf<Effect.Effect<number, SqliteClientError, SqliteClientTag>>();
+  });
+
+  it('validates static TypeScript type constraints on transaction execution behavior options', () => {
+    pin(userAdapter.transaction(() => Effect.succeed(1), { behavior: 'immediate' }));
+    pin(userAdapter.transaction(() => Effect.succeed(1), { behavior: 'deferred' }));
+    pin(userAdapter.transaction(() => Effect.succeed(1), { behavior: 'exclusive' }));
+
+    // @ts-expect-error only the three SQLite transaction behaviours exist.
+    pin(userAdapter.transaction(() => Effect.succeed(1), { behavior: 'batch' }));
+  });
 });

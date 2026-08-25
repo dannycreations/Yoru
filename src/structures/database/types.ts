@@ -1,11 +1,4 @@
-import type { InferInsertModel, InferSelectModel, SQL, Table } from 'drizzle-orm';
-
-// @ts-expect-error Internal drizzle access.
-export interface PatchedDialect extends SQLiteSyncDialect {
-  __patched?: boolean;
-  buildLimit(limit: number): SQL;
-  sqlToQuery(sql: SQL): unknown;
-}
+import type { InferInsertModel, InferSelectModel, Table } from 'drizzle-orm';
 
 export interface ComparisonOperator<T> {
   readonly $eq?: T;
@@ -46,8 +39,20 @@ export interface QueryOptions<A extends Table, B extends ReadonlyArray<Table>, S
   readonly joins?: J;
 }
 
+export interface TransactionOptions {
+  readonly behavior?: 'deferred' | 'immediate' | 'exclusive';
+}
+
 export type SelectClause<A extends Table, B extends ReadonlyArray<Table>, S> = Partial<Record<keyof SelectMerge<A, B>, 0 | 1>> &
   Readonly<Record<Exclude<keyof S, keyof SelectMerge<A, B>>, never>>;
+
+export type SelectInclude<S> = { [K in keyof S]: S[K] extends 1 ? K : never }[keyof S];
+
+export type SelectExclude<S> = { [K in keyof S]: S[K] extends 0 ? K : never }[keyof S];
+
+export type SelectProject<A extends Table, B extends ReadonlyArray<Table>, S> = [SelectInclude<S>] extends [never]
+  ? Omit<SelectMerge<A, B>, Extract<SelectExclude<S>, keyof SelectMerge<A, B>>>
+  : Omit<SelectMerge<A, B>, Exclude<keyof SelectMerge<A, B>, SelectInclude<S> | (S extends { id: 0 } ? never : 'id')>>;
 
 export type SelectMerge<A extends Table, B extends ReadonlyArray<Table>> = InferSelect<A> & SelectTuple<B>;
 
@@ -104,10 +109,7 @@ export type ReturnAlias<A extends Table, B extends ReadonlyArray<Table>, S, J ex
             readonly [K in A['_']['name']]: IsRightOrFull<J> extends true ? InferSelect<A> | null : InferSelect<A>;
           } & ReturnTuple<B, J>
         : InferSelect<A>
-      : Omit<
-          SelectMerge<A, B>,
-          Exclude<keyof SelectMerge<A, B>, { [K in keyof S]: S[K] extends 1 ? K : never }[keyof S] | (S extends { id: 0 } ? never : 'id')>
-        >
+      : SelectProject<A, B, S>
     : B extends readonly [infer _A, ...infer _B]
       ? {
           readonly [K in A['_']['name']]: IsRightOrFull<J> extends true ? InferSelect<A> | null : InferSelect<A>;

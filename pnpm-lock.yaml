@@ -12,8 +12,8 @@ importers:
         specifier: ^7.3.3
         version: 7.3.3
       '@sapphire/framework':
-        specifier: ^5.5.0
-        version: 5.5.0
+        specifier: ^5.5.1
+        version: 5.5.1
       '@vegapunk/utilities':
         specifier: ^1.0.79
         version: 1.0.79(typescript@7.0.2)
@@ -45,18 +45,18 @@ importers:
         specifier: ^13.1.3
         version: 13.1.3
       user-agents:
-        specifier: ^2.1.148
-        version: 2.1.148
+        specifier: ^2.1.163
+        version: 2.1.163
       vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12))
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12))
     devDependencies:
       '@effect/tsgo':
-        specifier: ^0.36.2
-        version: 0.36.2
+        specifier: ^0.37.0
+        version: 0.37.0
       '@effect/vitest':
         specifier: ^0.30.0
-        version: 0.30.0(effect@3.22.1)(vitest@4.1.10(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12)))
+        version: 0.30.0(effect@3.22.1)(vitest@4.1.11(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12)))
       '@ianvs/prettier-plugin-sort-imports':
         specifier: ^4.7.1
         version: 4.7.1(prettier@3.9.6)(supports-color@7.2.0)
@@ -79,8 +79,8 @@ importers:
         specifier: ^9.1.7
         version: 9.1.7
       npm-check-updates:
-        specifier: ^23.0.2
-        version: 23.0.2
+        specifier: ^23.1.0
+        version: 23.1.0
       prettier:
         specifier: ^3.9.6
         version: 3.9.6
@@ -176,43 +176,43 @@ packages:
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
 
-  '@effect/tsgo-darwin-arm64@0.36.2':
-    resolution: {integrity: sha512-eK1UY2bI//sOjfclmGmW+rrkTr8C7LksCl8aclrni6lz2na8NtCqvoehf4XPC/Mwsnsusc+nZl15OrUlSrhHOw==}
+  '@effect/tsgo-darwin-arm64@0.37.0':
+    resolution: {integrity: sha512-D9o2NKswmRklu+sG28HkxZAvtvOa0Mt+bLVjJKydF2kVw+gePxiHuTbbI3e4Kqumv4ucLT3TtqU1a2RirC80lA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@effect/tsgo-darwin-x64@0.36.2':
-    resolution: {integrity: sha512-LRY9v/awOQljxVQQS/euH29ZNR9u5Ui6FtTSuorvCILdN6P+C5XNwGaup3aKh37B/Tie7vqNNwwFvcPQdyA2hw==}
+  '@effect/tsgo-darwin-x64@0.37.0':
+    resolution: {integrity: sha512-3PP9ktZOOYaPhGSP01ySM44pJbeLJZUuF2auCRTIxySHqe2vvhxVAIGGCwmMzOg0qeqowOUG8ew4kofmqRsXCg==}
     cpu: [x64]
     os: [darwin]
 
-  '@effect/tsgo-linux-arm64@0.36.2':
-    resolution: {integrity: sha512-0OpqPvivRBu4lTcn0cMaQKb9WWPl+lSXLZYLKLg2QjV0065MConVK3NvIh601qToHifFtdcet8n71gHQWExRiw==}
+  '@effect/tsgo-linux-arm64@0.37.0':
+    resolution: {integrity: sha512-7rICv3nNPSo5gPPUOSBJyYU1Hu8yRX2IqRWATXhhuPUJ3yQwLevAim6AyzZp/FMoKUYgr+SZ18dw6BntAdzMrA==}
     cpu: [arm64]
     os: [linux]
 
-  '@effect/tsgo-linux-arm@0.36.2':
-    resolution: {integrity: sha512-w+RJ/eUq91HJQEfkH7WohGYRLQQs98uYMFXrX8u+LtCiqIqOsw6KIdhQ6jsBrplZANxUIzQOs3YrSfRKKf1CGg==}
+  '@effect/tsgo-linux-arm@0.37.0':
+    resolution: {integrity: sha512-JEtNv5gI6gHjtrYMz5ln6uZIMKwUGgxsDHpJgBPUd+yS/Cm48b4SjpLuYRBEvjPJTxPM6asEkyKsBMlboJfoIg==}
     cpu: [arm]
     os: [linux]
 
-  '@effect/tsgo-linux-x64@0.36.2':
-    resolution: {integrity: sha512-mOAcOtcb5mJa2mIJAW7oZChaItYx1ApQ4ton6FEkjBjDEcMK84OgaCrJWGd5mzHj+JmuHw4Enllzct0pyCZTrg==}
+  '@effect/tsgo-linux-x64@0.37.0':
+    resolution: {integrity: sha512-gPl5KO83aU55JXEv2lBjOLRdZafP+/fAl2mveZArU+QsOf5MuUnFmSRo+eds0/971wH3a13lW9sWBg+/XZtq8g==}
     cpu: [x64]
     os: [linux]
 
-  '@effect/tsgo-win32-arm64@0.36.2':
-    resolution: {integrity: sha512-hyBJelUFZnBGLMJQKiM/w4hED4foqD8GkMOdFPNOBhWNuU5Z8JVTXkircWol01XgSo86RnSEjMfeKYv4FEeLWw==}
+  '@effect/tsgo-win32-arm64@0.37.0':
+    resolution: {integrity: sha512-ipmWCTitf6CYn4sAqOxwvv48JlE46SfvDq1I912OPnPHBP3ZnYF1b18RqiOCiL4Z1aQ6pC5NTeyulfW8g9cM7Q==}
     cpu: [arm64]
     os: [win32]
 
-  '@effect/tsgo-win32-x64@0.36.2':
-    resolution: {integrity: sha512-Gh1nYw6hRudspkleoqWl/KX19+dShuODJPPv8rhqf3pPRRWm0GniKNxzPr5L42rcv1JXN1GK7no8FkStFLb9jQ==}
+  '@effect/tsgo-win32-x64@0.37.0':
+    resolution: {integrity: sha512-h2UGN9UN+wyQ3KxyShOFyCy0CcgxvC9AoKv1OpZACWqw0ewU4ga6kyN5cmOY94JWXolcTgwhd/DUqN3IaEyoPw==}
     cpu: [x64]
     os: [win32]
 
-  '@effect/tsgo@0.36.2':
-    resolution: {integrity: sha512-qyEhYRuNbltg4YCWOyyAQ2Hd11f8ecF/DaWMuDhDcIyQBUN2IqNKMLPoLeC9aUlSDgRbzJyQZRvtGJpb8CJ2WA==}
+  '@effect/tsgo@0.37.0':
+    resolution: {integrity: sha512-jCJIUcNgI0vaoylao/mhOv+7hDfaJRwZJSJrg5kA/FCQ4aGDhAYqyQx+hoZh8AW3pzD9Qp1RWtUsVFqOzIOENw==}
     hasBin: true
 
   '@effect/vitest@0.30.0':
@@ -1021,8 +1021,8 @@ packages:
     resolution: {integrity: sha512-LxjOAFXz81WmrI8XX9YaVcAZDjQj/1p78lZCvkAWZB1nphOwz/D0dU3CBejmhOWx5dO5CszTkLJMNR0xuCK+Zg==}
     engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
 
-  '@sapphire/framework@5.5.0':
-    resolution: {integrity: sha512-jC+zS8yR/MtJaTFEQutBBWj7Scuvny4d0adtQ3s0OCFWe3rUqNfENomBG3P4tsQ/kRF7L3WCqucyLV8ywG24hw==}
+  '@sapphire/framework@5.5.1':
+    resolution: {integrity: sha512-UlEoj3XRjSyGJg1+kD43q5YHfmDDJ1fNN5Ws3OifvgMNhnOrrL1diTjU1ALfLrfUbPuBCJWD1ZfIj/i/J4K9eQ==}
     engines: {node: '>=v18', npm: '>=7'}
 
   '@sapphire/lexure@1.1.12':
@@ -1231,11 +1231,11 @@ packages:
     bundledDependencies:
       - '@types/humanize-duration'
 
-  '@vitest/expect@4.1.10':
-    resolution: {integrity: sha512-YsCn+qAk1GWjQOWFEsEcL2gNQ0zmVmQu3T03qP6UyjhtmdtwtbuI+DASn/7iQB3HGTXkdBwGddzxPlmiql5vlA==}
+  '@vitest/expect@4.1.11':
+    resolution: {integrity: sha512-VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw==}
 
-  '@vitest/mocker@4.1.10':
-    resolution: {integrity: sha512-v0xaezt+DKEmKfaxg133ldzADrwLGd7Ze1MfQQTYfvs8OqZIwbxyxaYURivwV7sWy5fqn3rH5uOrSp07bp44Ow==}
+  '@vitest/mocker@4.1.11':
+    resolution: {integrity: sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==}
     peerDependencies:
       msw: ^2.4.9
       vite: ^6.0.0 || ^7.0.0 || ^8.0.0
@@ -1245,20 +1245,20 @@ packages:
       vite:
         optional: true
 
-  '@vitest/pretty-format@4.1.10':
-    resolution: {integrity: sha512-W1HsjSH4MXQ9YfmmhLAoIYf1HRfekQCGngeIgcei6MP5QQGWUe0gkopdZQaVCFO+JDJMrAJGwa5pRpNpvy4P8Q==}
+  '@vitest/pretty-format@4.1.11':
+    resolution: {integrity: sha512-yiZzPbGTS9Sr/JpFl8zHrcIkAofNbFV6k21vIgQN/cY/oxZeXhJv5sc/MBJ5jFKWmWs+oJHw0UXLZjmf931+Vw==}
 
-  '@vitest/runner@4.1.10':
-    resolution: {integrity: sha512-IKI6kpIH+LmpROplyLwBBaCfMgOZOMsygVa6BARD6ahA04VRuJSa6OaVG7kRvSEMD870Vd91rSSw0eegtWyLGg==}
+  '@vitest/runner@4.1.11':
+    resolution: {integrity: sha512-LztvUgdwMNJMIkj3hQnnxiC2Xy1zNxq928W/xhjCLaNCzqTZOudjwbQf6v9IntZGPw132i2Lq2rgTRZHD3JHNw==}
 
-  '@vitest/snapshot@4.1.10':
-    resolution: {integrity: sha512-xRkfOT1qpTAi/Ti4Y1LtfRc3kEuqxGw59eN2jN9pRWMtS/XDevekhcFSqvQqjUNGksfjMJu3Y+oJ+4Ypn2OaJw==}
+  '@vitest/snapshot@4.1.11':
+    resolution: {integrity: sha512-pN7ikn1ON7h8ee4gIAp4AzyK+zBtJPzVbqOgu5LCEh4VaJVbPQcgYQYJIMGQPXVeJJq1fnfazis7a5pFNPahog==}
 
-  '@vitest/spy@4.1.10':
-    resolution: {integrity: sha512-PLf/Ugvoq5wO/b4rwYCR1h2PSIdXz7wnkQFMiUpLdtM7l6pqVFcQIBEHyT1+l+cj7mNwAfZHzqXqDyjvOuwbDw==}
+  '@vitest/spy@4.1.11':
+    resolution: {integrity: sha512-apNa/prQy2qCeywhnixOHPRCgGNhvg7T4Dapfl1GahLp/R+uhBm5cPyFoNVyqsNd2h1nJxL6BqqdIjiABL60YA==}
 
-  '@vitest/utils@4.1.10':
-    resolution: {integrity: sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA==}
+  '@vitest/utils@4.1.11':
+    resolution: {integrity: sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==}
 
   '@vladfrangu/async_event_emitter@2.4.6':
     resolution: {integrity: sha512-RaI5qZo6D2CVS6sTHFKg1v5Ohq/+Bo2LZ5gzUEwZ/WkHhwtGTCB/sVLw8ijOkAUxasZ+WshN/Rzj4ywsABJ5ZA==}
@@ -1639,8 +1639,8 @@ packages:
     resolution: {integrity: sha512-DlL+XwOy3NxAQ8xuC0okPgK46iuVNAK01YN7RueYBqqFeGsBjV9XmCAzAdgt+667bCl5kPh9EqKKDwnaPG1I7A==}
     engines: {node: '>=10'}
 
-  npm-check-updates@23.0.2:
-    resolution: {integrity: sha512-t5tv+d4sP+WbSwcDAFBwDxSUJRomc+TJoURPu7q5B/19toUsR/7eshRxBdWdE7iYw80iE4O4D/7OvCvIcaG8ug==}
+  npm-check-updates@23.1.0:
+    resolution: {integrity: sha512-u6Odx/JDpDXNqXp5pPsVN0RhuWkNrBe4Sz26J7yWJcEadopKhQgcB+bFq2PK35iJY6vc6h1PbnXmnwfiOFQl/w==}
     engines: {node: ^22.22.2 || ^24.15.0 || >=26.0.0, npm: '>=10.0.0'}
     hasBin: true
 
@@ -1835,8 +1835,8 @@ packages:
     resolution: {integrity: sha512-3O9Tf67pGhgOv9jM35AbhkXAKi13f3oy3aE4CSgr+TckGeY+/iu97ZXN+J7DpHPzLbVApFd1IFhcnBjREYXYcg==}
     engines: {node: '>=20.18.1'}
 
-  user-agents@2.1.148:
-    resolution: {integrity: sha512-cHMr/G9+k90bUUza8oDuqoxMhbf6tjZM740ypPvxoeDCT6UUvmzxfn/d6Ylveeafrry27mdnttrNZGqLu36RLw==}
+  user-agents@2.1.163:
+    resolution: {integrity: sha512-8sY0cHQMP8A1jtXEp8VCQ1Ky4jvYLVEGan8f5Sp3xcoDWm+VwepvMxqgE2nzXQdwuIJMfRyMNw2EERpgyymkJg==}
     engines: {node: '>=18'}
 
   valibot@1.2.0:
@@ -1887,20 +1887,20 @@ packages:
       yaml:
         optional: true
 
-  vitest@4.1.10:
-    resolution: {integrity: sha512-R9jUTe5S4Qb0HCd4TNqpC7oGcrMssMRGXLW80ubjWsW9VH5GF8y1Y0SFLY9AbqSk6nt0PnOx4H4WNJYZ13GUPw==}
+  vitest@4.1.11:
+    resolution: {integrity: sha512-fhACrNXUidIbGSBr5FlbuBkO7VWC1ZyLl0DO4CU2DrQoAPxX84Ysxs+HeGQpii5lZWV1Q4gBZTTu49mF+A6Edw==}
     engines: {node: ^20.0.0 || ^22.0.0 || >=24.0.0}
     hasBin: true
     peerDependencies:
       '@edge-runtime/vm': '*'
       '@opentelemetry/api': ^1.9.0
       '@types/node': ^20.0.0 || ^22.0.0 || >=24.0.0
-      '@vitest/browser-playwright': 4.1.10
-      '@vitest/browser-preview': 4.1.10
-      '@vitest/browser-webdriverio': 4.1.10
-      '@vitest/coverage-istanbul': 4.1.10
-      '@vitest/coverage-v8': 4.1.10
-      '@vitest/ui': 4.1.10
+      '@vitest/browser-playwright': 4.1.11
+      '@vitest/browser-preview': 4.1.11
+      '@vitest/browser-webdriverio': 4.1.11
+      '@vitest/coverage-istanbul': 4.1.11
+      '@vitest/coverage-v8': 4.1.11
+      '@vitest/ui': 4.1.11
       happy-dom: '*'
       jsdom: '*'
       vite: ^6.0.0 || ^7.0.0 || ^8.0.0
@@ -2082,41 +2082,41 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
-  '@effect/tsgo-darwin-arm64@0.36.2':
+  '@effect/tsgo-darwin-arm64@0.37.0':
     optional: true
 
-  '@effect/tsgo-darwin-x64@0.36.2':
+  '@effect/tsgo-darwin-x64@0.37.0':
     optional: true
 
-  '@effect/tsgo-linux-arm64@0.36.2':
+  '@effect/tsgo-linux-arm64@0.37.0':
     optional: true
 
-  '@effect/tsgo-linux-arm@0.36.2':
+  '@effect/tsgo-linux-arm@0.37.0':
     optional: true
 
-  '@effect/tsgo-linux-x64@0.36.2':
+  '@effect/tsgo-linux-x64@0.37.0':
     optional: true
 
-  '@effect/tsgo-win32-arm64@0.36.2':
+  '@effect/tsgo-win32-arm64@0.37.0':
     optional: true
 
-  '@effect/tsgo-win32-x64@0.36.2':
+  '@effect/tsgo-win32-x64@0.37.0':
     optional: true
 
-  '@effect/tsgo@0.36.2':
+  '@effect/tsgo@0.37.0':
     optionalDependencies:
-      '@effect/tsgo-darwin-arm64': 0.36.2
-      '@effect/tsgo-darwin-x64': 0.36.2
-      '@effect/tsgo-linux-arm': 0.36.2
-      '@effect/tsgo-linux-arm64': 0.36.2
-      '@effect/tsgo-linux-x64': 0.36.2
-      '@effect/tsgo-win32-arm64': 0.36.2
-      '@effect/tsgo-win32-x64': 0.36.2
+      '@effect/tsgo-darwin-arm64': 0.37.0
+      '@effect/tsgo-darwin-x64': 0.37.0
+      '@effect/tsgo-linux-arm': 0.37.0
+      '@effect/tsgo-linux-arm64': 0.37.0
+      '@effect/tsgo-linux-x64': 0.37.0
+      '@effect/tsgo-win32-arm64': 0.37.0
+      '@effect/tsgo-win32-x64': 0.37.0
 
-  '@effect/vitest@0.30.0(effect@3.22.1)(vitest@4.1.10(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12)))':
+  '@effect/vitest@0.30.0(effect@3.22.1)(vitest@4.1.11(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12)))':
     dependencies:
       effect: 3.22.1
-      vitest: 4.1.10(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12))
+      vitest: 4.1.11(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12))
 
   '@esbuild-kit/core-utils@3.3.2':
     dependencies:
@@ -2549,7 +2549,7 @@ snapshots:
 
   '@sapphire/duration@1.2.0': {}
 
-  '@sapphire/framework@5.5.0':
+  '@sapphire/framework@5.5.1':
     dependencies:
       '@discordjs/builders': 1.13.1
       '@sapphire/discord-utilities': 4.0.0
@@ -2719,44 +2719,44 @@ snapshots:
       - typescript
       - use-sync-external-store
 
-  '@vitest/expect@4.1.10':
+  '@vitest/expect@4.1.11':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@types/chai': 5.2.3
-      '@vitest/spy': 4.1.10
-      '@vitest/utils': 4.1.10
+      '@vitest/spy': 4.1.11
+      '@vitest/utils': 4.1.11
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.10(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12))':
+  '@vitest/mocker@4.1.11(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12))':
     dependencies:
-      '@vitest/spy': 4.1.10
+      '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
       vite: 7.3.1(@types/node@24.10.4)(tsx@4.23.12)
 
-  '@vitest/pretty-format@4.1.10':
+  '@vitest/pretty-format@4.1.11':
     dependencies:
       tinyrainbow: 3.1.0
 
-  '@vitest/runner@4.1.10':
+  '@vitest/runner@4.1.11':
     dependencies:
-      '@vitest/utils': 4.1.10
+      '@vitest/utils': 4.1.11
       pathe: 2.0.3
 
-  '@vitest/snapshot@4.1.10':
+  '@vitest/snapshot@4.1.11':
     dependencies:
-      '@vitest/pretty-format': 4.1.10
-      '@vitest/utils': 4.1.10
+      '@vitest/pretty-format': 4.1.11
+      '@vitest/utils': 4.1.11
       magic-string: 0.30.21
       pathe: 2.0.3
 
-  '@vitest/spy@4.1.10': {}
+  '@vitest/spy@4.1.11': {}
 
-  '@vitest/utils@4.1.10':
+  '@vitest/utils@4.1.11':
     dependencies:
-      '@vitest/pretty-format': 4.1.10
+      '@vitest/pretty-format': 4.1.11
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
@@ -3111,7 +3111,7 @@ snapshots:
 
   normalize-url@6.1.0: {}
 
-  npm-check-updates@23.0.2: {}
+  npm-check-updates@23.1.0: {}
 
   obug@2.1.1: {}
 
@@ -3328,7 +3328,7 @@ snapshots:
 
   undici@7.26.0: {}
 
-  user-agents@2.1.148: {}
+  user-agents@2.1.163: {}
 
   valibot@1.2.0(typescript@7.0.2):
     optionalDependencies:
@@ -3347,15 +3347,15 @@ snapshots:
       fsevents: 2.3.3
       tsx: 4.23.12
 
-  vitest@4.1.10(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12)):
+  vitest@4.1.11(@types/node@24.10.4)(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12)):
     dependencies:
-      '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12))
-      '@vitest/pretty-format': 4.1.10
-      '@vitest/runner': 4.1.10
-      '@vitest/snapshot': 4.1.10
-      '@vitest/spy': 4.1.10
-      '@vitest/utils': 4.1.10
+      '@vitest/expect': 4.1.11
+      '@vitest/mocker': 4.1.11(vite@7.3.1(@types/node@24.10.4)(tsx@4.23.12))
+      '@vitest/pretty-format': 4.1.11
+      '@vitest/runner': 4.1.11
+      '@vitest/snapshot': 4.1.11
+      '@vitest/spy': 4.1.11
+      '@vitest/utils': 4.1.11
       es-module-lexer: 2.0.0
       expect-type: 1.3.0
       magic-string: 0.30.21

@@ -16,6 +16,7 @@
     "clean": "rimraf -g \"*.tsbuildinfo\" \"dist\"",
     "clean:node": "rimraf -g \"*-lock*\" \"node_modules\"",
     "update": "npm-check-updates -u -x discord.js,got,@types/node,pnpm",
+    "postinstall": "node scripts/build-sqlite.js",
     "prepare": "husky && effect-tsgo patch"
   },
   "dependencies": {

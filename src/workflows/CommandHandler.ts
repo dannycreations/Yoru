@@ -20,15 +20,16 @@ export interface CommandHandler {
 
 export class CommandHandlerTag extends Context.Tag('@workflows/CommandHandler')<CommandHandlerTag, CommandHandler>() {}
 
-const commandMap: ReadonlyRecord.ReadonlyRecord<string, (message: Message<true>, args: ReadonlyArray<string>) => Effect.Effect<void, unknown, any>> =
-  {
-    ping: pingCommand,
-    p: pingCommand,
-    check: checkCommand,
-    c: checkCommand,
-    link: linkCommand,
-    l: linkCommand,
-  } as const;
+type Command = (message: Message<true>, args: ReadonlyArray<string>) => Effect.Effect<void, unknown, any>;
+
+const commandMap: ReadonlyRecord.ReadonlyRecord<string, Command> = {
+  ping: pingCommand,
+  p: pingCommand,
+  check: checkCommand,
+  c: checkCommand,
+  link: linkCommand,
+  l: linkCommand,
+};
 
 export const CommandHandler = Effect.gen(function* () {
   const configStore = yield* ConfigStoreTag;
@@ -42,11 +43,9 @@ export const CommandHandler = Effect.gen(function* () {
         return;
       }
 
-      const parts = message.content.slice(prefix.length).trim().split(/\s+/);
-      const commandName = parts.shift()?.toLowerCase();
-      const args = parts as ReadonlyArray<string>;
+      const [rawName, ...args] = message.content.slice(prefix.length).trim().split(/\s+/);
+      const command = rawName ? commandMap[rawName.toLowerCase()] : undefined;
 
-      const command = commandName ? commandMap[commandName] : undefined;
       if (!command) {
         return;
       }

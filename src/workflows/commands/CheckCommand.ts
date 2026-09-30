@@ -1,6 +1,6 @@
 import { Util } from 'clashofclans.js';
 import { EmbedBuilder } from 'discord.js';
-import { Array, Effect, Either, Option, Record } from 'effect';
+import { Array, Effect, Option, Record } from 'effect';
 
 import { EmojiTag } from '../../core/emojis.js';
 import { ConfigStoreTag } from '../../core/schemas.js';
@@ -11,6 +11,7 @@ import { getGuildMember, getSplitFields, parseMentionOrSnowflake, replyMessage }
 import { ClashClientTag } from '../../services/ClashService.js';
 import { MemberHandlerTag } from '../MemberHandler.js';
 
+import type { ClanMember } from 'clashofclans.js';
 import type { Message } from 'discord.js';
 import type { AccountTable } from '../../database/schema.js';
 
@@ -31,41 +32,42 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
       .setDescription(`Joined <t:${Math.floor(member.joinedTimestamp! / 1000)}:R>`)
       .setThumbnail(member.user.displayAvatarURL());
 
-    const results = yield* Effect.all(
-      Array.map(accounts, (account) =>
-        (account.bannedAt
-          ? Effect.succeed({ tag: account.tag, banned: true as const, player: Option.none() })
-          : memberHandler.getPlayer(account)
-        ).pipe(Effect.either),
-      ),
-      { concurrency: 'inherit' },
-    );
+    const bannedField = (count: number, tag: string) => ({ name: `${count}. ${emoji.townhalls[0]} ${tag}`, value: '⛔ Has been banned!' });
 
     const fields = yield* Effect.all(
-      Array.map(results, (result, i) =>
+      Array.map(accounts, (account, index) =>
         Effect.gen(function* () {
-          if (Either.isLeft(result)) return Option.none();
-          const data = result.right;
-          const count = i + 1;
+          const count = index + 1;
 
-          if (data.banned) {
-            return Option.some({
-              name: `${count}. ${emoji.townhalls[0]} ${data.tag}`,
-              value: '⛔ Has been banned!',
-            });
+          // An account already flagged as banned is reported without asking the API.
+          if (account.bannedAt) {
+            return Option.some(bannedField(count, account.tag));
           }
 
-          if (Option.isNone(data.player)) return Option.none();
-          const player = data.player.value;
-          const field = yield* formatPlayerField(player);
-          return Option.some({
-            name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`,
-            value: field,
-          });
+          const resultOpt = yield* memberHandler.getPlayer(account).pipe(Effect.option);
+
+          if (Option.isNone(resultOpt)) {
+            return Option.none();
+          }
+
+          const result = resultOpt.value;
+
+          if (result.banned) {
+            return Option.some(bannedField(count, result.tag));
+          }
+
+          if (Option.isNone(result.player)) {
+            return Option.none();
+          }
+
+          const player = result.player.value;
+          const value = yield* formatPlayerField(player);
+
+          return Option.some({ name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`, value });
         }),
       ),
       { concurrency: 'inherit' },
-    ).pipe(Effect.map((arr) => Array.flatten(Array.map(arr, (o) => (Option.isSome(o) ? [o.value] : [])))));
+    ).pipe(Effect.map((results) => Array.filterMap(results, (field) => field)));
 
     if (fields.length > 0) {
       embed.addFields([...fields]);
@@ -172,21 +174,14 @@ const checkMembers = (message: Message<true>, page = 1) =>
     );
     const accountMap = new Map(rows.map((r) => [r.tag, r]));
 
-    const memberResults = yield* Effect.all(
-      members.map((member) =>
-        Effect.gen(function* () {
-          const field = `**${member.name}** ${member.tag}\n`;
-          const account = accountMap.get(member.tag);
-          if (!account) return { type: 'unknown' as const, field };
+    const memberResults = members.map((member: ClanMember) => {
+      const field = `**${member.name}** ${member.tag}\n`;
+      const account = accountMap.get(member.tag);
+      if (!account) return { type: 'unknown' as const, field };
 
-          const cachedMember = message.guild.members.cache.get(account.ownerId);
-          if (cachedMember) return { type: 'guild' as const, ownerId: account.ownerId, field };
-
-          return { type: 'fetch' as const, ownerId: account.ownerId, field };
-        }),
-      ),
-      { concurrency: 'inherit' },
-    );
+      const ownerId = account.ownerId;
+      return message.guild.members.cache.get(ownerId) ? { type: 'guild' as const, ownerId, field } : { type: 'fetch' as const, ownerId, field };
+    });
 
     const membersToFetch = [...new Set(Array.filterMap(memberResults, (r) => (r.type === 'fetch' ? Option.some(r.ownerId) : Option.none())))];
 
@@ -281,7 +276,7 @@ export const checkCommand = (message: Message<true>, args: ReadonlyArray<string>
     const config = yield* configStore.get;
     const isOwner = Array.contains(config.ownerIds, message.author.id);
 
-    if (isOwner || Array.contains(tag, '<@')) {
+    if (isOwner || tag.includes('<@')) {
       return yield* checkUser(message, mentionId, page);
     }
 

@@ -1,45 +1,41 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { HttpError } from 'clashofclans.js';
-import { Effect, Option } from 'effect';
+import { Effect } from 'effect';
 
 import { isClashError } from '../services/ClashService.js';
 
 import type { Message } from 'discord.js';
 
-const getErrorMessage = (error: unknown): Option.Option<string> => {
+const getErrorMessage = (error: unknown): string | undefined => {
   const cause = isClashError(error) ? error.cause : error;
 
   if (cause instanceof HttpError) {
     if (cause.reason === 'notFound' && cause.path.includes('/players/')) {
-      return Option.some('Error, Player tag not found!');
+      return 'Error, Player tag not found!';
     }
 
-    return Option.some(cause.message);
+    return cause.message;
   }
 
   if (isClashError(error)) {
-    return Option.some(error.message);
+    return error.message;
   }
 
   if (isErrorLike<{ readonly message: string }>(error)) {
-    return Option.some(error.message);
+    return error.message;
   }
 
-  return Option.none();
+  return undefined;
 };
 
 export const replyWithError = (message: Message<true>, error: unknown): Effect.Effect<void> =>
   Effect.gen(function* () {
     const errorMessage = getErrorMessage(error);
 
-    const reply = Option.match(errorMessage, {
-      onNone: () => `> ${message.content}\nUnhandled Rejection, please contact owner!`,
-      onSome: (msg) => `> ${message.content}\n${msg}`,
-    });
-
-    if (Option.isNone(errorMessage)) {
+    if (errorMessage === undefined) {
       yield* Effect.logError('Unexpected error encountered', error);
     }
 
+    const reply = `> ${message.content}\n${errorMessage ?? 'Unhandled Rejection, please contact owner!'}`;
     yield* Effect.tryPromise(() => message.reply(reply)).pipe(Effect.ignore);
   }).pipe(Effect.asVoid);

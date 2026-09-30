@@ -11,8 +11,11 @@ export const replyMessage = (message: Message<true>, content: string | MessagePa
 export const getSplitFields = (
   name: string,
   list: readonly string[],
-  separator = ' ',
-): ReadonlyArray<{ readonly name: string; readonly value: string }> => {
+): ReadonlyArray<{
+  readonly name: string;
+  readonly value: string;
+}> => {
+  const separator = ' ';
   const fields: { name: string; value: string }[] = [];
   let currentValue = '';
   let count = 0;
@@ -39,11 +42,10 @@ export const getSplitFields = (
   return fields;
 };
 
-export const removeMemberRoles = (member: GuildMember, filter: (role: Role) => boolean): Effect.Effect<void, Error> =>
-  Effect.suspend(() => {
-    const roles = member.roles.cache.filter(filter);
-    return roles.size > 0 ? Effect.tryPromise(() => member.roles.remove(roles)).pipe(Effect.asVoid) : Effect.void;
-  });
+export const removeMemberRoles = (member: GuildMember, filter: (role: Role) => boolean): Effect.Effect<void, Error> => {
+  const roles = member.roles.cache.filter(filter);
+  return roles.size > 0 ? Effect.tryPromise(() => member.roles.remove(roles)).pipe(Effect.asVoid) : Effect.void;
+};
 
 export const parseMentionOrSnowflake = (input?: string | null): string | null => {
   if (!input) return null;

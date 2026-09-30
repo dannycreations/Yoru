@@ -1,11 +1,11 @@
-import { Context, Effect, Layer, Option } from 'effect';
+import { Array, Context, Effect, Layer, Option } from 'effect';
 
 import { MemberRoles, RegisterRoles } from '../core/constants.js';
 import { ConfigStoreTag, SessionStoreTag } from '../core/schemas.js';
 import { AccountDatabaseTag } from '../database/index.js';
 import { getPlayerNickname } from '../helpers/ClashHelper.js';
 import { removeMemberRoles } from '../helpers/DiscordHelper.js';
-import { isClanRole, isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/RoleHelper.js';
+import { isMemberRole, isModeratorRole, isRegisterRole } from '../helpers/RoleHelper.js';
 import { ClashClientTag, isClashError } from '../services/ClashService.js';
 import { SqliteClientTag } from '../structures/database/index.js';
 
@@ -60,19 +60,16 @@ export const MemberHandlerLayer = Layer.effect(
         }
 
         const clanCache = yield* clash.getClans();
-        for (const account of otherAccounts) {
-          for (const clan of clanCache.values()) {
-            if (clan.members.find((m) => m.tag === account.tag)) {
-              return yield* clash.getPlayer(account.tag).pipe(
-                Effect.map(Option.some),
-                Effect.orElseSucceed(() => Option.none<Player>()),
-              );
-            }
-          }
+        const clanMembers = new Set(Array.fromIterable(clanCache.values()).flatMap((clan) => Array.map(clan.members, (member) => member.tag)));
+
+        const activeAccount = otherAccounts.find((account) => clanMembers.has(account.tag));
+
+        if (!activeAccount) {
+          return Option.none();
         }
 
-        return Option.none();
-      }).pipe(Effect.catchAllCause(() => Effect.succeed(Option.none())));
+        return yield* clash.getPlayer(activeAccount.tag).pipe(Effect.asSome);
+      }).pipe(Effect.catchAllCause(() => Effect.succeedNone));
 
     const updatePresence = (member: GuildMember, playerOpt: Option.Option<Player>) =>
       Effect.gen(function* () {
@@ -85,7 +82,8 @@ export const MemberHandlerLayer = Layer.effect(
         const session = yield* sessionStore.get;
 
         if (Option.isNone(playerOpt)) {
-          yield* removeMemberRoles(member, (r) => isMemberRole(r) || isClanRole(r, session.clans ?? []));
+          const clanRoleNames = new Set(Array.map(session.clans ?? [], (clan) => clan.name));
+          yield* removeMemberRoles(member, (r) => isMemberRole(r) || clanRoleNames.has(r.name));
 
           const reapplyRole = guild.roles.cache.find((r) => r.name === RegisterRoles.Reapply);
           if (reapplyRole) {

@@ -26,27 +26,29 @@ const linkedTag = (guild: Guild, ownerId: string, player: Player) =>
 
 const linkQueueRef = Ref.unsafeMake(new Set<string>());
 
+const enqueue = (userId: string): Effect.Effect<boolean> => Ref.modify(linkQueueRef, (queue) => [queue.has(userId), new Set(queue).add(userId)]);
+
+const dequeue = (userId: string): Effect.Effect<void> =>
+  Ref.update(linkQueueRef, (queue) => {
+    const next = new Set(queue);
+    next.delete(userId);
+    return next;
+  });
+
 export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    const linkQueue = yield* Ref.get(linkQueueRef);
-    const clash = yield* ClashClientTag;
-    const accountDatabase = yield* AccountDatabaseTag;
-    const userDatabase = yield* UserDatabaseTag;
     const tag = args[0];
-    const mention = args[1];
 
     if (tag === undefined || !Util.isValidTag(tag)) {
       return yield* replyMessage(message, `> ${message.content}\nError, Player tag not valid!`);
     }
 
-    if (linkQueue.has(message.author.id)) {
+    if (!(yield* enqueue(message.author.id))) {
       return yield* replyMessage(message, `> ${message.content}\nYou must complete previous operation before create new one.`);
     }
 
-    yield* Ref.update(linkQueueRef, (set) => new Set(set).add(message.author.id));
-
     yield* Effect.gen(function* () {
-      const mentionId = parseMentionOrSnowflake(mention);
+      const mentionId = parseMentionOrSnowflake(args[1]);
       if (!mentionId) {
         yield* replyMessage(message, 'Please mention a user to link.');
         return;
@@ -59,6 +61,9 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
         return;
       }
 
+      const clash = yield* ClashClientTag;
+      const accountDatabase = yield* AccountDatabaseTag;
+      const userDatabase = yield* UserDatabaseTag;
       const player = yield* clash.getPlayer(tag);
       const embed = yield* createPlayerEmbed(player);
       const titleField = `${yield* formatPlayerStats(player)}\n`;
@@ -103,7 +108,9 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
           onNone: () => Effect.void,
           onSome: (user) => accountDatabase.findOneAndUpdate({ tag }, { tag, userId: user.id }, { upsert: true }),
         });
+
         yield* linkedTag(message.guild, mentionId, player);
+
         const member = message.guild.members.cache.get(mentionId);
         embed.setDescription(`${titleField}Linked to **${member?.user.tag ?? mentionId}**.`);
       } else {
@@ -113,14 +120,5 @@ export const linkCommand = (message: Message<true>, args: ReadonlyArray<string>)
       }
 
       yield* Effect.tryPromise(() => msg.edit({ embeds: [embed] }));
-    }).pipe(
-      Effect.ensuring(
-        Ref.update(linkQueueRef, (set) => {
-          const next = new Set(set);
-          next.delete(message.author.id);
-          return next;
-        }),
-      ),
-      Effect.asVoid,
-    );
+    }).pipe(Effect.ensuring(dequeue(message.author.id)), Effect.asVoid);
   }).pipe(Effect.asVoid);

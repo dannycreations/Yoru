@@ -1,6 +1,5 @@
 import { Array, Effect, Option, PubSub, Queue } from 'effect';
 
-import { ClientEvents } from '../../core/constants.js';
 import { SessionStoreTag } from '../../core/schemas.js';
 import { AccountDatabaseTag } from '../../database/index.js';
 import { userTable } from '../../database/schema.js';
@@ -21,7 +20,6 @@ export const createClanMemberListener = () =>
     const accountDatabase = yield* AccountDatabaseTag;
 
     const leavingQueue = yield* Queue.unbounded<ClanMemberTag>();
-    const updateSemaphore = yield* Effect.makeSemaphore(1);
 
     const handleMemberLeave = (player: ClanMemberTag) =>
       Effect.gen(function* () {
@@ -63,52 +61,46 @@ export const createClanMemberListener = () =>
       });
 
     yield* Effect.forever(
-      Effect.gen(function* () {
-        const player = yield* Queue.take(leavingQueue);
-        yield* handleMemberLeave(player).pipe(
-          Effect.catchAllCause((cause) => Effect.logError(`Error processing leaving member ${player.tag}`, cause)),
-        );
-      }),
+      Queue.take(leavingQueue).pipe(
+        Effect.flatMap((player) =>
+          handleMemberLeave(player).pipe(Effect.catchAllCause((cause) => Effect.logError(`Error processing leaving member ${player.tag}`, cause))),
+        ),
+      ),
     ).pipe(Effect.forkScoped);
 
+    // Events are handled one at a time, so a clan snapshot and the leaver list stay in step.
     const onClanMemberUpdate = (oldClan: ClanData, newClan: ClanData) =>
-      updateSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const session = yield* sessionStore.get;
-          const clans = session.clans ?? [];
-          if (!Array.some(clans, (r) => r.tag === oldClan.tag)) {
-            yield* sessionStore.update((s) => ({
-              ...s,
-              clans: Array.append(s.clans ?? [], { name: oldClan.name, tag: oldClan.tag }),
-            }));
-          }
-
-          const newMemberTags = new Set(newClan.members.map((m) => m.tag));
-          const leftMembers = oldClan.members.filter((m: ClanMemberTag) => !newMemberTags.has(m.tag));
-
-          if (leftMembers.length === 0) {
-            return;
-          }
-
-          const currentSession = yield* sessionStore.get;
-          const currentPending = new Set(currentSession.leavers ?? []);
-          const toAdd = leftMembers.filter((m) => !currentPending.has(m.tag));
-
-          if (toAdd.length === 0) {
-            return;
-          }
-
-          yield* Effect.all(
-            toAdd.map((m) => Queue.offer(leavingQueue, m)),
-            { concurrency: 'inherit' },
-          );
-
+      Effect.gen(function* () {
+        const session = yield* sessionStore.get;
+        const clans = session.clans ?? [];
+        if (!Array.some(clans, (r) => r.tag === oldClan.tag)) {
           yield* sessionStore.update((s) => ({
             ...s,
-            leavers: [...(s.leavers ?? []), ...toAdd.map((m) => m.tag)],
+            clans: Array.append(s.clans ?? [], { name: oldClan.name, tag: oldClan.tag }),
           }));
-        }),
-      );
+        }
+
+        const newMemberTags = new Set(newClan.members.map((m) => m.tag));
+        const leftMembers = oldClan.members.filter((m: ClanMemberTag) => !newMemberTags.has(m.tag));
+
+        if (leftMembers.length === 0) {
+          return;
+        }
+
+        const pending = new Set(session.leavers ?? []);
+        const toAdd = leftMembers.filter((m) => !pending.has(m.tag));
+
+        if (toAdd.length === 0) {
+          return;
+        }
+
+        yield* Queue.offerAll(leavingQueue, toAdd);
+
+        yield* sessionStore.update((s) => ({
+          ...s,
+          leavers: [...(s.leavers ?? []), ...toAdd.map((m) => m.tag)],
+        }));
+      });
 
     yield* PubSub.subscribe(events).pipe(
       Effect.flatMap((queue) =>
@@ -118,15 +110,9 @@ export const createClanMemberListener = () =>
             yield* Effect.forEach(
               events,
               (event) =>
-                Effect.gen(function* () {
-                  if (event._tag !== ClientEvents.ClanMember) {
-                    return;
-                  }
-
-                  yield* onClanMemberUpdate(event.oldClan, event.newClan).pipe(
-                    Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
-                  );
-                }),
+                onClanMemberUpdate(event.oldClan, event.newClan).pipe(
+                  Effect.catchAllCause((cause) => Effect.logError('Error in ClanMemberUpdate handler', cause)),
+                ),
               { concurrency: 'inherit' },
             );
           }),

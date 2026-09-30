@@ -161,6 +161,16 @@ const isOperatorFilter = (value: object): boolean => {
   return false;
 };
 
+const hasComplexFilter = (filter: object): boolean => {
+  for (const key in filter) {
+    if (key.charCodeAt(0) === 36) return true;
+
+    const value = (filter as Record<string, unknown>)[key];
+    if (value !== null && typeof value === 'object' && isOperatorFilter(value)) return true;
+  }
+  return false;
+};
+
 const buildWhereComparison = (columns: Record<string, SQL>, key: string, value: unknown, acc: SQL[]): void => {
   const column = columns[key];
 
@@ -618,17 +628,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     } = {},
   ) =>
     Effect.gen(function* () {
-      const isComplexFilter = (f: Record<string, unknown>): boolean => {
-        for (const k in f) {
-          if (k.charCodeAt(0) === 36) return true;
-
-          const v = f[k];
-          if (v !== null && typeof v === 'object' && isOperatorFilter(v)) return true;
-        }
-        return false;
-      };
-
-      if (options.upsert && isComplexFilter(filter as Record<string, unknown>)) {
+      if (options.upsert && hasComplexFilter(filter as Record<string, unknown>)) {
         return yield* new SqliteClientError({
           message: 'Cannot use complex filter when upserting',
         });
@@ -723,83 +723,15 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
     execute(db, 'Insert operation failed', (trace) => {
       const records = Array.isArray(record) ? record : [record];
       const values: Insert[] = [];
-      let defaultRows = 0;
-      for (let i = 0, len = records.length; i < len; i++) {
-        const rec = records[i] as Record<string, unknown> | undefined;
-        if (rec == null) continue;
 
-        defaultRows++;
-
-        const newRec: Record<string, unknown> = {};
-        for (const key in rec) {
-          if (key === 'id') continue;
-          newRec[key] = rec[key];
-        }
-
-        if (hasKeys(newRec)) values.push(newRec as Insert);
+      for (const rec of records) {
+        // A payload that carries no settable column keeps its slot: drizzle then
+        // emits the declared column defaults for that row.
+        if (rec != null) values.push(omitUndefinedId(rec) as Insert);
       }
 
       if (values.length === 0) {
-        if (defaultRows === 0) {
-          return [];
-        }
-
-        const conflictOpt = options.conflict;
-        let statement = sql`insert into ${table} default values`;
-        if (hasKeys(conflictOpt)) {
-          const targetKeys = (conflictOpt.target as ReadonlyArray<string> | undefined) ?? [];
-          const targetColumns = targetKeys.filter((k) => tableColumns[k]).map((k) => sql.identifier(k));
-          const resolution = conflictOpt.resolution;
-
-          if (resolution === 'ignore') {
-            statement =
-              targetColumns.length > 0
-                ? sql`${statement} on conflict (${sql.join(targetColumns)}) do nothing`
-                : sql`${statement} on conflict do nothing`;
-          } else if (targetColumns.length === 0) {
-            throw new Error(`Conflict resolution "${resolution}" requires at least one valid target column`);
-          } else if (!hasKeys(conflictOpt.set)) {
-            throw new Error(`Conflict resolution "${resolution}" with an empty record requires an explicit conflict "set"`);
-          } else {
-            const setPairs: Array<{ lhs: SQL; rhs: SQL }> = [];
-            const explicitSet = conflictOpt.set as Record<string, unknown>;
-            for (const key in explicitSet) {
-              if (key === 'id' || explicitSet[key] === undefined) continue;
-              const col = tableColumns[key];
-              if (!col) continue;
-              setPairs.push({ lhs: col, rhs: sql`${explicitSet[key]}` });
-            }
-
-            if (setPairs.length === 0) {
-              throw new Error(`Conflict resolution "${resolution}" requires at least one valid column to set`);
-            }
-
-            const action =
-              resolution === 'merge'
-                ? sql.join(
-                    setPairs.map((p) => sql`${p.lhs} = coalesce(${p.lhs}, ${p.rhs})`),
-                    sql`, `,
-                  )
-                : sql.join(
-                    setPairs.map((p) => sql`${p.lhs} = ${p.rhs}`),
-                    sql`, `,
-                  );
-
-            statement = sql`${statement} on conflict (${sql.join(targetColumns)}) do update set ${action}`;
-          }
-        }
-
-        const select = buildSelectClause(tableColumns, options.select);
-        statement = select ? sql`${statement} returning ${sql.join(Object.values(select), sql`, `)}` : sql`${statement} returning *`;
-
-        const out: Array<ReturnAlias<A, B, S>> = [];
-        for (let i = 0; i < defaultRows; i++) {
-          const row = db.get<Record<string, unknown>>(statement as never);
-          if (row) out.push(row as ReturnAlias<A, B, S>);
-        }
-
-        trace.value = () => statement;
-        return out;
+        return [];
       }
 
       const query = db.insert(table).values(values);

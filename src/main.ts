@@ -4,9 +4,8 @@ import { Effect, Layer, Schedule } from 'effect';
 
 import { EmojiLayer } from './core/emojis.js';
 import { ConfigStoreLayer, ConfigStoreTag, EnvLayer, SessionStoreLayer } from './core/schemas.js';
-import { AccountDatabaseLayer, SqliteConfigLayer, UserDatabaseLayer } from './database/index.js';
+import { DatabaseLayer } from './database/index.js';
 import { ClashClientLayer, ClashClientTag, ClashConfigLayer } from './services/ClashService.js';
-import { SqliteClientLayer } from './structures/database/index.js';
 import { HttpClientLayer } from './structures/HttpClient.js';
 import { LoggerClientLayer } from './structures/LoggerClient.js';
 import { cycleUntilMidnight, runMainCycle } from './structures/RuntimeClient.js';
@@ -36,12 +35,7 @@ const program = Effect.gen(function* () {
 
 const logger = LoggerClientLayer();
 
-const BaseLayer = Layer.mergeAll(EnvLayer, EmojiLayer, HttpClientLayer, ConfigStoreLayer, SessionStoreLayer, logger).pipe(
-  Layer.provideMerge(UserDatabaseLayer),
-  Layer.provideMerge(AccountDatabaseLayer),
-  Layer.provideMerge(SqliteClientLayer),
-  Layer.provideMerge(SqliteConfigLayer),
-);
+const BaseLayer = Layer.mergeAll(EnvLayer, EmojiLayer, HttpClientLayer, ConfigStoreLayer, SessionStoreLayer, DatabaseLayer, logger);
 
 const MainLayer = EventHandlerLayer.pipe(
   Layer.provideMerge(DiscordHandlerLayer),

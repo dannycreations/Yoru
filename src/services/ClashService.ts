@@ -51,6 +51,35 @@ export interface ClashConfig {
 
 export class ClashConfigTag extends Context.Tag('@services/ClashConfig')<ClashConfigTag, ClashConfig>() {}
 
+const hasClanChanged = (oldClan: Clan, newClan: Clan): boolean => {
+  if (oldClan.memberCount !== newClan.memberCount) {
+    return true;
+  }
+
+  const oldMembers = oldClan.members;
+  const newMembers = newClan.members;
+
+  if (oldMembers.length !== newMembers.length) {
+    return true;
+  }
+
+  return oldMembers.some((member, index) => {
+    const newMember = newMembers[index];
+    return !newMember || member.tag !== newMember.tag || member.role !== newMember.role;
+  });
+};
+
+interface ClanUpdate {
+  readonly tag: string;
+  readonly newClan: Clan;
+  readonly oldClan: Option.Option<Clan>;
+}
+
+const toClanUpdate = (tag: string, newClan: Clan, cache: ReadonlyMap<string, Clan>): Option.Option<ClanUpdate> => {
+  const oldClan = Option.fromNullable(cache.get(tag));
+  return Option.isNone(oldClan) || hasClanChanged(oldClan.value, newClan) ? Option.some({ tag, newClan, oldClan }) : Option.none();
+};
+
 export interface ClashClient {
   readonly client: Client;
   readonly events: PubSub.PubSub<ClashEvent>;
@@ -266,36 +295,11 @@ const makeClashClient = Effect.gen(function* () {
       tags,
       (tag) =>
         getClan(tag).pipe(
-          Effect.map((newClan) => {
-            const oldClan = cache.get(tag);
-            if (!oldClan) {
-              return { tag, newClan, oldClan, changed: true };
-            }
-
-            if (oldClan.memberCount !== newClan.memberCount) {
-              return { tag, newClan, oldClan, changed: true };
-            }
-
-            const oldMembers = oldClan.members;
-            const newMembers = newClan.members;
-
-            const isIdentical =
-              oldMembers.length === newMembers.length &&
-              oldMembers.every((m, i) => {
-                const nm = newMembers[i];
-                return nm && m.tag === nm.tag && m.role === nm.role;
-              });
-
-            if (!isIdentical) {
-              return { tag, newClan, oldClan, changed: true };
-            }
-
-            return { tag, newClan, changed: false };
-          }),
           Effect.option,
+          Effect.map((clanOpt) => Option.flatMap(clanOpt, (newClan) => toClanUpdate(tag, newClan, cache))),
         ),
       { concurrency: 'inherit' },
-    ).pipe(Effect.map((arr) => Array.filterMap(arr, (update) => update)));
+    ).pipe(Effect.map((results) => Array.filterMap(results, (update) => update)));
 
     if (updates.length === 0) {
       return;
@@ -303,8 +307,8 @@ const makeClashClient = Effect.gen(function* () {
 
     const nextCache = yield* Ref.updateAndGet(clanCache, (prev) => {
       const next = new Map(prev);
-      for (const update of updates) {
-        next.set(update.tag, update.newClan);
+      for (const { tag, newClan } of updates) {
+        next.set(tag, newClan);
       }
       return next;
     });
@@ -313,21 +317,14 @@ const makeClashClient = Effect.gen(function* () {
 
     yield* Effect.forEach(
       updates,
-      (u) => {
-        if (!u.changed) {
-          return Effect.void;
-        }
-
-        if (!u.oldClan) {
-          return Effect.void;
-        }
-
-        return PubSub.publish(events, {
-          _tag: ClientEvents.ClanMember,
-          oldClan: u.oldClan,
-          newClan: u.newClan,
-        });
-      },
+      ({ oldClan, newClan }) =>
+        Option.isNone(oldClan)
+          ? Effect.void
+          : PubSub.publish(events, {
+              _tag: ClientEvents.ClanMember,
+              oldClan: oldClan.value,
+              newClan,
+            }),
       { concurrency: 'inherit' },
     );
   }).pipe(

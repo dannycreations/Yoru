@@ -26,7 +26,7 @@ const linkedTag = (guild: Guild, ownerId: string, player: Player) =>
 
 const linkQueueRef = Ref.unsafeMake(new Set<string>());
 
-const enqueue = (userId: string): Effect.Effect<boolean> => Ref.modify(linkQueueRef, (queue) => [queue.has(userId), new Set(queue).add(userId)]);
+const enqueue = (userId: string): Effect.Effect<boolean> => Ref.modify(linkQueueRef, (queue) => [!queue.has(userId), new Set(queue).add(userId)]);
 
 const dequeue = (userId: string): Effect.Effect<void> =>
   Ref.update(linkQueueRef, (queue) => {

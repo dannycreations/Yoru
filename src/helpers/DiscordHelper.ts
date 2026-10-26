@@ -1,5 +1,5 @@
 import { SnowflakeRegex, UserOrMemberMentionRegex } from '@sapphire/discord.js-utilities';
-import { Effect, Option } from 'effect';
+import { Effect, Fiber, Option, Schedule } from 'effect';
 
 import { DiscordHandlerTag } from '../workflows/DiscordHandler.js';
 
@@ -7,6 +7,16 @@ import type { Guild, GuildMember, Message, MessagePayload, MessageReplyOptions, 
 
 export const replyMessage = (message: Message<true>, content: string | MessagePayload | MessageReplyOptions) =>
   Effect.tryPromise(() => message.reply(content)).pipe(Effect.asVoid);
+
+export const withTyping = <A, E, R>(message: Message<true>, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.gen(function* () {
+    const sendTyping = Effect.tryPromise(() => message.channel.sendTyping()).pipe(Effect.ignore, Effect.asVoid);
+
+    // Discord clears the typing indicator after ~10 seconds, so it is refreshed while the effect runs.
+    const fiber = yield* Effect.fork(sendTyping.pipe(Effect.repeat(Schedule.spaced('8 seconds'))));
+
+    return yield* effect.pipe(Effect.ensuring(Fiber.interrupt(fiber)));
+  });
 
 export const getSplitFields = (
   name: string,

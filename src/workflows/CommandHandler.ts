@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Record as ReadonlyRecord } from 'effect';
 
 import { ConfigStoreTag } from '../core/schemas.js';
+import { withTyping } from '../helpers/DiscordHelper.js';
 import { replyWithError } from '../helpers/ErrorHelper.js';
 import { ClashClientTag } from '../services/ClashService.js';
 import { SqliteClientTag } from '../structures/database/index.js';
@@ -50,7 +51,7 @@ export const CommandHandler = Effect.gen(function* () {
         return;
       }
 
-      yield* command(message, args).pipe(
+      yield* withTyping(message, command(message, args)).pipe(
         Effect.catchAll((error) => replyWithError(message, error)),
         Effect.catchAllCause((cause) => Effect.logError('Command execution failed', cause)),
       );

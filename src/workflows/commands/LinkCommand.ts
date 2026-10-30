@@ -24,7 +24,7 @@ const linkedTag = (guild: Guild, ownerId: string, player: Player) =>
     yield* memberHandler.updatePresence(memberOpt.value, Option.some(player));
   });
 
-const linkQueueRef = Ref.unsafeMake(new Set<string>());
+const linkQueueRef = Ref.makeUnsafe(new Set<string>());
 
 const enqueue = (userId: string): Effect.Effect<boolean> => Ref.modify(linkQueueRef, (queue) => [!queue.has(userId), new Set(queue).add(userId)]);
 

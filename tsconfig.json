@@ -6,7 +6,8 @@
       {
         "name": "@effect/language-service",
         "diagnosticSeverity": {
-          "preferSchemaOverJson": "off"
+          "preferSchemaOverJson": "off",
+          "unstableApiUsage": "off"
         }
       }
     ],

@@ -15,7 +15,7 @@ const schema = './src/database/schema.ts';
 export const SqliteConfigLayer = Layer.effect(
   SqliteConfigTag,
   Effect.gen(function* () {
-    const url = yield* Config.string('SQLITE_URL').pipe(Config.withDefault('sessions/sqlite.db'));
+    const url = yield* Config.String('SQLITE_URL').pipe(Config.withDefault('sessions/sqlite.db'));
     return {
       out: isDrizzleKit ? out : resolve(projectDir, out),
       schema: isDrizzleKit ? schema : resolve(projectDir, schema),
@@ -24,7 +24,7 @@ export const SqliteConfigLayer = Layer.effect(
   }),
 );
 
-const makeDatabaseLayer = <I, T extends Table>(tag: Context.Tag<I, Adapter<T>>, table: T): Layer.Layer<I, never, SqliteClientTag> =>
+const makeDatabaseLayer = <I, T extends Table>(tag: Context.Service<I, Adapter<T>>, table: T): Layer.Layer<I, never, SqliteClientTag> =>
   Layer.effect(
     tag,
     Effect.gen(function* () {
@@ -32,11 +32,11 @@ const makeDatabaseLayer = <I, T extends Table>(tag: Context.Tag<I, Adapter<T>>, 
     }),
   );
 
-export class UserDatabaseTag extends Context.Tag('@database/User')<UserDatabaseTag, Adapter<typeof userTable>>() {}
+export class UserDatabaseTag extends Context.Service<UserDatabaseTag, Adapter<typeof userTable>>()('@database/User') {}
 
 export const UserDatabaseLayer = makeDatabaseLayer(UserDatabaseTag, userTable);
 
-export class AccountDatabaseTag extends Context.Tag('@database/Account')<AccountDatabaseTag, Adapter<typeof accountTable>>() {}
+export class AccountDatabaseTag extends Context.Service<AccountDatabaseTag, Adapter<typeof accountTable>>()('@database/Account') {}
 
 export const AccountDatabaseLayer = makeDatabaseLayer(AccountDatabaseTag, accountTable);
 

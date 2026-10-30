@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { it as itBase } from '@effect/vitest';
+import { effect, it as itBase } from '@effect/vitest';
 import { sql } from 'drizzle-orm';
 import { blob, integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 import { Cause, Data, Effect, Exit, Layer, Option } from 'effect';
@@ -20,9 +20,8 @@ import {
 } from './index.js';
 
 const it = Object.assign((...args: Parameters<typeof itBase>) => itBase(...args), itBase) as any;
-
 it.effect = (name: string, self: () => Effect.Effect<void, never>, timeout?: number) =>
-  itBase.effect(name, () => Effect.provideService(self(), SqliteClientTag, db), timeout);
+  effect(name, () => Effect.provideService(self(), SqliteClientTag, db), timeout);
 
 const officesTable = sqliteTable('offices', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -819,11 +818,11 @@ describe('Filtering & Predicates', () => {
       Effect.gen(function* () {
         const direct = yield* Effect.exit(userAdapter.find({ nope: 'x' } as never));
         assert(Exit.isFailure(direct));
-        expect((Option.getOrThrow(Cause.failureOption(direct.cause)) as SqliteClientError).message).toMatch(/Unknown column "nope"/);
+        expect((Option.getOrThrow(Cause.findErrorOption(direct.cause)) as SqliteClientError).message).toMatch(/Unknown column "nope"/);
 
         const negated = yield* Effect.exit(userAdapter.find({ $not: { nope: 'x' } } as never));
         assert(Exit.isFailure(negated));
-        expect((Option.getOrThrow(Cause.failureOption(negated.cause)) as SqliteClientError).message).toMatch(/Unknown column "nope"/);
+        expect((Option.getOrThrow(Cause.findErrorOption(negated.cause)) as SqliteClientError).message).toMatch(/Unknown column "nope"/);
       }),
     );
 
@@ -832,7 +831,7 @@ describe('Filtering & Predicates', () => {
         for (const key of ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__']) {
           const exit = yield* Effect.exit(userAdapter.find({ [key]: 'x' } as never));
           assert(Exit.isFailure(exit));
-          const failure = Cause.failureOption(exit.cause);
+          const failure = Cause.findErrorOption(exit.cause);
           assert(Option.isSome(failure));
           expect(failure.value).toBeInstanceOf(SqliteClientError);
           expect((failure.value as SqliteClientError).message).toMatch(/Unknown column/);
@@ -840,7 +839,7 @@ describe('Filtering & Predicates', () => {
 
         const orderExit = yield* Effect.exit(userAdapter.find({}, { order: { constructor: 'asc' } as never }));
         assert(Exit.isFailure(orderExit));
-        expect((Option.getOrThrow(Cause.failureOption(orderExit.cause)) as SqliteClientError).message).toMatch(/Unknown column/);
+        expect((Option.getOrThrow(Cause.findErrorOption(orderExit.cause)) as SqliteClientError).message).toMatch(/Unknown column/);
 
         expect(Object.keys((yield* userAdapter.find({}, { select: { constructor: 1 } as never }))[0])).toEqual(['id']);
       }),
@@ -935,7 +934,7 @@ describe('Filtering & Predicates', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({ unknownColumn: 'test' } as unknown as Partial<User>));
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect(failure.value).toBeInstanceOf(SqliteClientError);
         expect((failure.value as SqliteClientError).message).toMatch(/Unknown column "unknownColumn"/);
@@ -1044,7 +1043,7 @@ describe('Ordering & Pagination', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({}, { limit: 2.5 }));
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect((failure.value as SqliteClientError).message).toMatch(/Query option "limit" must be an integer/i);
       }),
@@ -1054,8 +1053,9 @@ describe('Ordering & Pagination', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({}, { limit: Number.NaN }));
         assert(Exit.isFailure(exit));
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/Query option "limit" must be an integer/i);
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /Query option "limit" must be an integer/i,
+        );
       }),
     );
 
@@ -1063,8 +1063,9 @@ describe('Ordering & Pagination', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({}, { offset: 1.5 }));
         assert(Exit.isFailure(exit));
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/Query option "offset" must be an integer/i);
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /Query option "offset" must be an integer/i,
+        );
       }),
     );
 
@@ -1181,7 +1182,7 @@ describe('Ordering & Pagination', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({}, { order: { nope: 'asc' } as never }));
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect(failure.value).toBeInstanceOf(SqliteClientError);
         expect((failure.value as SqliteClientError).message).toMatch(/Unknown column "nope"/);
@@ -1390,7 +1391,7 @@ describe('Projections & Selections', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({}, { select: dropAll }));
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect(failure.value).toBeInstanceOf(SqliteClientError);
         expect((failure.value as SqliteClientError).message).toMatch(/must keep at least one column/i);
@@ -1401,7 +1402,7 @@ describe('Projections & Selections', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({}, { select: { id: 0, nope: 1 } as never }));
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect((failure.value as SqliteClientError).message).toMatch(/must keep at least one column/i);
       }),
@@ -1846,9 +1847,10 @@ describe('Inserts & Upserts', () => {
       Effect.gen(function* () {
         const newUser = { email: 'nonnull@example.com' } as Omit<InsertUser, 'id' | 'name'>;
         const exit = yield* Effect.exit(userAdapter.insert(newUser as Omit<InsertUser, 'id'>));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/NOT NULL constraint failed: users.name/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /NOT NULL constraint failed: users.name/i,
+        );
       }),
     );
 
@@ -1857,9 +1859,8 @@ describe('Inserts & Upserts', () => {
         const existingUserEmail = sampleUsers[0].email!;
         const newUser: Omit<InsertUser, 'id'> = { name: 'Conflict User', email: existingUserEmail };
         const exit = yield* Effect.exit(userAdapter.insert(newUser));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(/UNIQUE constraint failed: users.email/i);
       }),
     );
 
@@ -1867,9 +1868,8 @@ describe('Inserts & Upserts', () => {
       Effect.gen(function* () {
         const newUser: Omit<InsertUser, 'id'> = { name: 'FK User', email: 'fk@example.com', officeId: 9999 };
         const exit = yield* Effect.exit(userAdapter.insert(newUser));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/FOREIGN KEY constraint failed/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(/FOREIGN KEY constraint failed/i);
       }),
     );
 
@@ -2292,7 +2292,7 @@ describe('Inserts & Upserts', () => {
 
         const exit = yield* Effect.exit(probe.insert({ k: 'a' }, { conflict: { resolution: 'update', target: ['k'] } }));
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect(failure.value).toBeInstanceOf(SqliteClientError);
         expect((failure.value as SqliteClientError).message).toMatch(/requires at least one valid column to set/i);
@@ -2362,9 +2362,10 @@ describe('Inserts & Upserts', () => {
         const exit = yield* Effect.exit(
           userAdapter.insert({ name: 'Invalid', email: 'alice@example.com' }, { conflict: { target: [], resolution: 'update' } }),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/requires at least one valid target column/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /requires at least one valid target column/i,
+        );
       }),
     );
 
@@ -2373,9 +2374,10 @@ describe('Inserts & Upserts', () => {
         const exit = yield* Effect.exit(
           userAdapter.insert({ name: 'Alice', email: 'dup@example.com' }, { conflict: { target: ['name'], resolution: 'ignore' } }),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint/i,
+        );
       }),
     );
 
@@ -2403,9 +2405,10 @@ describe('Inserts & Upserts', () => {
         const exit = yield* Effect.exit(
           userAdapter.insert({ name: 'Bogus', email: 'bogus@example.com' }, { conflict: { target: ['email'], resolution: 'nope' as never } }),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/Unsupported conflict resolution "nope"/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /Unsupported conflict resolution "nope"/i,
+        );
       }),
     );
 
@@ -2572,9 +2575,10 @@ describe('Updates & Deletes', () => {
       Effect.gen(function* () {
         const invalidUser = { name: 'No ID User', email: 'noid@example.com' } as unknown as User;
         const exit = yield* Effect.exit(userAdapter.update(invalidUser));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/Missing required "id" for update operation/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /Missing required "id" for update operation/i,
+        );
       }),
     );
 
@@ -2597,9 +2601,8 @@ describe('Updates & Deletes', () => {
 
         const updatedBob: User = { ...bob, email: alice.email };
         const exit = yield* Effect.exit(userAdapter.update(updatedBob));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(/UNIQUE constraint failed: users.email/i);
       }),
     );
 
@@ -2610,9 +2613,8 @@ describe('Updates & Deletes', () => {
         const charlie = charlieOpt.value;
         const updatedCharlie: User = { ...charlie, officeId: 9999 };
         const exit = yield* Effect.exit(userAdapter.update(updatedCharlie));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/FOREIGN KEY constraint failed/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(/FOREIGN KEY constraint failed/i);
       }),
     );
 
@@ -2745,9 +2747,10 @@ describe('Updates & Deletes', () => {
       Effect.gen(function* () {
         const invalidUser = { name: 'No ID User To Delete' } as unknown as User;
         const exit = yield* Effect.exit(userAdapter.delete(invalidUser));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/Missing required "id" for delete operation/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /Missing required "id" for delete operation/i,
+        );
       }),
     );
 
@@ -2973,9 +2976,10 @@ describe('findOneAndUpdate & findOneAndDelete', () => {
         const filterForUpsert: Partial<User> = { email: newUserEmail };
         const payload = { age: 22 };
         const exit = yield* Effect.exit(userAdapter.findOneAndUpdate(filterForUpsert, payload, { upsert: true }));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/NOT NULL constraint failed: users.name/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /NOT NULL constraint failed: users.name/i,
+        );
       }),
     );
 
@@ -3016,9 +3020,8 @@ describe('findOneAndUpdate & findOneAndDelete', () => {
           userAdapter.findOneAndUpdate({ email: newNonExistentEmail }, { name: 'Conflicting Upsert', email: bobEmail, age: 40 }, { upsert: true }),
         );
 
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(/UNIQUE constraint failed: users.email/i);
         expect(Option.isNone(yield* userAdapter.findOne({ email: newNonExistentEmail }))).toBe(true);
         const bobUserOpt = yield* userAdapter.findOne({ email: bobEmail });
         assert(Option.isSome(bobUserOpt), 'Expected Bob to be found');
@@ -3035,9 +3038,8 @@ describe('findOneAndUpdate & findOneAndDelete', () => {
 
         const exit = yield* Effect.exit(userAdapter.findOneAndUpdate({ email: aliceEmail }, { email: bobEmail }, { upsert: true }));
 
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/UNIQUE constraint failed: users.email/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(/UNIQUE constraint failed: users.email/i);
         const aliceUserOpt = yield* userAdapter.findOne({ name: 'Alice' });
         assert(Option.isSome(aliceUserOpt));
         if (Option.isSome(aliceUserOpt)) {
@@ -3080,9 +3082,10 @@ describe('findOneAndUpdate & findOneAndDelete', () => {
         };
 
         const exit = yield* Effect.exit(userAdapter.findOneAndUpdate(complexFilter, payload, { upsert: true }));
-        expect(Exit.isFailure(exit)).toBe(true);
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/Cannot use complex filter when upserting/i);
+        assert(Exit.isFailure(exit));
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /Cannot use complex filter when upserting/i,
+        );
       }),
     );
 
@@ -3092,7 +3095,7 @@ describe('findOneAndUpdate & findOneAndDelete', () => {
 
         const exit = yield* Effect.exit(userAdapter.findOneAndUpdate({ nope: 'x' } as never, { name: 'Ghost' }, { upsert: true } as never));
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect(failure.value).toBeInstanceOf(SqliteClientError);
         expect((failure.value as SqliteClientError).message).toMatch(/Unknown column "nope"/);
@@ -3561,8 +3564,7 @@ describe('Data Type Marshalling & Custom Column Types', () => {
 
         const exit = yield* Effect.exit(userAdapter.insert(rows));
         assert(Exit.isFailure(exit));
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/too many SQL variables/i);
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(/too many SQL variables/i);
 
         const smaller = yield* userAdapter.insert(rows.slice(0, 1_000));
         expect(smaller).toHaveLength(1_000);
@@ -3602,7 +3604,7 @@ describe('Transaction Management & Concurrency', () => {
         );
 
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect(failure.value).toBeInstanceOf(BusinessError);
         expect((failure.value as BusinessError).reason).toBe('nope');
@@ -3624,7 +3626,7 @@ describe('Transaction Management & Concurrency', () => {
         );
 
         assert(Exit.isFailure(exit));
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         expect(failure.value).toBeInstanceOf(SqliteClientError);
         expect((failure.value as SqliteClientError).message).toMatch(/UNIQUE constraint failed: users.email/i);
@@ -3679,7 +3681,7 @@ describe('Transaction Management & Concurrency', () => {
         );
 
         assert(Exit.isFailure(exit));
-        expect(Cause.isDie(exit.cause) || Option.isSome(Cause.failureOption(exit.cause))).toBe(true);
+        expect(Cause.hasDies(exit.cause) || Option.isSome(Cause.findErrorOption(exit.cause))).toBe(true);
         expect(Option.isNone(yield* userAdapter.findOne({ email: 'async@example.com' }))).toBe(true);
       }),
     );
@@ -3763,7 +3765,7 @@ describe('Transaction Management & Concurrency', () => {
 
       expect(outside).toBe('ok');
       assert(Exit.isFailure(exit));
-      const failure = Cause.failureOption(exit.cause);
+      const failure = Cause.findErrorOption(exit.cause);
       assert(Option.isSome(failure));
       expect((failure.value as SqliteClientError).message).toMatch(/database is locked/i);
     });
@@ -3871,7 +3873,7 @@ describe('Infrastructure, Diagnostics & Resource Management', () => {
       const exit = await withClient({ out: 'migrations-does-not-exist', dbCredentials: { url: ':memory:' } }, () => true);
 
       assert(Exit.isFailure(exit));
-      const failure = Cause.failureOption(exit.cause);
+      const failure = Cause.findErrorOption(exit.cause);
       assert(Option.isSome(failure));
       expect(failure.value).toBeInstanceOf(SqliteClientError);
     });
@@ -3883,7 +3885,7 @@ describe('Infrastructure, Diagnostics & Resource Management', () => {
         const exit = yield* Effect.exit(userAdapter.insert({ email: 'nonull@example.com' } as InsertUser));
         assert(Exit.isFailure(exit));
 
-        const failure = Cause.failureOption(exit.cause);
+        const failure = Cause.findErrorOption(exit.cause);
         assert(Option.isSome(failure));
         const error = failure.value as SqliteClientError;
 
@@ -3896,11 +3898,11 @@ describe('Infrastructure, Diagnostics & Resource Management', () => {
       Effect.gen(function* () {
         const updateExit = yield* Effect.exit(userAdapter.update({ name: 'No Id' } as User));
         assert(Exit.isFailure(updateExit));
-        expect(Option.isSome(Cause.failureOption(updateExit.cause))).toBe(true);
+        expect(Option.isSome(Cause.findErrorOption(updateExit.cause))).toBe(true);
 
         const deleteExit = yield* Effect.exit(userAdapter.delete({ name: 'No Id' } as User));
         assert(Exit.isFailure(deleteExit));
-        expect(Option.isSome(Cause.failureOption(deleteExit.cause))).toBe(true);
+        expect(Option.isSome(Cause.findErrorOption(deleteExit.cause))).toBe(true);
       }),
     );
 
@@ -3908,8 +3910,9 @@ describe('Infrastructure, Diagnostics & Resource Management', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({}, { joins: [{ table: officesTable, on: {}, type: 'left' }] }));
         assert(Exit.isFailure(exit));
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/Join conditions \(on\) must be specified/i);
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(
+          /Join conditions \(on\) must be specified/i,
+        );
       }),
     );
 
@@ -3917,8 +3920,7 @@ describe('Infrastructure, Diagnostics & Resource Management', () => {
       Effect.gen(function* () {
         const exit = yield* Effect.exit(userAdapter.find({}, { joins: [{ table: officesTable, on: { officeId: 'nope' as never } }] }));
         assert(Exit.isFailure(exit));
-        // @ts-expect-error Internal effect access.
-        expect(exit.cause.error.message).toMatch(/Invalid join keys/i);
+        expect((Option.getOrThrow(Cause.findErrorOption(exit.cause)) as SqliteClientError).message).toMatch(/Invalid join keys/i);
       }),
     );
   });
@@ -4049,7 +4051,7 @@ describe('Static Contract Verification & Type Safety', () => {
     const tx = userAdapter.transaction(() => Effect.fail(new ComptimeBoom()));
     expectTypeOf(tx).toEqualTypeOf<Effect.Effect<never, SqliteClientError | ComptimeBoom, never>>();
 
-    const withReq = userAdapter.transaction(() => Effect.map(SqliteClientTag, () => 1));
+    const withReq = userAdapter.transaction(() => Effect.as(SqliteClientTag, 1));
     expectTypeOf(withReq).toEqualTypeOf<Effect.Effect<number, SqliteClientError, SqliteClientTag>>();
   });
 

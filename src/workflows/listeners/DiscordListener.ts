@@ -48,7 +48,7 @@ export const createDiscordListener = (register: EventRegister) =>
 
         yield* commandService
           .handleCommand(message as Message<true>)
-          .pipe(Effect.catchAllCause((cause) => Effect.logFatal('Unhandled rejection in command handler.', cause)));
+          .pipe(Effect.catchCause((cause) => Effect.logFatal('Unhandled rejection in command handler.', cause)));
       }).pipe(Effect.asVoid);
 
     register(discordHandler.client, Events.ClientReady, onReady, true);

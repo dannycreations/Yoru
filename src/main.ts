@@ -24,7 +24,7 @@ const program = Effect.gen(function* () {
     yield* clash.addClans(config.clanTags);
   }
 
-  yield* discord.login().pipe(
+  yield* discord.login.pipe(
     Effect.retry({
       schedule: Schedule.exponential('1 seconds'),
       while: (error) => error._tag === 'DiscordError',

@@ -1,6 +1,7 @@
-import { it as itBase } from '@effect/vitest';
+import { effect, it as itBase } from '@effect/vitest';
 import { HttpError, RequestHandler } from 'clashofclans.js';
-import { Cause, Effect, Exit, Fiber, Layer, Option, TestClock } from 'effect';
+import { Cause, Effect, Exit, Fiber, Layer, Option } from 'effect';
+import { TestClock } from 'effect/testing';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 
 import { EnvTag } from '../core/schemas.js';
@@ -9,6 +10,7 @@ import { ClashClientLayer, ClashClientTag, ClashConfigTag } from './ClashService
 
 // Adapt itBase.effect to it.effect in a type-safe manner
 const it = Object.assign((...args: Parameters<typeof itBase>) => itBase(...args), itBase) as any;
+it.effect = effect;
 
 let requestSpy: any;
 
@@ -51,10 +53,10 @@ it.effect('should immediately fail with ClashError and status 404 on player not 
     expect(Exit.isFailure(result)).toBe(true);
     if (Exit.isFailure(result)) {
       const cause = result.cause;
-      const errorOpt = Cause.failureOption(cause);
+      const errorOpt = Cause.findErrorOption(cause);
       expect(Option.isSome(errorOpt)).toBe(true);
       if (Option.isSome(errorOpt)) {
-        const error: any = errorOpt.value;
+        const error = errorOpt.value;
         expect(error._tag).toBe('ClashError');
         expect(error.status).toBe(404);
         expect(error.reason).toBe('notFound');
@@ -103,7 +105,7 @@ it.effect('should retry on transient 500 error and eventually succeed', () => {
 
   return Effect.gen(function* () {
     const clash = yield* ClashClientTag;
-    const fiber = yield* Effect.fork(clash.getPlayer('#Q8JVG9GRC'));
+    const fiber = yield* Effect.forkChild(clash.getPlayer('#Q8JVG9GRC'));
 
     // Advance virtual clock by 11 seconds to trigger retry
     yield* TestClock.adjust('11 seconds');

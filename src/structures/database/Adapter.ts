@@ -20,11 +20,10 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { Array, Context, Data, Effect, Option, Runtime } from 'effect';
+import { Array, Cause, Context, Data, Effect, Exit, Option } from 'effect';
 
 import type { Column, SQL, Table } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import type { Cause } from 'effect';
 import type {
   ExtractTables,
   InferColumn,
@@ -44,7 +43,7 @@ export class SqliteClientError extends Data.TaggedError('SqliteClientError')<{
   readonly query?: unknown;
 }> {}
 
-export class SqliteClientTag extends Context.Tag('@structures/SqliteClient')<SqliteClientTag, BetterSQLite3Database>() {}
+export class SqliteClientTag extends Context.Service<SqliteClientTag, BetterSQLite3Database>()('@structures/SqliteClient') {}
 
 const TableColumnsSymbol = Symbol.for('drizzle:Columns');
 
@@ -671,7 +670,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
         select ? query.returning(select as unknown as InferColumn<A>) : query.returning();
 
         trace.value = () => query.getSQL();
-        return Option.fromNullable(query.get()) as unknown as Option.Option<ReturnAlias<A, Array<Table>, never, never>>;
+        return Option.fromNullishOr(query.get()) as unknown as Option.Option<ReturnAlias<A, Array<Table>, never, never>>;
       });
     })) as Adapter<A, Select, Insert>['findOneAndUpdate'];
 
@@ -687,7 +686,7 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       select ? query.returning(select as unknown as InferColumn<A>) : query.returning();
 
       trace.value = () => query.getSQL();
-      return Option.fromNullable(query.get()) as unknown as Option.Option<ReturnAlias<A, B, S>>;
+      return Option.fromNullishOr(query.get()) as unknown as Option.Option<ReturnAlias<A, B, S>>;
     });
 
   const dialectCasing = (() => {
@@ -861,15 +860,18 @@ export const Adapter = <A extends Table, Select extends InferSelect<A> = InferSe
       Effect.flatMap((ctx) =>
         Effect.suspend((): Effect.Effect<T, SqliteClientError | E> => {
           try {
-            return Effect.succeed(
-              db.transaction((tx) => {
-                const adapter = Adapter(tx as unknown as BetterSQLite3Database, table);
-                return Effect.runSync(Effect.provide(fn(adapter as unknown as Adapter<A, Select, Insert>), ctx));
-              }, options),
-            );
+            const result = db.transaction((tx) => {
+              const adapter = Adapter(tx as unknown as BetterSQLite3Database, table);
+              const exit = Effect.runSyncExit(Effect.provideContext(fn(adapter as unknown as Adapter<A, Select, Insert>), ctx));
+              if (Exit.isFailure(exit)) {
+                throw exit.cause;
+              }
+              return exit.value;
+            }, options);
+            return Effect.succeed(result);
           } catch (cause) {
-            if (Runtime.isFiberFailure(cause)) {
-              return Effect.failCause(cause[Runtime.FiberFailureCauseId] as Cause.Cause<SqliteClientError | E>);
+            if (Cause.isCause(cause)) {
+              return Effect.failCause(cause as Cause.Cause<SqliteClientError | E>);
             }
 
             return Effect.fail(

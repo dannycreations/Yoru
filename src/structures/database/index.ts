@@ -10,8 +10,6 @@ export * from 'drizzle-orm/better-sqlite3';
 export * from 'drizzle-orm/sqlite-core';
 export { Adapter, Database, SqliteClientError, SqliteClientTag };
 
-export class SqliteConfigTag extends Context.Tag('@database/SqliteConfig')<SqliteConfigTag, SqliteOptions>() {}
-
 export interface SqliteOptions {
   readonly out: string;
   readonly schema: string | string[];
@@ -35,6 +33,8 @@ export interface SqliteOptions {
   };
 }
 
+export class SqliteConfigTag extends Context.Service<SqliteConfigTag, SqliteOptions>()('@database/SqliteConfig') {}
+
 const baseOptions = {
   dialect: 'sqlite',
   casing: 'snake_case',
@@ -45,7 +45,7 @@ const baseOptions = {
 
 export const makeSqliteConfig = (options: Partial<SqliteOptions> = {}): SqliteOptions => defaultsDeep({}, options, baseOptions);
 
-export const SqliteClientLayer = Layer.scoped(
+export const SqliteClientLayer = Layer.effect(
   SqliteClientTag,
   Effect.gen(function* () {
     const options = yield* SqliteConfigTag;
@@ -78,7 +78,7 @@ export const SqliteClientLayer = Layer.scoped(
             cause,
           }),
       }),
-      ({ client }) => Effect.sync(() => client.close()).pipe(Effect.ignoreLogged),
+      ({ client }) => Effect.sync(() => client.close()).pipe(Effect.ignore),
     );
 
     return db;

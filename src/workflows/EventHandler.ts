@@ -28,7 +28,7 @@ export const EventHandler = Effect.gen(function* () {
     once = false,
   ): void => {
     const cb = (...args: Args) => {
-      bridge.runFork(handler(...args).pipe(Effect.catchAllCause((cause) => Effect.logError(`Unhandled error in event ${event}`, cause))));
+      bridge.runFork(handler(...args).pipe(Effect.catchCause((cause) => Effect.logError(`Unhandled error in event ${event}`, cause))));
     };
 
     if (once) {
@@ -39,7 +39,7 @@ export const EventHandler = Effect.gen(function* () {
   };
 
   yield* createDiscordListener(register);
-  yield* createClanMemberListener();
+  yield* createClanMemberListener;
 
   register(client, 'error', (error: unknown) => Effect.logError('Clash API Error', error));
 });

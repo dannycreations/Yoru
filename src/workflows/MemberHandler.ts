@@ -28,7 +28,7 @@ export interface MemberHandler {
   >;
 }
 
-export class MemberHandlerTag extends Context.Tag('@workflows/MemberHandler')<MemberHandlerTag, MemberHandler>() {}
+export class MemberHandlerTag extends Context.Service<MemberHandlerTag, MemberHandler>()('@workflows/MemberHandler') {}
 
 export const MemberHandlerLayer = Layer.effect(
   MemberHandlerTag,
@@ -59,7 +59,7 @@ export const MemberHandlerLayer = Layer.effect(
           return Option.none();
         }
 
-        const clanCache = yield* clash.getClans();
+        const clanCache = yield* clash.getClans;
         const clanMembers = new Set(Array.fromIterable(clanCache.values()).flatMap((clan) => Array.map(clan.members, (member) => member.tag)));
 
         const activeAccount = otherAccounts.find((account) => clanMembers.has(account.tag));
@@ -69,7 +69,7 @@ export const MemberHandlerLayer = Layer.effect(
         }
 
         return yield* clash.getPlayer(activeAccount.tag).pipe(Effect.asSome);
-      }).pipe(Effect.catchAllCause(() => Effect.succeedNone));
+      }).pipe(Effect.catchCause(() => Effect.succeedNone));
 
     const updatePresence = (member: GuildMember, playerOpt: Option.Option<Player>) =>
       Effect.gen(function* () {
@@ -116,7 +116,7 @@ export const MemberHandlerLayer = Layer.effect(
         if (rolesToAdd.size > 0) {
           yield* Effect.tryPromise(() => member.roles.add(rolesToAdd));
         }
-      }).pipe(Effect.catchAll((error) => Effect.logError(`Failed to update Discord presence for ${member.id}`, error)));
+      }).pipe(Effect.catch((error) => Effect.logError(`Failed to update Discord presence for ${member.id}`, error)));
 
     return {
       findActiveAccount,

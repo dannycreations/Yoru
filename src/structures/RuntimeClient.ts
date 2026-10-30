@@ -2,20 +2,20 @@ import { ChildProcess, fork } from 'node:child_process';
 import process from 'node:process';
 import { chalk } from '@vegapunk/utilities';
 import { isObjectLike } from '@vegapunk/utilities/common';
-import { Cause, Data, Effect, Exit, Fiber, Layer, Ref, Runtime } from 'effect';
+import { Cause, Data, Effect, Exit, Fiber, Layer, Ref } from 'effect';
 
 export interface RuntimeBridge {
-  readonly runFork: <A, E, R>(effect: Effect.Effect<A, E, R>) => Fiber.RuntimeFiber<A, E>;
+  readonly runFork: <A, E, R>(effect: Effect.Effect<A, E, R>) => Fiber.Fiber<A, E>;
   readonly runSync: <A, E, R>(effect: Effect.Effect<A, E, R>) => A;
   readonly runPromise: <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>;
 }
 
 export const makeRuntimeBridge = Effect.gen(function* () {
-  const runtime = yield* Effect.runtime<unknown>();
+  const services = yield* Effect.context<unknown>();
   return {
-    runFork: Runtime.runFork(runtime),
-    runSync: Runtime.runSync(runtime),
-    runPromise: Runtime.runPromise(runtime),
+    runFork: Effect.runForkWith(services),
+    runSync: Effect.runSyncWith(services),
+    runPromise: Effect.runPromiseWith(services),
   } as RuntimeBridge;
 });
 
@@ -29,13 +29,9 @@ export interface RuntimeCycleOptions {
   readonly logger?: Layer.Layer<never, never>;
 }
 
-export const restartMainCycle = (): Effect.Effect<never, RuntimeRestartSignal> => {
-  return Effect.fail(new RuntimeRestartSignal());
-};
+export const restartMainCycle: Effect.Effect<never, RuntimeRestartSignal> = Effect.fail(new RuntimeRestartSignal());
 
-export const shutdownMainCycle = (): Effect.Effect<never, RuntimeShutdownSignal> => {
-  return Effect.fail(new RuntimeShutdownSignal());
-};
+export const shutdownMainCycle: Effect.Effect<never, RuntimeShutdownSignal> = Effect.fail(new RuntimeShutdownSignal());
 
 export const cycleUntilMidnight = Effect.gen(function* () {
   const msUntilMidnight = yield* Effect.sync(() => {
@@ -46,7 +42,7 @@ export const cycleUntilMidnight = Effect.gen(function* () {
 
   yield* Effect.sleep(`${msUntilMidnight} millis`);
   yield* Effect.logInfo(chalk`{bold.yellow It's midnight time. Restarting system...}`);
-  return yield* restartMainCycle();
+  return yield* restartMainCycle;
 });
 
 export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: RuntimeCycleOptions = {}): void => {
@@ -87,7 +83,7 @@ export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: 
       }
 
       const cause = exitValue.cause;
-      const failures = Cause.failures(cause);
+      const failures = (cause as Cause.Cause<unknown>).reasons.filter(Cause.isFailReason).map((r) => r.error);
 
       let signalRestart = false;
       let signalShutdown = false;
@@ -123,7 +119,7 @@ export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: 
   }
 
   const runChildProcess = (currentChildRef: { current: ChildProcess | null }) => {
-    return Effect.async<{ code: number | null; signal: NodeJS.Signals | null; action: 'restart' | 'shutdown' | null }, never, never>((resume) => {
+    return Effect.callback<{ code: number | null; signal: NodeJS.Signals | null; action: 'restart' | 'shutdown' | null }, never, never>((resume) => {
       const cleanUp = () => {
         if (currentChildRef.current) {
           try {

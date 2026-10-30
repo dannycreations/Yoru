@@ -1,6 +1,6 @@
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Client, HttpError } from 'clashofclans.js';
-import { Array, Cause, Context, Data, Effect, Either, Layer, Option, PubSub, Ref, Schedule, Schema, Scope } from 'effect';
+import { Array, Cause, Context, Data, Effect, Layer, Option, PubSub, Ref, Result, Schedule, Schema, Scope, Semaphore } from 'effect';
 
 import { ClientEvents } from '../core/constants.js';
 import { EnvTag } from '../core/schemas.js';
@@ -36,7 +36,7 @@ export const ClanSchema = Schema.Struct({
       role: Schema.optional(Schema.String),
     }),
   ),
-  memberCount: Schema.optional(Schema.Number),
+  memberCount: Schema.optional(Schema.Finite),
 });
 
 export interface ClanData extends Schema.Schema.Type<typeof ClanSchema> {}
@@ -49,7 +49,7 @@ export interface ClashConfig {
   readonly pollingInterval?: number;
 }
 
-export class ClashConfigTag extends Context.Tag('@services/ClashConfig')<ClashConfigTag, ClashConfig>() {}
+export class ClashConfigTag extends Context.Service<ClashConfigTag, ClashConfig>()('@services/ClashConfig') {}
 
 const hasClanChanged = (oldClan: Clan, newClan: Clan): boolean => {
   if (oldClan.memberCount !== newClan.memberCount) {
@@ -76,7 +76,7 @@ interface ClanUpdate {
 }
 
 const toClanUpdate = (tag: string, newClan: Clan, cache: ReadonlyMap<string, Clan>): Option.Option<ClanUpdate> => {
-  const oldClan = Option.fromNullable(cache.get(tag));
+  const oldClan = Option.fromNullishOr(cache.get(tag));
   return Option.isNone(oldClan) || hasClanChanged(oldClan.value, newClan) ? Option.some({ tag, newClan, oldClan }) : Option.none();
 };
 
@@ -84,12 +84,12 @@ export interface ClashClient {
   readonly client: Client;
   readonly events: PubSub.PubSub<ClashEvent>;
   readonly addClans: (tags: ReadonlyArray<string>) => Effect.Effect<void>;
-  readonly getClans: () => Effect.Effect<Map<string, Clan>>;
+  readonly getClans: Effect.Effect<Map<string, Clan>>;
   readonly getClan: (tag: string) => Effect.Effect<Clan, ClashError>;
   readonly getPlayer: (tag: string) => Effect.Effect<Player, ClashError>;
 }
 
-export class ClashClientTag extends Context.Tag('@services/Clash')<ClashClientTag, ClashClient>() {}
+export class ClashClientTag extends Context.Service<ClashClientTag, ClashClient>()('@services/Clash') {}
 
 const makeClashClient = Effect.gen(function* () {
   const http = yield* HttpClientTag;
@@ -102,14 +102,14 @@ const makeClashClient = Effect.gen(function* () {
   const clanTags = yield* Ref.make(new Set<string>());
   const clanCache = yield* Ref.make(new Map<string, Clan>());
 
-  const ClanCacheSchema = Schema.Record({ key: Schema.String, value: ClanSchema });
+  const ClanCacheSchema = Schema.Record(Schema.String, ClanSchema);
   const clanStore = yield* makeStoreClient('sessions/clans.json', ClanCacheSchema, {}, 60_000).pipe(Effect.provideService(Scope.Scope, scope));
 
   const storedClans = yield* clanStore.get;
   yield* Ref.set(clanCache, new Map(Object.entries(storedClans)) as Map<string, Clan>);
   const events = yield* PubSub.unbounded<ClashEvent>();
   const ipRef = yield* Ref.make(Option.none<string>());
-  const loginSemaphore = yield* Effect.makeSemaphore(1);
+  const loginSemaphore = yield* Semaphore.make(1);
 
   const handleRequestError = (error: unknown, requestStateRef: Ref.Ref<number>) =>
     Effect.gen(function* () {
@@ -155,7 +155,7 @@ const makeClashClient = Effect.gen(function* () {
         if (isIpDenied) {
           client.rest.requestHandler['keys'].shift();
           const ipMatch = cause.message.match(/(\d{1,3}\.){3}\d+/);
-          yield* Ref.set(ipRef, Option.fromNullable(ipMatch?.[0]));
+          yield* Ref.set(ipRef, Option.fromNullishOr(ipMatch?.[0]));
         }
 
         yield* Effect.tryPromise({
@@ -229,9 +229,9 @@ const makeClashClient = Effect.gen(function* () {
                 cause,
               }),
           }).pipe(
-            Effect.catchAll((cause) => handleRequestError(cause, requestStateRef)),
-            Effect.catchAllCause((cause) =>
-              Option.match(Cause.failureOption(cause), {
+            Effect.catch((cause) => handleRequestError(cause, requestStateRef)),
+            Effect.catchCause((cause) =>
+              Option.match(Cause.findErrorOption(cause), {
                 onNone: () =>
                   Effect.fail(
                     new ClashError({
@@ -254,15 +254,15 @@ const makeClashClient = Effect.gen(function* () {
               while: (error) => isClashError(error) && error.status !== 503 && error.status !== 404 && error.status !== 400,
               schedule: Schedule.spaced('10 seconds'),
             }),
-            Effect.either,
+            Effect.result,
           );
         }).pipe(Effect.provideService(HttpClientTag, http)),
       )
       .then((result) => {
-        if (Either.isLeft(result)) {
-          throw result.left;
+        if (Result.isFailure(result)) {
+          throw result.failure;
         }
-        return result.right;
+        return result.success;
       });
   const addClans = (tags: readonly string[]) =>
     Ref.update(clanTags, (set) => {
@@ -298,8 +298,8 @@ const makeClashClient = Effect.gen(function* () {
           Effect.option,
           Effect.map((clanOpt) => Option.flatMap(clanOpt, (newClan) => toClanUpdate(tag, newClan, cache))),
         ),
-      { concurrency: 'inherit' },
-    ).pipe(Effect.map((results) => Array.filterMap(results, (update) => update)));
+      {},
+    ).pipe(Effect.map((results) => Array.getSomes(results)));
 
     if (updates.length === 0) {
       return;
@@ -325,15 +325,15 @@ const makeClashClient = Effect.gen(function* () {
               oldClan: oldClan.value,
               newClan,
             }),
-      { concurrency: 'inherit' },
+      {},
     );
   }).pipe(
-    Effect.catchAllCause((cause) => Effect.logError('Clash polling failure', cause)),
+    Effect.catchCause((cause) => Effect.logError('Clash polling failure', cause)),
     Effect.repeat(Schedule.spaced(config.pollingInterval ?? 60_000)),
     Effect.forkScoped,
   );
 
-  const getClans = () => Ref.get(clanCache);
+  const getClans = Ref.get(clanCache);
 
   return {
     client,
@@ -345,7 +345,7 @@ const makeClashClient = Effect.gen(function* () {
   };
 });
 
-export const ClashClientLayer = Layer.scoped(ClashClientTag, makeClashClient);
+export const ClashClientLayer = Layer.effect(ClashClientTag, makeClashClient);
 
 export const ClashConfigLayer = Layer.effect(
   ClashConfigTag,

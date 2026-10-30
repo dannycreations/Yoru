@@ -66,11 +66,10 @@ const checkProfile = (message: Message<true>, ownerId: string, accounts: Readonl
           return Option.some({ name: `${count}. ${emoji.townhalls[player.townHallLevel - 1]} ${player.name}`, value });
         }),
       ),
-      { concurrency: 'inherit' },
-    ).pipe(Effect.map((results) => Array.filterMap(results, (field) => field)));
+    ).pipe(Effect.map((results) => Array.getSomes(results)));
 
     if (fields.length > 0) {
-      embed.addFields([...fields]);
+      embed.addFields(fields);
     }
 
     embed.setFooter({ text: message.author.username, iconURL: message.author.displayAvatarURL() }).setTimestamp();
@@ -183,7 +182,7 @@ const checkMembers = (message: Message<true>, page = 1) =>
       return message.guild.members.cache.get(ownerId) ? { type: 'guild' as const, ownerId, field } : { type: 'fetch' as const, ownerId, field };
     });
 
-    const membersToFetch = [...new Set(Array.filterMap(memberResults, (r) => (r.type === 'fetch' ? Option.some(r.ownerId) : Option.none())))];
+    const membersToFetch = [...new Set(memberResults.filter((r) => r.type === 'fetch').map((r) => r.ownerId))];
 
     if (membersToFetch.length > 0) {
       yield* Effect.tryPromise(() => message.guild.members.fetch({ user: membersToFetch })).pipe(Effect.ignore);

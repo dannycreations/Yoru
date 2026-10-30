@@ -46,13 +46,13 @@ export interface HttpClient {
   readonly waitForConnection: (total?: number) => Effect.Effect<void>;
 }
 
-export class HttpClientTag extends Context.Tag('@structures/HttpClient')<HttpClientTag, HttpClient>() {}
+export class HttpClientTag extends Context.Service<HttpClientTag, HttpClient>()('@structures/HttpClient') {}
 
 const TIMEOUT_REGEX = /timeout|timed out/i;
 
 export const isTimeoutError = (error: unknown): boolean =>
   isErrorLike<{ readonly _tag: string; readonly code?: string; readonly message?: string }>(error) &&
-  (error._tag === 'TimeoutException' || error.code === 'ETIMEDOUT' || (typeof error.message === 'string' && TIMEOUT_REGEX.test(error.message)));
+  (error._tag === 'TimeoutError' || error.code === 'ETIMEDOUT' || (typeof error.message === 'string' && TIMEOUT_REGEX.test(error.message)));
 
 export const isNetworkError = (error: unknown): boolean => {
   if (!isErrorLike<{ readonly status?: number; readonly code?: string }>(error)) {
@@ -66,10 +66,10 @@ export const isNetworkError = (error: unknown): boolean => {
 };
 
 export const request = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError, HttpClientTag> =>
-  Effect.flatMap(HttpClientTag, (service) => service.request<T>(options));
+  Effect.flatMap(Effect.service(HttpClientTag), (service) => service.request<T>(options));
 
 export const waitForConnection = (total?: number): Effect.Effect<void, never, HttpClientTag> =>
-  Effect.flatMap(HttpClientTag, (service) => service.waitForConnection(total));
+  Effect.flatMap(Effect.service(HttpClientTag), (service) => service.waitForConnection(total));
 
 const makeHttpClient = Effect.gen(function* () {
   const gotInstance: Got = got.bind(got);
@@ -84,7 +84,7 @@ const makeHttpClient = Effect.gen(function* () {
       const retryCount = isString ? 3 : (payload.retry ?? 3);
       const { initial = 10_000, transmission = 30_000, total = 60_000 } = payload.timeout || {};
 
-      const response = yield* Effect.async<Response<T>, HttpClientError>((resume) => {
+      const response = yield* Effect.callback<Response<T>, HttpClientError>((resume) => {
         const promise = gotInstance({
           ...payload,
           headers,
@@ -122,13 +122,15 @@ const makeHttpClient = Effect.gen(function* () {
         });
       }).pipe(
         Effect.timeout(`${total * 2} millis`),
-        Effect.catchTag('TimeoutException', () =>
-          Effect.fail(
-            new HttpClientError({
-              message: 'Request timed out',
-              code: 'ETIMEDOUT',
-            }),
-          ),
+        Effect.catch((error) =>
+          isTimeoutError(error)
+            ? Effect.fail(
+                new HttpClientError({
+                  message: 'Request timed out',
+                  code: 'ETIMEDOUT',
+                }),
+              )
+            : Effect.fail(error as HttpClientError),
         ),
         Effect.retry({
           while: isNetworkError,
@@ -154,7 +156,7 @@ const makeHttpClient = Effect.gen(function* () {
       yield* Effect.firstSuccessOf([checkGoogle, checkApple]).pipe(
         Effect.sandbox,
         Effect.retry(Schedule.spaced(`${retryMs} millis`)),
-        Effect.catchAll(() => Effect.void),
+        Effect.catch(() => Effect.void),
       );
     });
 

@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 
 const EmojiFields = {
   thumbnail: Schema.String,
@@ -14,17 +14,17 @@ const EmojiFields = {
   stars: Schema.Array(Schema.String),
   townhalls: Schema.Array(Schema.String),
   troops: Schema.Struct({
-    normal: Schema.Record({ key: Schema.String, value: Schema.String }),
-    dark: Schema.Record({ key: Schema.String, value: Schema.String }),
-    super: Schema.Record({ key: Schema.String, value: Schema.String }),
-    siege: Schema.Record({ key: Schema.String, value: Schema.String }),
-    pets: Schema.Record({ key: Schema.String, value: Schema.String }),
+    normal: Schema.Record(Schema.String, Schema.String),
+    dark: Schema.Record(Schema.String, Schema.String),
+    super: Schema.Record(Schema.String, Schema.String),
+    siege: Schema.Record(Schema.String, Schema.String),
+    pets: Schema.Record(Schema.String, Schema.String),
   }),
   spells: Schema.Struct({
-    normal: Schema.Record({ key: Schema.String, value: Schema.String }),
-    dark: Schema.Record({ key: Schema.String, value: Schema.String }),
+    normal: Schema.Record(Schema.String, Schema.String),
+    dark: Schema.Record(Schema.String, Schema.String),
   }),
-  heroes: Schema.Record({ key: Schema.String, value: Schema.String }),
+  heroes: Schema.Record(Schema.String, Schema.String),
 } as const;
 
 const EmojiSchema = Schema.Struct(EmojiFields);
@@ -33,9 +33,9 @@ export interface Emoji extends Schema.Struct.Type<typeof EmojiFields> {
   readonly unitLookup: Map<string, { readonly category: string; readonly emoji: string }>;
 }
 
-export class EmojiTag extends Context.Tag('@core/Emoji')<EmojiTag, Emoji>() {}
+export class EmojiTag extends Context.Service<EmojiTag, Emoji>()('@core/Emoji') {}
 
-const emojiData = Data.struct({
+const emojiData = {
   thumbnail: 'https://raw.githubusercontent.com/dannycreations/yoru/main/discord/emojis/{0}',
   level: '<:level:679995912151760920>',
   hashtag: '<:hashtag:1216000497975037994>',
@@ -168,11 +168,11 @@ const emojiData = Data.struct({
     'Royal Champion': '<:royalchampion:1333151008326684702>',
     'Minion Prince': '<:minionprince:1333152496620667031>',
   },
-} as const);
+} as const;
 
 export const EmojiLayer = Layer.effect(
   EmojiTag,
-  Schema.decodeUnknown(EmojiSchema)(emojiData).pipe(
+  Schema.decodeEffect(EmojiSchema)(emojiData).pipe(
     Effect.map((emoji) => {
       const unitLookup = new Map<string, { readonly category: string; readonly emoji: string }>();
 

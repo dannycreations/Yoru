@@ -19,7 +19,7 @@ export interface CommandHandler {
   ) => Effect.Effect<void, never, SqliteClientTag | DiscordHandler | ConfigStoreTag | ClashClientTag | MemberHandlerTag>;
 }
 
-export class CommandHandlerTag extends Context.Tag('@workflows/CommandHandler')<CommandHandlerTag, CommandHandler>() {}
+export class CommandHandlerTag extends Context.Service<CommandHandlerTag, CommandHandler>()('@workflows/CommandHandler') {}
 
 type Command = (message: Message<true>, args: ReadonlyArray<string>) => Effect.Effect<void, unknown, any>;
 
@@ -52,8 +52,8 @@ export const CommandHandler = Effect.gen(function* () {
       }
 
       yield* withTyping(message, command(message, args)).pipe(
-        Effect.catchAll((error) => replyWithError(message, error)),
-        Effect.catchAllCause((cause) => Effect.logError('Command execution failed', cause)),
+        Effect.catch((error) => replyWithError(message, error)),
+        Effect.catchCause((cause) => Effect.logError('Command execution failed', cause)),
       );
     });
 

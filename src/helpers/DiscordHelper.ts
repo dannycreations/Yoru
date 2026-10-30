@@ -13,7 +13,7 @@ export const withTyping = <A, E, R>(message: Message<true>, effect: Effect.Effec
     const sendTyping = Effect.tryPromise(() => message.channel.sendTyping()).pipe(Effect.ignore, Effect.asVoid);
 
     // Discord clears the typing indicator after ~10 seconds, so it is refreshed while the effect runs.
-    const fiber = yield* Effect.fork(sendTyping.pipe(Effect.repeat(Schedule.spaced('8 seconds'))));
+    const fiber = yield* Effect.forkChild(sendTyping.pipe(Effect.repeat(Schedule.spaced('8 seconds'))));
 
     return yield* effect.pipe(Effect.ensuring(Fiber.interrupt(fiber)));
   });

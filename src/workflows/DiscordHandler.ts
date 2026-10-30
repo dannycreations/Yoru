@@ -13,10 +13,10 @@ export class DiscordError extends Data.TaggedError('DiscordError')<{
 
 export interface DiscordHandler {
   readonly client: SapphireClient;
-  readonly login: () => Effect.Effect<void, DiscordError>;
+  readonly login: Effect.Effect<void, DiscordError>;
 }
 
-export class DiscordHandlerTag extends Context.Tag('@workflows/DiscordHandler')<DiscordHandlerTag, DiscordHandler>() {}
+export class DiscordHandlerTag extends Context.Service<DiscordHandlerTag, DiscordHandler>()('@workflows/DiscordHandler') {}
 
 const makeDiscordClient = Effect.gen(function* () {
   const env = yield* EnvTag;
@@ -47,22 +47,21 @@ const makeDiscordClient = Effect.gen(function* () {
   client.logger.error = bridgeLogger(Effect.logError);
   client.logger.fatal = bridgeLogger(Effect.logFatal);
 
-  const login = (): Effect.Effect<void, DiscordError> =>
-    Effect.tryPromise({
-      try: () => client.login(env.DISCORD_TOKEN),
-      catch: (cause) => new DiscordError({ message: 'Failed to login to Discord', cause }),
-    }).pipe(
-      Effect.timeoutFail({
-        duration: '60 seconds',
-        onTimeout: () => new DiscordError({ message: 'Discord login timed out' }),
+  const login = Effect.tryPromise({
+    try: () => client.login(env.DISCORD_TOKEN),
+    catch: (cause) => new DiscordError({ message: 'Failed to login to Discord', cause }),
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: '60 seconds',
+      orElse: () => Effect.fail(new DiscordError({ message: 'Discord login timed out' })),
+    }),
+    Effect.tapError((error) =>
+      Effect.gen(function* () {
+        yield* Effect.logInfo(chalk`{yellow Discord client login failed or timed out...}`, (error as { readonly cause?: unknown }).cause ?? error);
+        yield* Effect.promise(() => client.destroy());
       }),
-      Effect.tapErrorCause((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logInfo(chalk`{yellow Discord client login failed or timed out...}`, cause);
-          yield* Effect.promise(() => client.destroy());
-        }),
-      ),
-    );
+    ),
+  );
 
   return {
     client,
@@ -70,7 +69,7 @@ const makeDiscordClient = Effect.gen(function* () {
   } as const;
 });
 
-export const DiscordHandlerLayer = Layer.scoped(
+export const DiscordHandlerLayer = Layer.effect(
   DiscordHandlerTag,
   Effect.acquireRelease(makeDiscordClient, ({ client }) => Effect.promise(() => client.destroy())),
 );

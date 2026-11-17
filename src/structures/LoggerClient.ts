@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Cause, Layer, Logger, LogLevel, References, Schema } from 'effect';
+import { Cause, Layer, Logger, LogLevel, References } from 'effect';
 import pino from 'pino';
 import pinoPretty from 'pino-pretty';
 
@@ -28,16 +28,14 @@ export const EFFECT_LEVEL_MAP: ReadonlyRecord<LogLevel.LogLevel, pino.LevelWithS
   None: 'silent',
 };
 
-export const LoggerOptions = Schema.Struct({
-  dir: Schema.optional(Schema.String),
-  level: Schema.optional(Schema.String as unknown as Schema.Schema<Level>),
-  trace: Schema.optional(Schema.Boolean),
-  pretty: Schema.optional(Schema.Boolean),
-  exception: Schema.optional(Schema.Boolean),
-  rejection: Schema.optional(Schema.Boolean),
-});
-
-export type LoggerOptions = Schema.Schema.Type<typeof LoggerOptions>;
+export interface LoggerOptions {
+  readonly dir?: string;
+  readonly level?: Level;
+  readonly trace?: boolean;
+  readonly pretty?: boolean;
+  readonly exception?: boolean;
+  readonly rejection?: boolean;
+}
 
 export const makeLoggerClient = (options: LoggerOptions = {}): pino.Logger => {
   const {
@@ -76,6 +74,7 @@ export const makeLoggerClient = (options: LoggerOptions = {}): pino.Logger => {
             translateTime: 'SYS:HH:MM:ss',
             sync: process.env.NODE_ENV === 'development',
             singleLine: process.env.NODE_ENV === 'production',
+            messageFormat: (log, messageKey) => String(log[messageKey] ?? ''),
           }),
         } as StreamEntry)
       : ({
@@ -131,38 +130,38 @@ export const makeLoggerClient = (options: LoggerOptions = {}): pino.Logger => {
 export const LoggerClientLayer = (options: LoggerOptions = {}): Layer.Layer<never> => {
   const logger = makeLoggerClient(options);
 
-  const customLogger = Logger.make(({ logLevel, message, cause }) => {
-    // Ignore internal Effect errors
-    if (!Array.isArray(message)) {
-      return;
-    }
-
-    const level = EFFECT_LEVEL_MAP[logLevel] ?? 'info';
-    if (cause && (cause as Cause.Cause<unknown>).reasons.length > 0) {
-      const failReason = (cause as Cause.Cause<unknown>).reasons.find(Cause.isFailReason);
-      const failure = failReason ? (failReason as { readonly error: unknown }).error : undefined;
-      const causePretty = { cause: Cause.pretty(cause) };
-
-      if (isErrorLike<{ readonly cause: unknown }>(failure) && failure.cause) {
-        if (typeof failure.cause === 'object' && failure.cause !== null) {
-          message.push({ ...failure.cause, ...causePretty });
-        } else if (typeof failure.cause === 'string') {
-          message[0] = `${message[0]} (${failure.cause})`;
-          message.push(causePretty);
-        } else {
-          message.push(causePretty);
-        }
-      } else {
-        message.push(causePretty);
-      }
-    }
-
-    const logMethod = logger[level] as (...args: readonly unknown[]) => void;
-    logMethod.call(logger, ...message);
-  });
-
   return Layer.mergeAll(
-    Logger.layer([customLogger], { mergeWithExisting: false }),
-    Layer.succeed(References.MinimumLogLevel, (PINO_LEVEL_MAP[logger.level] ?? 'Info') as LogLevel.LogLevel),
+    Logger.layer([
+      Logger.make(({ logLevel, message, cause }) => {
+        // Ignore internal Effect errors
+        if (!Array.isArray(message)) {
+          return;
+        }
+
+        const level = EFFECT_LEVEL_MAP[logLevel] ?? 'info';
+        if (cause && cause.reasons.length > 0) {
+          const [failure] = cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+          const causePretty = { cause: Cause.pretty(cause) };
+
+          if (isErrorLike<{ readonly cause: unknown }>(failure) && failure.cause) {
+            if (typeof failure.cause === 'object' && failure.cause !== null) {
+              message.push({ ...failure.cause, ...causePretty });
+            } else if (typeof failure.cause === 'string') {
+              message[0] = `${message[0]} (${failure.cause})`;
+              message.push(causePretty);
+            } else {
+              message.push(causePretty);
+            }
+          } else {
+            message.push(causePretty);
+          }
+        }
+
+        const logMethod = logger[level] as (...args: readonly unknown[]) => void;
+        logMethod.call(logger, ...message);
+      }),
+      Logger.tracerLogger,
+    ]),
+    Layer.succeed(References.MinimumLogLevel, PINO_LEVEL_MAP[logger.level] ?? 'Info'),
   );
 };

@@ -16,7 +16,7 @@ export const makeRuntimeBridge = Effect.gen(function* () {
     runFork: Effect.runForkWith(services),
     runSync: Effect.runSyncWith(services),
     runPromise: Effect.runPromiseWith(services),
-  } as RuntimeBridge;
+  } satisfies RuntimeBridge;
 });
 
 class RuntimeRestartSignal extends Data.TaggedError('RuntimeRestartSignal') {}
@@ -29,9 +29,13 @@ export interface RuntimeCycleOptions {
   readonly logger?: Layer.Layer<never, never>;
 }
 
-export const restartMainCycle: Effect.Effect<never, RuntimeRestartSignal> = Effect.fail(new RuntimeRestartSignal());
+export const restartMainCycle = (): Effect.Effect<never, RuntimeRestartSignal> => {
+  return Effect.fail(new RuntimeRestartSignal());
+};
 
-export const shutdownMainCycle: Effect.Effect<never, RuntimeShutdownSignal> = Effect.fail(new RuntimeShutdownSignal());
+export const shutdownMainCycle = (): Effect.Effect<never, RuntimeShutdownSignal> => {
+  return Effect.fail(new RuntimeShutdownSignal());
+};
 
 export const cycleUntilMidnight = Effect.gen(function* () {
   const msUntilMidnight = yield* Effect.sync(() => {
@@ -42,7 +46,7 @@ export const cycleUntilMidnight = Effect.gen(function* () {
 
   yield* Effect.sleep(`${msUntilMidnight} millis`);
   yield* Effect.logInfo(chalk`{bold.yellow It's midnight time. Restarting system...}`);
-  return yield* restartMainCycle;
+  return yield* restartMainCycle();
 });
 
 export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: RuntimeCycleOptions = {}): void => {
@@ -83,7 +87,7 @@ export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: 
       }
 
       const cause = exitValue.cause;
-      const failures = (cause as Cause.Cause<unknown>).reasons.filter(Cause.isFailReason).map((r) => r.error);
+      const failures = cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
 
       let signalRestart = false;
       let signalShutdown = false;
@@ -119,7 +123,7 @@ export const runMainCycle = <A, E, R>(program: Effect.Effect<A, E, R>, options: 
   }
 
   const runChildProcess = (currentChildRef: { current: ChildProcess | null }) => {
-    return Effect.callback<{ code: number | null; signal: NodeJS.Signals | null; action: 'restart' | 'shutdown' | null }, never, never>((resume) => {
+    return Effect.callback<{ code: number | null; signal: NodeJS.Signals | null; action: 'restart' | 'shutdown' | null }>((resume) => {
       const cleanUp = () => {
         if (currentChildRef.current) {
           try {

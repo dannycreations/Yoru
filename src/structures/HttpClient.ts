@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import { createRequire } from 'node:module';
 import { isErrorLike } from '@vegapunk/utilities/result';
-import { Context, Data, Effect, Layer, Schedule } from 'effect';
+import { Cause, Context, Data, Effect, Layer, Schedule } from 'effect';
 import UserAgent from 'user-agents';
 
 import type { CancelableRequest, Got, Options, Response } from 'got';
@@ -66,10 +66,10 @@ export const isNetworkError = (error: unknown): boolean => {
 };
 
 export const request = <T = string>(options: string | DefaultOptions): Effect.Effect<Response<T>, HttpClientError, HttpClientTag> =>
-  Effect.flatMap(Effect.service(HttpClientTag), (service) => service.request<T>(options));
+  Effect.flatMap(HttpClientTag, (service) => service.request<T>(options));
 
 export const waitForConnection = (total?: number): Effect.Effect<void, never, HttpClientTag> =>
-  Effect.flatMap(Effect.service(HttpClientTag), (service) => service.waitForConnection(total));
+  Effect.flatMap(HttpClientTag, (service) => service.waitForConnection(total));
 
 const makeHttpClient = Effect.gen(function* () {
   const gotInstance: Got = got.bind(got);
@@ -122,16 +122,7 @@ const makeHttpClient = Effect.gen(function* () {
         });
       }).pipe(
         Effect.timeout(`${total * 2} millis`),
-        Effect.catch((error) =>
-          isTimeoutError(error)
-            ? Effect.fail(
-                new HttpClientError({
-                  message: 'Request timed out',
-                  code: 'ETIMEDOUT',
-                }),
-              )
-            : Effect.fail(error as HttpClientError),
-        ),
+        Effect.mapError((error) => (Cause.isTimeoutError(error) ? new HttpClientError({ message: 'Request timed out', code: 'ETIMEDOUT' }) : error)),
         Effect.retry({
           while: isNetworkError,
           schedule: retryCount < 0 ? Schedule.forever : Schedule.recurs(retryCount),

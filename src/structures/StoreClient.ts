@@ -5,6 +5,14 @@ import { defaultsDeep } from '@vegapunk/utilities/common';
 import { isErrorLike } from '@vegapunk/utilities/result';
 import { Context, Data, Effect, Layer, Ref, Schedule, Schema, Scope, Struct } from 'effect';
 
+type StoredSchema<A, E, RD, RE> = Schema.Codec<A, E, RD, RE> & {
+  readonly mapFields?: (mapping: (fields: Schema.Struct.Fields) => Schema.Struct.Fields) => Schema.Codec<A, E, RD, RE>;
+};
+
+const withOptionalFields = <A, E, RD, RE>(schema: StoredSchema<A, E, RD, RE>): Schema.Codec<A, E, RD, RE> => {
+  return typeof schema.mapFields === 'function' ? schema.mapFields(Struct.map(Schema.optional)) : schema;
+};
+
 const ensureDir = (path: string): Effect.Effect<void, StoreClientError> =>
   Effect.tryPromise({
     try: () => mkdir(dirname(path), { recursive: true }),
@@ -35,17 +43,16 @@ const loadStore = (filePath: string): Effect.Effect<unknown, StoreClientError> =
       }),
     ),
     Effect.catchIf(
-      (cause): cause is StoreClientError =>
-        cause instanceof StoreClientError && isErrorLike<{ readonly code: string }>(cause.cause) && cause.cause.code === 'ENOENT',
+      (cause) => cause instanceof StoreClientError && isErrorLike<{ readonly code: string }>(cause.cause) && cause.cause.code === 'ENOENT',
       () => Effect.succeed({}),
     ),
   );
 
-const saveStore = <A>(filePath: string, schema: Schema.Schema<A>, data: A): Effect.Effect<void, StoreClientError> =>
+const saveStore = <A, E, RD, RE>(filePath: string, schema: Schema.Codec<A, E, RD, RE>, data: A): Effect.Effect<void, StoreClientError, RE> =>
   Effect.gen(function* () {
     yield* ensureDir(filePath);
 
-    const encode = Schema.encodeEffect(schema) as unknown as (data: A) => Effect.Effect<unknown, StoreClientError, never>;
+    const encode = Schema.encodeEffect(schema);
     const encoded = yield* encode(data).pipe(
       Effect.mapError((cause) => new StoreClientError({ message: `Failed to encode store: ${filePath}`, cause })),
     );
@@ -64,20 +71,19 @@ const saveStore = <A>(filePath: string, schema: Schema.Schema<A>, data: A): Effe
     });
   });
 
-export const makeStoreClient = <A extends object>(
+export const makeStoreClient = <A extends object, E, RD, RE>(
   filePath: string,
-  schema: Schema.Schema<A>,
+  schema: Schema.Codec<A, E, RD, RE>,
   initialData: A,
   initialDelay = 1000,
   isReadOnly = false,
-): Effect.Effect<StoreClient<A>, never, Scope.Scope> =>
+): Effect.Effect<StoreClient<A>, never, Scope.Scope | RD | RE> =>
   Effect.gen(function* () {
     const dataRef = yield* Ref.make(initialData);
     const delayRef = yield* Ref.make(initialDelay);
     const dirtyRef = yield* Ref.make(false);
 
-    const makePartialSchema = (s: any) => (typeof s?.mapFields === 'function' ? s.mapFields(Struct.map(Schema.optional)) : s);
-    const decode = Schema.decodeUnknownEffect(makePartialSchema(schema));
+    const decode = Schema.decodeUnknownEffect(withOptionalFields(schema));
 
     const rawData = yield* loadStore(filePath).pipe(Effect.orElseSucceed(() => ({})));
     const validatedData = yield* decode(rawData).pipe(
@@ -87,13 +93,12 @@ export const makeStoreClient = <A extends object>(
           yield* Effect.logWarning(`Store validation failed for ${filePath}, merging with defaults`);
           yield* Effect.logDebug(error);
 
-          const partialDecode = Schema.decodeUnknownEffect(makePartialSchema(schema));
+          const partialDecode = Schema.decodeUnknownEffect(withOptionalFields(schema));
           const partial = yield* partialDecode(rawData).pipe(Effect.orElseSucceed(() => ({})));
 
           return defaultsDeep<A>({}, partial, initialData);
         }),
       ),
-      Effect.map((merged) => merged),
     );
 
     yield* Ref.set(dataRef, validatedData);
@@ -147,12 +152,12 @@ export const makeStoreClient = <A extends object>(
     } satisfies StoreClient<A>;
   });
 
-export const StoreClientLayer = <I, S extends StoreClient<A>, A extends object>(
-  tag: Context.Service<I, S>,
+export const StoreClientLayer = <I, S extends StoreClient<A>, A extends object, E, RD, RE>(
+  tag: Context.Key<I, S>,
   filePath: string,
-  schema: Schema.Schema<A>,
+  schema: Schema.Codec<A, E, RD, RE>,
   initialData: A,
   initialDelay = 1000,
   isReadOnly = false,
-): Layer.Layer<I, never, Scope.Scope> =>
+): Layer.Layer<I, never, RD | RE> =>
   Layer.effect(tag, makeStoreClient(filePath, schema, initialData, initialDelay, isReadOnly).pipe(Effect.map((client) => client as unknown as S)));
